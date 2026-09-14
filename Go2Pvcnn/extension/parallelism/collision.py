@@ -130,6 +130,8 @@ def _same_leg_pose(pos_w: Tensor, rot_w: Tensor) -> tuple[Tensor, Tensor]:
 def _link_pose_for_group(geometry, link_type: str) -> tuple[Tensor, Tensor]:
     if link_type == "thigh":
         return _same_leg_pose(geometry.thigh_pos_w, geometry.thigh_rot_w)
+    if link_type == "hip":
+        return _same_leg_pose(geometry.hip_pos_w, geometry.hip_rot_w)
     if link_type == "calf":
         return _same_leg_pose(geometry.calf_pos_w, geometry.calf_rot_w)
     if link_type == "foot":
@@ -162,12 +164,13 @@ def _official_group_collision(
     cfg: ParallelismCfg,
     specs: tuple[OfficialCollisionShapeSpec, ...],
     indices: list[int],
+    surface_points_builder=build_official_surface_points_l,
 ) -> Tensor:
     group_specs = tuple(specs[idx] for idx in indices)
     link_type = group_specs[0].link_type
     link_pos_w, link_rot_w = _link_pose_for_group(geometry, link_type)
     batch, leg_count, candidate_count = link_pos_w.shape[:3]
-    points_l, point_mask = build_official_surface_points_l(group_specs, cfg, dtype=link_pos_w.dtype, device=link_pos_w.device)
+    points_l, point_mask = surface_points_builder(group_specs, cfg, dtype=link_pos_w.dtype, device=link_pos_w.device)
     group_count, point_count = points_l.shape[:2]
 
     link_pos_g = link_pos_w[:, :, :, None, None, :]
@@ -181,11 +184,28 @@ def _official_group_collision(
     terrain_valid = query.valid.reshape(batch, leg_count, candidate_count, group_count, point_count)
     terrain_hit = terrain_h >= (points_w[..., 2] - float(cfg.collision_margin_m))
     tolerant_names = set(cfg.contact_tolerant_collision_shape_names)
+    support_names = set(getattr(cfg, "contact_tolerant_support_shape_names", ()))
     terrain_checked = torch.tensor(
         tuple(spec.name not in tolerant_names for spec in group_specs),
         dtype=torch.bool,
         device=points_w.device,
-    ).view(1, 1, 1, group_count, 1)
+    ).view(1, 1, 1, group_count, 1).expand(1, 1, 1, group_count, point_count).clone()
+    point_tolerance = dict(getattr(cfg, "contact_tolerant_collision_point_indices", ()))
+    for group_idx, spec in enumerate(group_specs):
+        indices_for_shape = point_tolerance.get(spec.name, ())
+        if indices_for_shape:
+            terrain_checked[..., group_idx, list(indices_for_shape)] = False
+        if spec.name in support_names:
+            point_z = points_w[..., group_idx, :, 2]
+            lowest_z = point_z.amin(dim=-1, keepdim=True)
+            angle_count = max(int(cfg.cylinder_angles), 4)
+            sample_gap = float(spec.radius_m) * (1.0 - math.cos(2.0 * math.pi / angle_count))
+            support_band = sample_gap + float(cfg.collision_margin_m)
+            support_point = point_z <= lowest_z + support_band
+            support_contact = support_point & terrain_valid[..., group_idx, :] & (
+                point_z <= terrain_h[..., group_idx, :] + float(cfg.collision_margin_m)
+            )
+            terrain_hit[..., group_idx, :] = terrain_hit[..., group_idx, :] & ~support_contact
     terrain_hit = terrain_hit & terrain_checked
     valid_point = point_mask.view(1, 1, 1, group_count, point_count)
     point_hit = valid_point & ((~terrain_valid) | terrain_hit)
@@ -196,6 +216,8 @@ def official_collision_mask(
     terrain: ParallelismTerrain,
     geometry,
     cfg: ParallelismCfg,
+    *,
+    surface_points_builder=build_official_surface_points_l,
 ) -> tuple[Tensor, Tensor]:
     specs = tuple(cfg.official_collision_shapes)
     batch, leg_count, candidate_count = geometry.foot_pos_w.shape[:3]
@@ -209,11 +231,19 @@ def official_collision_mask(
     )
     candidate_hit = torch.zeros(batch, leg_count, candidate_count, dtype=torch.bool, device=geometry.foot_pos_w.device)
     allowed_by_leg = _leg_specific_mask(specs, leg_count, device=geometry.foot_pos_w.device)
-    for link_type in ("thigh", "calf", "foot"):
+    link_types = tuple(dict.fromkeys(spec.link_type for spec in specs))
+    for link_type in link_types:
         indices = _group_indices(specs, link_type)
         if not indices:
             continue
-        group_hit = _official_group_collision(terrain, geometry, cfg, specs, indices)
+        group_hit = _official_group_collision(
+            terrain,
+            geometry,
+            cfg,
+            specs,
+            indices,
+            surface_points_builder=surface_points_builder,
+        )
         index_tensor = torch.tensor(indices, dtype=torch.long, device=collision_bits.device)
         allowed = allowed_by_leg[:, indices].view(1, leg_count, 1, len(indices))
         group_hit = group_hit & allowed
