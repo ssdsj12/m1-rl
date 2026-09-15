@@ -13,6 +13,8 @@ from extension.parallelism.config import ParallelismCfg
 from extension.parallelism.kinematics import fk_go2
 from extension.parallelism.planner import plan_trajectory
 from extension.parallelism.types import ParallelismState, ParallelismTerrain
+from extension.parallelism.robot_backend import get_robot_backend
+from extension.parallelism.rl_adapter import select_named_joint_state
 
 _PLANNER_JOINT_ORDER = (
     "FL_hip_joint",
@@ -195,7 +197,9 @@ class ParallelismReferenceManager:
         autostart: bool = True,
     ) -> None:
         self.env = _env_root(env)
-        self.cfg = cfg or ParallelismCfg()
+        robot_name = str(getattr(getattr(self.env, "cfg", None), "robot_name", "go2")).strip().lower()
+        self.robot_backend = get_robot_backend(robot_name)
+        self.cfg = cfg or self.robot_backend.cfg
         self.command_name = str(command_name)
         self.plan_batch_size = int(plan_batch_size or getattr(getattr(self.env, "cfg", None), "parallelism_plan_batch_size", 64))
         self.device = torch.device(getattr(self.env, "device", "cpu"))
@@ -519,7 +523,7 @@ class ParallelismReferenceManager:
         yaw = extract_yaw_batch(root_quat)
         root_rpy = torch.stack((roll, pitch, yaw), dim=-1)
         joint = torch.as_tensor(robot.data.joint_pos, dtype=torch.float32, device=self.device)
-        joint = _reorder_joint_to_planner(joint, getattr(robot, "joint_names", None)).index_select(0, env_ids)
+        joint = (select_named_joint_state(joint, source_names=tuple(getattr(robot, "joint_names", ())), selected_names=self.robot_backend.planner_joint_names) if self.robot_backend.name == "m1" else _reorder_joint_to_planner(joint, getattr(robot, "joint_names", None))).index_select(0, env_ids)
         foot_pos = self._measured_foot_pos_w(robot, env_ids)
         return ParallelismState(root_pos_w=root_pos, root_rpy_w=root_rpy, joint_pos=joint, foot_pos_w=foot_pos)
 
@@ -531,14 +535,14 @@ class ParallelismReferenceManager:
         body_ids = None
         if hasattr(robot, "find_bodies"):
             try:
-                body_ids, body_names = robot.find_bodies(".*_foot")
+                body_ids, body_names = robot.find_bodies(self.robot_backend.support_body_names, preserve_order=True)
             except Exception:  # noqa: BLE001 - fall back to the common Go2 body layout.
                 body_ids = None
         if body_ids is None:
             foot_pos = body_pos[:, -4:]
         else:
             body_ids = torch.as_tensor(body_ids, dtype=torch.long, device=self.device)
-            order = _order_indices(body_names, _PLANNER_FOOT_ORDER, device=self.device)
+            order = _order_indices(body_names, self.robot_backend.support_body_names, device=self.device)
             if order is not None:
                 body_ids = body_ids.index_select(0, order)
             foot_pos = body_pos.index_select(1, body_ids)
