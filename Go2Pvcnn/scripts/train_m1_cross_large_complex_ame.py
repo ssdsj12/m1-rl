@@ -126,6 +126,8 @@ def main() -> int:
         )
 
         train_cfg = get_m1_ame_train_cfg()
+        if os.environ.get("SAVE_INTERVAL"):
+            train_cfg["save_interval"] = int(os.environ["SAVE_INTERVAL"])
         dump_yaml(str(log_dir / "env_cfg.yaml"), _yaml_safe(env_cfg.to_dict()))
         dump_yaml(str(log_dir / "train_cfg.yaml"), _yaml_safe(train_cfg))
         runner = AmeOnPolicyRunner(
