@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from extension.parallelism.m1_kinematics import (
@@ -18,6 +19,7 @@ def test_m1_policy_joint_terms_exclude_wheels():
 
 
 def test_m1_observation_contract_declares_asset_and_planner_widths():
+    pytest.importorskip("isaaclab")
     from ame_baseline.m1_ame_env_cfg import M1AmeCrossLargeComplexEnvCfg
     cfg = M1AmeCrossLargeComplexEnvCfg()
     assert cfg.robot_name == "m1"

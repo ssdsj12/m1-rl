@@ -106,10 +106,11 @@ def main() -> int:
         from isaaclab.utils.io import dump_yaml
 
         _register_runtime_env(gym, M1_AME_AMP_ENV_ID, M1AmeAmpCrossLargeComplexEnvCfg)
-        device = f"cuda:{app_launcher.device_id}"
-        torch.cuda.set_device(app_launcher.device_id)
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
+        device = str(args.device)
+        if device.startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.set_device(app_launcher.device_id)
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
 
         env_cfg = M1AmeAmpCrossLargeComplexEnvCfg()
         env_cfg.scene.num_envs = args.num_envs

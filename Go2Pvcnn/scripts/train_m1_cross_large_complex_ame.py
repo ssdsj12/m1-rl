@@ -45,6 +45,17 @@ def _git_hash() -> str:
     return result.stdout.strip()
 
 
+def _register_runtime_env(gym, env_id, env_cfg_cls) -> None:
+    if env_id in gym.registry:
+        return
+    gym.register(
+        id=env_id,
+        entry_point="isaaclab.envs:ManagerBasedRLEnv",
+        kwargs={"env_cfg_entry_point": env_cfg_cls, "rsl_rl_cfg_entry_point": None},
+        disable_env_checker=True,
+    )
+
+
 def _yaml_safe(value):
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
@@ -82,11 +93,13 @@ def main() -> int:
         import go2_pvcnn.tasks.register_envs  # noqa: F401
         from isaaclab.utils.io import dump_yaml
 
-        device = f"cuda:{app_launcher.device_id}"
-        torch.cuda.set_device(app_launcher.device_id)
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
+        device = str(args.device)
+        if device.startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.set_device(app_launcher.device_id)
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
 
+        _register_runtime_env(gym, "Isaac-M1-Cross-Large-Complex-AME-v0", M1AmeCrossLargeComplexEnvCfg)
         env_cfg = M1AmeCrossLargeComplexEnvCfg()
         env_cfg.scene.num_envs = args.num_envs
         env_cfg.sim.device = device
@@ -103,7 +116,9 @@ def main() -> int:
         log_dir.mkdir(parents=True, exist_ok=True)
         print(f"[AME] log_dir={log_dir}", flush=True)
 
+        print("[AME] creating env", flush=True)
         env = gym.make("Isaac-M1-Cross-Large-Complex-AME-v0", cfg=env_cfg)
+        print("[AME] env created", flush=True)
         wrapped_env = AmeRslRlEnvWrapper(env, clip_actions=100.0)
         policy_obs, extras = wrapped_env.get_observations()
         critic_obs = extras["observations"]["critic"]

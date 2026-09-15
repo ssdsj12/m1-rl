@@ -78,13 +78,6 @@ except Exception as exc:  # noqa: BLE001 - M1 registration is optional outside I
     print(f"[go2_pvcnn] M1 viewer registration skipped: {exc}")
 
 
-# M1 RL environments (same AME/AMP algorithms, M1-specific asset contract).
-try:
-    from ame_baseline.m1_ame_env_cfg import M1AmeCrossLargeComplexEnvCfg
-    from ame_baseline.m1_ame_amp_env_cfg import M1AmeAmpCrossLargeComplexEnvCfg, M1_AME_AMP_ENV_ID
-    gym.register(id="Isaac-M1-Cross-Large-Complex-AME-v0", entry_point="isaaclab.envs:ManagerBasedRLEnv", kwargs={"env_cfg_entry_point": M1AmeCrossLargeComplexEnvCfg, "rsl_rl_cfg_entry_point": None}, disable_env_checker=True)
-    gym.register(id=M1_AME_AMP_ENV_ID, entry_point="tracking.amp_env:ParallelismAmpEnv", kwargs={"env_cfg_entry_point": M1AmeAmpCrossLargeComplexEnvCfg, "rsl_rl_cfg_entry_point": None}, disable_env_checker=True)
-    print("[go2_pvcnn]   - Isaac-M1-Cross-Large-Complex-AME-v0")
-    print(f"[go2_pvcnn]   - {M1_AME_AMP_ENV_ID}")
-except Exception as exc:
-    print(f"[go2_pvcnn] M1 RL registration skipped: {exc}")
+# M1 RL environments are registered lazily by their launchers. Importing the
+# configs here creates a cycle through ``go2_pvcnn.assets`` during IsaacLab
+# startup, so keep this module limited to the base/task registrations.
