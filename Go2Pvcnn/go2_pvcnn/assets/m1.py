@@ -9,7 +9,7 @@ from isaaclab.assets import ArticulationCfg
 from extension.parallelism.m1_kinematics import M1_DEFAULT_ASSET_JOINT_POS, M1_ROOT_Z_M
 
 
-M1_USD_PATH = Path(__file__).resolve().parents[4] / "m1" / "ZJ_V3_URDF_V1_0" / "ZJ_V3_URDF_V1_0.usd"
+M1_USD_PATH = Path(__file__).resolve().parents[3] / "m1" / "ZJ_V3_URDF_V1_0" / "ZJ_V3_URDF_V1_0.usd"
 M1_USD_JOINT_NAMES = (
     "FBL_ABAD_JOINT", "FBL_HIP_JOINT", "FBL_KNEE_JOINT", "FBL_FOOT_JOINT",
     "FAR_ABAD_JOINT", "FAR_HIP_JOINT", "FAR_KNEE_JOINT", "FAR_FOOT_JOINT",

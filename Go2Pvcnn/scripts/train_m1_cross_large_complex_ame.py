@@ -116,9 +116,7 @@ def main() -> int:
         log_dir.mkdir(parents=True, exist_ok=True)
         print(f"[AME] log_dir={log_dir}", flush=True)
 
-        print("[AME] creating env", flush=True)
         env = gym.make("Isaac-M1-Cross-Large-Complex-AME-v0", cfg=env_cfg)
-        print("[AME] env created", flush=True)
         wrapped_env = AmeRslRlEnvWrapper(env, clip_actions=100.0)
         policy_obs, extras = wrapped_env.get_observations()
         critic_obs = extras["observations"]["critic"]
