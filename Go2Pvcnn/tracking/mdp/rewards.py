@@ -17,6 +17,8 @@ from tracking.managers.parallelism_reference_manager import get_parallelism_refe
 from extension.parallelism.collision import official_collision_mask
 from extension.parallelism.kinematics import fk_go2
 from extension.parallelism.terrain import query_height_semantic_valid
+from extension.parallelism.robot_backend import get_robot_backend
+from extension.parallelism.rl_adapter import select_named_joint_state
 
 
 _LEG_NAMES = ("FL", "FR", "RL", "RR")
@@ -361,12 +363,9 @@ def _tracking_foot_body_ids(env, asset, *, device: torch.device) -> torch.Tensor
 
     body_pos = torch.as_tensor(asset.data.body_pos_w)
     if hasattr(asset, "find_bodies"):
-        body_ids, body_names = asset.find_bodies(".*_foot")
-        source = {_normalize_articulation_name(name): int(body_id) for body_id, name in zip(body_ids, body_names)}
-        try:
-            ordered = [source[_normalize_articulation_name(name)] for name in _FOOT_NAMES]
-        except KeyError as exc:
-            raise ValueError(f"Missing Go2 foot body for tracking: {exc.args[0]}") from exc
+        backend = get_robot_backend(getattr(env.cfg, "robot_name", "go2"))
+        body_ids, body_names = asset.find_bodies(list(backend.support_body_names), preserve_order=True)
+        ordered = [int(body_id) for body_id in body_ids]
     elif int(body_pos.shape[1]) == 4:
         ordered = [0, 1, 2, 3]
     else:
@@ -389,16 +388,10 @@ def _tracking_joint_leg_ids(env, asset, *, device: torch.device) -> torch.Tensor
         return torch.as_tensor(cached, dtype=torch.long, device=device)
 
     joint_names = tuple(getattr(asset, "joint_names", ()) or ())
+    backend = get_robot_backend(getattr(env.cfg, "robot_name", "go2"))
     if joint_names:
         source = {_normalize_articulation_name(name): index for index, name in enumerate(joint_names)}
-        ordered = [
-            [
-                source[_normalize_articulation_name(f"{leg}_hip_joint")],
-                source[_normalize_articulation_name(f"{leg}_thigh_joint")],
-                source[_normalize_articulation_name(f"{leg}_calf_joint")],
-            ]
-            for leg in _LEG_NAMES
-        ]
+        ordered = [[source[_normalize_articulation_name(name)] for name in backend.planner_joint_names[3*i:3*i+3]] for i in range(4)]
     elif int(asset.data.joint_pos.shape[1]) == 12:
         ordered = [[3 * leg + joint for joint in range(3)] for leg in range(4)]
     else:
@@ -415,7 +408,11 @@ def _current_parallelism_tracking_errors(env, asset_cfg: SceneEntityCfg) -> dict
     ref_pos_b = manager.current_root_pos_b_policy
     ref_rot_b = manager.current_root_rot_b_policy
     ref_joint = manager.step_joint_pos
-    actual_joint = torch.as_tensor(asset.data.joint_pos, dtype=ref_joint.dtype, device=ref_joint.device)
+    actual_joint = select_named_joint_state(
+        torch.as_tensor(asset.data.joint_pos, dtype=ref_joint.dtype, device=ref_joint.device),
+        source_names=tuple(asset.joint_names),
+        selected_names=get_robot_backend(getattr(env.cfg, "robot_name", "go2")).planner_joint_names,
+    )
     joint_abs_error = torch.abs(actual_joint - ref_joint)
     joint_leg_ids = _tracking_joint_leg_ids(env, asset, device=ref_joint.device)
     joint_max_error_per_leg = joint_abs_error.index_select(1, joint_leg_ids.flatten()).reshape(-1, 4, 3).amax(dim=-1)

@@ -9,16 +9,25 @@ import torch
 from tracking.env import ParallelismTrackingEnv
 from tracking.managers.parallelism_amp_manager import ParallelismAmpManager
 from tracking.managers.parallelism_reference_manager import get_parallelism_reference_manager
+from extension.parallelism.robot_backend import get_robot_backend
+from extension.parallelism.rl_adapter import select_named_joint_state
 
 
 def _frame_from_robot(env) -> torch.Tensor:
     robot = env.scene["robot"]
     root_pos = robot.data.root_pos_w
-    joint_pos = robot.data.joint_pos
+    source_names = tuple(robot.joint_names)
+    backend = get_robot_backend(getattr(env.cfg, "robot_name", "go2"))
+    joint_pos = select_named_joint_state(
+        robot.data.joint_pos, source_names=source_names, selected_names=backend.planner_joint_names
+    )
     frame = torch.zeros((env.num_envs, 39), dtype=torch.float32, device=env.device)
-    frame[:, : min(12, joint_pos.shape[-1])] = joint_pos[:, :12]
-    joint_vel = torch.as_tensor(robot.data.joint_vel, dtype=torch.float32, device=env.device)
-    frame[:, 12 : 12 + min(12, joint_vel.shape[-1])] = joint_vel[:, :12]
+    frame[:, :12] = joint_pos
+    joint_vel = select_named_joint_state(
+        torch.as_tensor(robot.data.joint_vel, dtype=torch.float32, device=env.device),
+        source_names=source_names, selected_names=backend.planner_joint_names,
+    )
+    frame[:, 12:24] = joint_vel
     frame[:, 24:27] = root_pos
     quat = robot.data.root_quat_w
     w, x, y, z = quat.unbind(-1)
