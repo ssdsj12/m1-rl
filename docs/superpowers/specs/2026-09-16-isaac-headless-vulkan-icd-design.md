@@ -2,7 +2,7 @@
 
 ## Goal
 
-Run the M1 AME 1024-environment training in one Isaac Sim process from the latest valid checkpoint through iteration 10000, without relying on supervisor restarts for normal progress.
+Run the M1 AME 1024-environment training in one Isaac Sim process from the latest valid checkpoint through iteration 10000, then let the program exit normally. Any exit before iteration 10000 is a failed run; supervisor restart/resume loops are not an acceptable completion mechanism.
 
 ## Confirmed failure
 
@@ -60,9 +60,9 @@ The implementation will:
 
 1. add the headless NVIDIA EGL ICD manifest under the project;
 2. add a reusable Vulkan probe that returns nonzero when Isaac's bundled loader cannot create an instance;
-3. make the supervisor export the project ICD path to the training process;
+3. make the launcher export the project ICD path to the training process and provide a one-shot mode with automatic restart disabled;
 4. add automated static/unit coverage for manifest content and environment propagation;
-5. restart only the 1024-env training from the latest validated checkpoint.
+5. launch only the 1024-env training from the latest validated checkpoint in one-shot mode.
 
 The implementation will not:
 
@@ -81,14 +81,15 @@ Verification is staged and evidence-based:
 2. **Green probe:** with the project EGL ICD override, the same loader must return `0` and destroy the instance cleanly.
 3. **Command verification:** the launched training process environment must contain the absolute project ICD path.
 4. **Regression tests:** targeted supervisor/manifest tests and the existing M1 AME test suite must pass.
-5. **Runtime boundary:** the resumed process must complete iteration 2100 and write a checkpoint newer than `model_2090.pt` without a restart.
-6. **Stability window:** the same PID must continue for at least 15 minutes, with increasing iterations/checkpoints and no new `EARLY_TERMINATION`, `ERROR_INCOMPATIBLE_DRIVER`, or `Simulation App Shutting Down` marker.
+5. **Known-failure boundary check:** the resumed process must first complete iteration 2100 and write a checkpoint newer than `model_2090.pt` without a restart. This is an early diagnostic milestone only, not final acceptance.
+6. **Continuous-run check:** automatic restart must remain disabled, the PID must stay unchanged, iterations/checkpoints must continue increasing, and no `EARLY_TERMINATION`, `ERROR_INCOMPATIBLE_DRIVER`, or premature `Simulation App Shutting Down` marker may appear.
+7. **Final acceptance:** that same PID must reach iteration 10000, write the final checkpoint, and then exit normally with exit code `0`. No replacement training PID, resume attempt, or supervisor restart may contribute iterations to this accepted run.
 
-Crossing iteration 2100 proves that the previously deterministic failure is gone. The 15-minute same-PID window exceeds the repeated 105–156 second failure interval but is not represented as proof that all remaining iterations have already completed. The process remains running toward 10000 after verification.
+Crossing iteration 2100 only shows that the previously deterministic failure point has been cleared. It does not prove the bug fixed. The repair is complete only after the same uninterrupted process reaches iteration 10000 and exits normally.
 
 ## Failure handling
 
-If the EGL probe succeeds but training still exits before or at iteration 2100, stop and preserve the attempt logs. The next experiment changes only the seed from 42 to 43 for 20 updates to distinguish a deterministic environment/PhysX trajectory fault from the Vulkan loader fault.
+If the EGL probe succeeds but training exits at any point before iteration 10000, mark the run as failed and preserve its logs; do not hide the failure by automatically restarting. If it still fails at the deterministic iteration-2100 boundary, the next experiment changes only the seed from 42 to 43 for 20 updates to distinguish a deterministic environment/PhysX trajectory fault from the Vulkan loader fault.
 
 If the EGL probe itself fails, do not restart long training. Report the exact loader diagnostics; the remaining repair requires an administrator-level NVIDIA Vulkan/driver correction.
 
