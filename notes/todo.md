@@ -4,7 +4,7 @@ This page is the fast-start dashboard for agent work. Detailed memory lives in [
 
 ## Start Here
 
-- 2026-09-16 T306 M1 AME 1024-env 长训提前退出已定位到坏掉的服务器 Vulkan ICD 与默认 renderer multi-GPU 路径；launcher 现使用物理 `cuda:4`、关闭 renderer multi-GPU 并保留 policy std。监督器 v2 增加单实例锁、进程组清理、谱系隔离、checkpoint 内容校验与精确 `next_iter` 恢复；原子保存避免半写文件。最终真实 1024-env smoke 精确执行 `model_1040 -> model_1043` 三次更新并正常完成，AME baseline `30 passed`；系统 Vulkan 修复仍需管理员权限。详见 [T306 branch page](todo/T306-m1-ame-long-train-stability.md) 和 [修复日志](log/2026-09-16-m1-ame-long-train-vulkan-watchdog-fix.md)。
+- 2026-09-16 T306 M1 AME 1024-env 长训提前退出已定位到坏掉的服务器 Vulkan ICD 与默认 renderer multi-GPU 路径；launcher 现使用物理 `cuda:4`、关闭 renderer multi-GPU 并保留 policy std。监督器 v2 增加单实例锁、进程组清理、谱系隔离、checkpoint 内容校验与精确 `next_iter` 恢复；原子保存避免半写文件。真实 1024-env smoke 精确执行 `model_1040 -> model_1043` 三次更新，正式首个 attempt 已无重启推进到 `model_1100`，AME baseline `30 passed`；系统 Vulkan 修复仍需管理员权限。详见 [T306 branch page](todo/T306-m1-ame-long-train-stability.md) 和 [修复日志](log/2026-09-16-m1-ame-long-train-vulkan-watchdog-fix.md)。
 
 - 2026-09-11 T305 统一策略评测新增 SemLoco：复用默认 adapter，最新 `model_19999.pt` 通过真实 1024 env x 48 transitions smoke，得到 `27 valid_windows` 与 `5224.88 env-steps/s`，详见 [SemLoco integration smoke](log/2026-09-11-policy-benchmark-semloco-integration-smoke.md)。
 

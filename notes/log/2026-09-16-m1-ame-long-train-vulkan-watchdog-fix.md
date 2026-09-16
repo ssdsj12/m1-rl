@@ -63,6 +63,9 @@ state, and prevent an Isaac shutdown deadlock from blocking the run forever.
 - Final supervisor-v2 integration: exact `3` updates,
   `model_1040 -> model_1043`, exit `0`, checkpoint `next_iter=1044`, and
   `TRAINING_COMPLETE` present.
+- Committed formal run: first attempt advanced `model_1043 -> model_1100`
+  without restart/stall, crossing the earlier approximately 50-update exit
+  window; policy noise std remained finite (`0.74 -> 0.69`).
 
 ## Result
 
@@ -96,7 +99,7 @@ requires an administrator repair.
 ## Git Refs
 
 - Baseline Ref: `55aa891`
-- Candidate Ref: T306 working tree based on `55aa891`
+- Candidate Ref: `375e5f5`
 - Key Files:
   - [M1 AME headless launcher](../../Go2Pvcnn/scripts/train_m1_cross_large_complex_ame_headless.sh)
   - [M1 AME supervisor](../../Go2Pvcnn/scripts/supervise_m1_ame_long_train.sh)

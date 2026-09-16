@@ -23,6 +23,11 @@ the last completed optimizer update. The final real 1024-env supervisor smoke
 resumed `model_1040.pt`, performed exactly three updates, and completed at
 `model_1043.pt` with exit code `0`.
 
+The committed target-10000 run is active in `m1ame_supervisor`. Its first
+attempt advanced from `model_1043.pt` through validated `model_1100.pt`
+without restart or stall, exceeding the earlier approximately 50-update exit
+window while preserving policy noise std.
+
 ## Open Children
 
 - T306.1: repair the host NVIDIA graphics/Vulkan userspace installation with
@@ -52,9 +57,9 @@ resumed `model_1040.pt`, performed exactly three updates, and completed at
 
 ## Git Refs
 
-- Current Work Ref: `55aa891` plus the T306 working tree
-- Last Feature Commit: `55aa891`
-- Last Verified Ref: T306 working tree based on `55aa891`
+- Current Work Ref: `375e5f5`
+- Last Feature Commit: `375e5f5`
+- Last Verified Ref: `375e5f5`
 - Key Files:
   - [M1 AME headless launcher](../../Go2Pvcnn/scripts/train_m1_cross_large_complex_ame_headless.sh)
   - [M1 AME long-train supervisor](../../Go2Pvcnn/scripts/supervise_m1_ame_long_train.sh)
@@ -62,9 +67,8 @@ resumed `model_1040.pt`, performed exactly three updates, and completed at
 
 ## Next Step
 
-Launch the target-10000 supervisor in tmux from the validated `model_1043.pt`,
-verify checkpoint advancement past the previous failure boundary, and keep
-T306.1 open until an administrator repairs the system Vulkan ICD.
+Continue monitoring the active target-10000 supervisor to `model_9999.pt`,
+and keep T306.1 open until an administrator repairs the system Vulkan ICD.
 
 ## Node Details
 
