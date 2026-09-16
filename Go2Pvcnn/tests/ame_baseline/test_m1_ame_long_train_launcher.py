@@ -18,10 +18,21 @@ SUPERVISOR = ROOT / "scripts/supervise_m1_ame_long_train.sh"
 
 def test_headless_launcher_builds_physical_cuda4_compute_only_argv(tmp_path):
     capture = tmp_path / "argv.txt"
+    probe_capture = tmp_path / "probe.txt"
+    probe = tmp_path / "probe_isaac_vulkan.py"
     fake_python = tmp_path / "python"
     fake_python.write_text(
         "#!/usr/bin/env bash\n"
-        "printf 'CUDA_VISIBLE_DEVICES=%s\\n' \"${CUDA_VISIBLE_DEVICES-unset}\" > \"${CAPTURE_FILE}\"\n"
+        "if [[ \"${1:-}\" == \"${VULKAN_PROBE_PATH}\" ]]; then\n"
+        "  printf 'VK_DRIVER_FILES=%s\\n' \"${VK_DRIVER_FILES-unset}\" > \"${PROBE_CAPTURE_FILE}\"\n"
+        "  printf 'VK_ICD_FILENAMES=%s\\n' \"${VK_ICD_FILENAMES-unset}\" >> \"${PROBE_CAPTURE_FILE}\"\n"
+        "  printf '%s\\n' \"$@\" >> \"${PROBE_CAPTURE_FILE}\"\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf 'PYTHON=%s\\n' \"$0\" > \"${CAPTURE_FILE}\"\n"
+        "printf 'VK_DRIVER_FILES=%s\\n' \"${VK_DRIVER_FILES-unset}\" >> \"${CAPTURE_FILE}\"\n"
+        "printf 'VK_ICD_FILENAMES=%s\\n' \"${VK_ICD_FILENAMES-unset}\" >> \"${CAPTURE_FILE}\"\n"
+        "printf 'CUDA_VISIBLE_DEVICES=%s\\n' \"${CUDA_VISIBLE_DEVICES-unset}\" >> \"${CAPTURE_FILE}\"\n"
         "printf '%s\\n' \"$@\" >> \"${CAPTURE_FILE}\"\n"
     )
     fake_python.chmod(0o755)
@@ -29,22 +40,56 @@ def test_headless_launcher_builds_physical_cuda4_compute_only_argv(tmp_path):
     env.update(
         {
             "CUDA_VISIBLE_DEVICES": "7",
-            "REPO_ROOT": str(ROOT),
+            "REPO_ROOT": str(ROOT.parent),
             "ISAAC_ENV": str(tmp_path),
             "PYTHON_BIN": str(fake_python),
             "CAPTURE_FILE": str(capture),
+            "PROBE_CAPTURE_FILE": str(probe_capture),
+            "VULKAN_PROBE": str(probe),
+            "VULKAN_PROBE_PATH": str(probe),
         }
     )
 
     subprocess.run(["bash", str(LAUNCHER)], env=env, check=True)
 
     argv = capture.read_text().splitlines()
-    assert argv[0] == "CUDA_VISIBLE_DEVICES=unset"
+    expected_icd = ROOT / "config/vulkan/nvidia_egl_icd.json"
+    assert argv[0] == f"PYTHON={fake_python}"
+    assert argv[1] == f"VK_DRIVER_FILES={expected_icd}"
+    assert argv[2] == f"VK_ICD_FILENAMES={expected_icd}"
+    assert argv[3] == "CUDA_VISIBLE_DEVICES=unset"
     assert argv[argv.index("--device") + 1] == "cuda:4"
     kit_args = argv[argv.index("--kit_args") + 1]
     assert "--/renderer/multiGpu/enabled=false" in kit_args
     assert "--/renderer/multiGpu/autoEnable=false" in kit_args
     assert "--/app/vulkan=false" not in kit_args
+
+    probe_argv = probe_capture.read_text().splitlines()
+    assert probe_argv[:2] == [
+        f"VK_DRIVER_FILES={expected_icd}",
+        f"VK_ICD_FILENAMES={expected_icd}",
+    ]
+    assert probe_argv[2:] == [
+        str(probe),
+        "--prefix",
+        str(tmp_path),
+        "--expect-device-count",
+        "8",
+    ]
+
+
+def test_headless_launcher_defaults_to_amp_and_requires_vulkan_preflight():
+    source = LAUNCHER.read_text()
+
+    assert 'ISAAC_ENV="${ISAAC_ENV:-/home/hexinkun/miniconda3/envs/amp}"' in source
+    assert (
+        'VULKAN_ICD_MANIFEST="${VULKAN_ICD_MANIFEST:-${REPO_ROOT}/Go2Pvcnn/config/vulkan/nvidia_egl_icd.json}"'
+        in source
+    )
+    assert 'export VK_DRIVER_FILES="${VULKAN_ICD_MANIFEST}"' in source
+    assert 'export VK_ICD_FILENAMES="${VULKAN_ICD_MANIFEST}"' in source
+    assert "probe_isaac_vulkan.py" in source
+    assert "/envs/m1" not in source
 
 
 def test_resume_preserves_policy_noise_std_by_default():
