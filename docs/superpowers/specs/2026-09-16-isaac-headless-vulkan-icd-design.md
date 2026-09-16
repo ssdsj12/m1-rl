@@ -1,5 +1,7 @@
 # Isaac Sim Headless Vulkan ICD Stability Design
 
+> Superseded on 2026-09-16 by `2026-09-16-amp-complete-runtime-design.md` after the user required training to run exclusively from the completed `amp` Conda environment and to start a fresh 10000-update run. This document is retained only as root-cause evidence.
+
 ## Goal
 
 Run the M1 AME 1024-environment training in one Isaac Sim process from the latest valid checkpoint through iteration 10000, then let the program exit normally. Any exit before iteration 10000 is a failed run; supervisor restart/resume loops are not an acceptable completion mechanism.
