@@ -14,6 +14,7 @@ import torch
 ROOT = Path(__file__).resolve().parents[2]
 LAUNCHER = ROOT / "scripts/train_m1_cross_large_complex_ame_headless.sh"
 SUPERVISOR = ROOT / "scripts/supervise_m1_ame_long_train.sh"
+ONE_SHOT = ROOT / "scripts/run_m1_ame_10000_once.sh"
 
 
 def test_headless_launcher_builds_physical_cuda4_compute_only_argv(tmp_path):
@@ -97,6 +98,51 @@ def test_resume_preserves_policy_noise_std_by_default():
 
     assert 'if [[ "${KEEP_STD:-1}" == "1" ]]; then' in source
     assert "args+=(--keep_std)" in source
+
+
+def test_one_shot_launcher_starts_exactly_one_fresh_10000_update_run(tmp_path):
+    capture = tmp_path / "environment.txt"
+    launch_count = tmp_path / "launch-count.txt"
+    fake_launcher = tmp_path / "fake-train-launcher"
+    fake_launcher.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '1\\n' >> \"${LAUNCH_COUNT_FILE}\"\n"
+        "printf 'NUM_ENVS=%s\\n' \"${NUM_ENVS-unset}\" > \"${CAPTURE_FILE}\"\n"
+        "printf 'MAX_ITERATIONS=%s\\n' \"${MAX_ITERATIONS-unset}\" >> \"${CAPTURE_FILE}\"\n"
+        "printf 'DEVICE=%s\\n' \"${DEVICE-unset}\" >> \"${CAPTURE_FILE}\"\n"
+        "printf 'CHECKPOINT=%s\\n' \"${CHECKPOINT-unset}\" >> \"${CAPTURE_FILE}\"\n"
+    )
+    fake_launcher.chmod(0o755)
+    env = os.environ.copy()
+    env.update(
+        {
+            "REPO_ROOT": str(ROOT.parent),
+            "TRAIN_LAUNCHER": str(fake_launcher),
+            "CAPTURE_FILE": str(capture),
+            "LAUNCH_COUNT_FILE": str(launch_count),
+            "CHECKPOINT": "/must/not/be/resumed.pt",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(ONE_SHOT)], env=env, capture_output=True, text=True
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert launch_count.read_text().splitlines() == ["1"]
+    captured = dict(line.split("=", 1) for line in capture.read_text().splitlines())
+    assert captured == {
+        "NUM_ENVS": "1024",
+        "MAX_ITERATIONS": "10000",
+        "DEVICE": "cuda:4",
+        "CHECKPOINT": "",
+    }
+
+    source = ONE_SHOT.read_text()
+    assert source.count("exec ") == 1
+    assert "supervise_m1_ame_long_train.sh" not in source
+    assert "RESTART_DELAY_SECONDS" not in source
+    assert "--resume" not in source
 
 
 def test_long_train_supervisor_has_progress_watchdog_and_safe_resume_contract():
