@@ -4,6 +4,8 @@ This page is the fast-start dashboard for agent work. Detailed memory lives in [
 
 ## Start Here
 
+- 2026-09-16 T306 M1 AME 1024-env 长训提前退出已定位到坏掉的服务器 Vulkan ICD 与默认 renderer multi-GPU 路径；launcher 现使用物理 `cuda:4`、关闭 renderer multi-GPU 并保留 policy std。监督器 v2 增加单实例锁、进程组清理、谱系隔离、checkpoint 内容校验与精确 `next_iter` 恢复；原子保存避免半写文件。最终真实 1024-env smoke 精确执行 `model_1040 -> model_1043` 三次更新并正常完成，AME baseline `30 passed`；系统 Vulkan 修复仍需管理员权限。详见 [T306 branch page](todo/T306-m1-ame-long-train-stability.md) 和 [修复日志](log/2026-09-16-m1-ame-long-train-vulkan-watchdog-fix.md)。
+
 - 2026-09-11 T305 统一策略评测新增 SemLoco：复用默认 adapter，最新 `model_19999.pt` 通过真实 1024 env x 48 transitions smoke，得到 `27 valid_windows` 与 `5224.88 env-steps/s`，详见 [SemLoco integration smoke](log/2026-09-11-policy-benchmark-semloco-integration-smoke.md)。
 
 - 2026-09-11 T305 统一策略评测新增 AME 与 AME-AMP：专用 adapter 与六类 launcher 已提交，两个最新最长 checkpoint 均通过真实 1024 env x 48 transitions smoke，分别得到 `27` 个 valid windows，详见 [integration smoke](log/2026-09-11-policy-benchmark-ame-integration-smoke.md)。
@@ -207,6 +209,8 @@ This page is the fast-start dashboard for agent work. Detailed memory lives in [
 
 ## Active Fronts
 
+- [T306 M1 AME long-train stability](todo/T306-m1-ame-long-train-stability.md): 应用层 launcher/watchdog 修复与真实 1024-env resume smoke 已完成；10000-iteration 长训继续运行，系统 Vulkan ICD 修复需要管理员介入。
+
 - [T305 统一策略评测 Benchmark](todo/T305-policy-benchmark.md): 六类模型 harness 和真实接线 smoke 已完成；下一步运行六个正式 checkpoint 的三套 suite 并生成论文统计。
 
 - [T303 Parallelism flat foot planner](todo/T303-parallelism-flat-foot-planner.md): verify state. Self-contained flat/highmap batched planner, RL adapter, and viewer backend route are implemented on branch `Parallelism`; real Isaac viewer smoke is the next follow-up.
@@ -230,6 +234,7 @@ This page is the fast-start dashboard for agent work. Detailed memory lives in [
 
 | Root | Status | Stage | Branch | Current | Refs |
 | --- | --- | --- | --- | --- | --- |
+| T306 | active | M1 AME long training | `m1_rl` | launcher/续训/watchdog 修复已通过真实 1024-env `3 + 4` iteration smoke；长训与 host Vulkan 修复仍在跟踪 | [branch](todo/T306-m1-ame-long-train-stability.md); [evidence](log/2026-09-16-m1-ame-long-train-vulkan-watchdog-fix.md) |
 | T305 | verify | unified policy benchmark | `parallelism-amp` | six-model harness and AME/AME-AMP 1024-env smoke passed; formal sweep pending | design [2026-09-03](../docs/superpowers/specs/2026-09-03-policy-benchmark-design-zh.html); latest [2026-09-11](log/2026-09-11-policy-benchmark-ame-integration-smoke.md) |
 | T303 | verify | Parallelism flat foot planner | `Parallelism` | Self-contained 24-frame trot foot planner, 50 candidates per foot, torch single-pass filter/score, RL adapter, and viewer backend route; real viewer smoke remains open. | design [2026-07-27](../docs/superpowers/specs/2026-07-27-parallelism-flat-foot-planner-design.html); latest log [2026-07-27](log/2026-07-27-parallelism-flat-foot-planner-implementation.md) |
 | T302q | active | flat small-obstacle avoidance RL reward | [T302q](todo/T302q-flat-small-avoidance-reward-plan.md) | Local implementation complete; focused regression, pycompile, fresh IsaacLab train smoke, and old-checkpoint resume smoke pass; small-collision eval smoke remains open. | design [2026-06-10](../docs/superpowers/specs/2026-06-10-flat-small-obstacle-avoidance-reward-design.html); latest log [2026-06-10 20:35](log/2026-06-10-2035-t302q-flat-small-local-implementation-and-smoke.md) |
@@ -253,6 +258,8 @@ This page is the fast-start dashboard for agent work. Detailed memory lives in [
 | T000 | done | notes workflow | [T000](todo/T000-notes-workflow.md) | memory system bootstrapped | feature `7cf6c11` |
 
 ## Open Leaves
+
+- T306.1 host Vulkan repair: 当前 `vkCreateInstance` 对所有 API 版本均返回 `VK_ERROR_INCOMPATIBLE_DRIVER`；应用层 compute-only workaround 已验证，但最终应由管理员修复 NVIDIA graphics/Vulkan 用户态驱动并以 `vulkaninfo` 成功枚举 8 张 GPU 为验收条件。
 
 - T305.3 formal paper evaluation: run paired conditions for all six weights and generate confidence intervals and paired statistics; [branch page](todo/T305-policy-benchmark.md), [latest smoke](log/2026-09-11-policy-benchmark-ame-integration-smoke.md).
 
@@ -284,6 +291,8 @@ This page is the fast-start dashboard for agent work. Detailed memory lives in [
 
 ## Branch Pages
 
+- [T306-m1-ame-long-train-stability.md](todo/T306-m1-ame-long-train-stability.md)
+
 - [T305-policy-benchmark.md](todo/T305-policy-benchmark.md)
 
 - [T302v joint MPC RTI GPU](todo/T302v-joint-mpc-rti-gpu.md)
@@ -310,6 +319,8 @@ This page is the fast-start dashboard for agent work. Detailed memory lives in [
 - [T200-semantic-static-course-viewer.md](todo/T200-semantic-static-course-viewer.md)
 
 ## Recent Logs
+
+| 2026-09-16 | M1 AME long-train Vulkan/watchdog fix | root cause + launcher + supervisor + real resume smoke | focused `29 passed`; launcher `3` updates exit `0`; supervisor `4` updates reaches `model_1037.pt` and exits `0`; host Vulkan ICD remains broken | [T306](todo/T306-m1-ame-long-train-stability.md) | [verification](log/2026-09-16-m1-ame-long-train-vulkan-watchdog-fix.md) |
 
 | 2026-07-22 | Joint MPC RTI published root XY priority | free-subspace seed closes fixed-bound violations; representative behavior still red | focused `93 passed`; contract/terrain `37 passed`; root XY violations `0/0`; root `0.12535m/s`; validity `0.77551`; joint `0.37823rad` | [T302v](todo/T302v-joint-mpc-rti-gpu.md) | [verification](log/2026-07-22-joint-mpc-rti-published-root-xy-priority.md) |
 

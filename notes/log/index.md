@@ -4,6 +4,8 @@ This page indexes verification evidence. Keep it short enough to scan.
 
 ## Recent Logs
 
+| 2026-09-16 | M1 AME long-train Vulkan/watchdog fix | renderer multi-GPU A/B, exact resume, atomic checkpoint, supervisor v2 | application-level pass; host Vulkan repair open | AME baseline `30 passed`; fake supervisor `11 passed`; real 1024-env exact resume `model_1040 -> model_1043`, 3 updates, exit `0` | [T306](../todo/T306-m1-ame-long-train-stability.md) | [evidence](2026-09-16-m1-ame-long-train-vulkan-watchdog-fix.md) |
+
 | 2026-09-11 | SemLoco 统一 benchmark 接入 | 默认 adapter、七类 CLI/launcher、真实 IsaacLab 1024-env smoke | pass | regression `34 passed`; `1024 x 48`: `6 episodes`, `27 valid_windows`, `5224.88 env-steps/s`; finite outputs; no residual process | [T305](../todo/T305-policy-benchmark.md) | [integration smoke](2026-09-11-policy-benchmark-semloco-integration-smoke.md) |
 
 | 2026-09-11 | AME / AME-AMP 统一 benchmark 接入 | 专用 adapter、六类 CLI/launcher、真实 IsaacLab 1024-env smoke | pass | regression `47 passed`; AME `1024 x 48`: `9 episodes`, `27 valid_windows`, `3557.26 env-steps/s`; AME-AMP: `8`, `27`, `4414.48`; finite outputs; no residual process | [T305](../todo/T305-policy-benchmark.md) | [integration smoke](2026-09-11-policy-benchmark-ame-integration-smoke.md) |
