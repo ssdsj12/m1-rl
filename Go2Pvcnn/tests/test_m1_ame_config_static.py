@@ -20,6 +20,7 @@ def test_m1_policy_joint_terms_exclude_wheels():
 
 def test_m1_observation_contract_declares_asset_and_planner_widths():
     pytest.importorskip("isaaclab")
+    pytest.importorskip("omni.kit.app", reason="Isaac Sim application modules are unavailable in plain pytest")
     from ame_baseline.m1_ame_env_cfg import M1AmeCrossLargeComplexEnvCfg
     cfg = M1AmeCrossLargeComplexEnvCfg()
     assert cfg.robot_name == "m1"

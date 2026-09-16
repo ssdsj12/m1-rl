@@ -45,7 +45,7 @@ def flat_orientation_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = Scen
     asset: Articulation = env.scene[asset_cfg.name]
     # compute projected gravity (gravity vector in world frame)
     gravity_vec = torch.tensor([0.0, 0.0, -1.0], device=asset.data.root_quat_w.device).repeat(env.num_envs, 1)
-    projected_gravity = math_utils.quat_rotate_inverse(asset.data.root_quat_w, gravity_vec)
+    projected_gravity = math_utils.quat_apply_inverse(asset.data.root_quat_w, gravity_vec)
     return torch.sum(torch.square(projected_gravity[:, :2]), dim=1)
 
 
@@ -350,7 +350,7 @@ def foot_cost_map_penalty(
     foot_pos_rel = foot_pos_w - base_pos_w.unsqueeze(1)  # [num_envs, num_feet, 3]
     
     # 使用四元数逆变换将位置转到机器人坐标系
-    foot_pos_b = math_utils.quat_rotate_inverse(
+    foot_pos_b = math_utils.quat_apply_inverse(
         base_quat_w.unsqueeze(1).expand(-1, len(foot_indices), -1).reshape(-1, 4),
         foot_pos_rel.reshape(-1, 3)
     ).reshape(env.num_envs, len(foot_indices), 3)

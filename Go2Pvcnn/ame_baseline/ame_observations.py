@@ -15,9 +15,31 @@ def _sensor_from_env(env, name: str):
         return getattr(env.scene.sensors, name)
 
 
-def _local_ray_hits(sensor) -> torch.Tensor:
-    from isaaclab.utils.math import quat_rotate_inverse, yaw_quat
+def _yaw_quat(quat: torch.Tensor) -> torch.Tensor:
+    """Return the yaw-only part of a ``(w, x, y, z)`` quaternion."""
 
+    shape = quat.shape
+    flat = quat.reshape(-1, 4)
+    qw, qx, qy, qz = flat.unbind(dim=-1)
+    yaw = torch.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy.square() + qz.square()))
+    result = torch.zeros_like(flat)
+    result[:, 0] = torch.cos(yaw / 2)
+    result[:, 3] = torch.sin(yaw / 2)
+    return F.normalize(result, dim=-1).reshape(shape)
+
+
+def _quat_apply_inverse(quat: torch.Tensor, vec: torch.Tensor) -> torch.Tensor:
+    """Apply an inverse ``(w, x, y, z)`` quaternion rotation without Isaac imports."""
+
+    shape = vec.shape
+    flat_quat = quat.reshape(-1, 4)
+    flat_vec = vec.reshape(-1, 3)
+    xyz = flat_quat[:, 1:]
+    cross = xyz.cross(flat_vec, dim=-1) * 2
+    return (flat_vec - flat_quat[:, :1] * cross + xyz.cross(cross, dim=-1)).reshape(shape)
+
+
+def _local_ray_hits(sensor) -> torch.Tensor:
     data = sensor.data
     hits_w = torch.as_tensor(data.ray_hits_w)
     if hits_w.ndim != 3 or hits_w.shape[-1] != 3:
@@ -27,12 +49,12 @@ def _local_ray_hits(sensor) -> torch.Tensor:
     sensor_quat_w = torch.as_tensor(data.quat_w, dtype=hits_w.dtype, device=hits_w.device)
     alignment = getattr(sensor.cfg, "ray_alignment", None) if hasattr(sensor, "cfg") else None
     if alignment == "yaw":
-        sensor_quat_w = yaw_quat(sensor_quat_w)
+        sensor_quat_w = _yaw_quat(sensor_quat_w)
 
     batch, rays, _ = hits_w.shape
     relative_w = hits_w - sensor_pos_w.unsqueeze(1)
     expanded_quat = sensor_quat_w.unsqueeze(1).expand(batch, rays, 4).reshape(-1, 4)
-    local = quat_rotate_inverse(expanded_quat, relative_w.reshape(-1, 3)).reshape(batch, rays, 3)
+    local = _quat_apply_inverse(expanded_quat, relative_w.reshape(-1, 3)).reshape(batch, rays, 3)
     return torch.nan_to_num(local, nan=0.0, posinf=25.0, neginf=-25.0).clamp_(-25.0, 25.0)
 
 

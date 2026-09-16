@@ -92,7 +92,7 @@ def semantic_cost_map_penalty(
     foot_pos_rel_w = foot_pos_w - robot_pos_w.unsqueeze(1)  # [num_envs, num_feet, 3]
     
     # 转换到机器人坐标系（base frame）
-    foot_pos_b = math_utils.quat_rotate_inverse(
+    foot_pos_b = math_utils.quat_apply_inverse(
         robot_quat_w.unsqueeze(1), foot_pos_rel_w
     )  # [num_envs, num_feet, 3]
     
