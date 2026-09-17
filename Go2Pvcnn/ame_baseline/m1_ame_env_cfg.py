@@ -3,10 +3,16 @@ from __future__ import annotations
 from isaaclab.utils import configclass
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import ObservationTermCfg as ObsTerm
+from isaaclab.managers import TerminationTermCfg as DoneTerm
 from go2_pvcnn.assets.m1 import M1_CFG
+from go2_pvcnn.tasks.teacher_elevation_trajectory_mpc_semantic_env_cfg import (
+    TeacherElevationTrajectoryMpcSemanticTerminationsCfg,
+)
 from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES, M1_PLANNER_JOINT_NAMES, M1_WHEEL_JOINT_NAMES, M1_ROOT_Z_M, M1_WHEEL_RADIUS_M, M1_WHEEL_THICKNESS_M, M1_WHEEL_HORIZONTAL_ENVELOPE_M
 from extension.parallelism.rl_adapter import select_named_joint_state
 from .ame_env_cfg import AmeCrossLargeComplexEnvCfg, AmeObservationsCfg
+from .m1_ame_terminations import nonfinite_robot_state
+
 
 def build_m1_policy_joint_terms(state, source_names=M1_ASSET_JOINT_NAMES):
     return select_named_joint_state(state, source_names=source_names, selected_names=M1_PLANNER_JOINT_NAMES)
@@ -32,6 +38,14 @@ class M1AmeObservationsCfg(AmeObservationsCfg):
     critic_state: CriticStateCfg = CriticStateCfg()
 
 @configclass
+class M1AmeTerminationsCfg(TeacherElevationTrajectoryMpcSemanticTerminationsCfg):
+    nonfinite_robot_state = DoneTerm(
+        func=nonfinite_robot_state,
+        params={"asset_cfg": SceneEntityCfg("robot")},
+    )
+
+
+@configclass
 class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
     robot_name: str = "m1"
     action_dim: int = 16
@@ -43,6 +57,7 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
     wheel_horizontal_envelope_m: float = M1_WHEEL_HORIZONTAL_ENVELOPE_M
     root_z_m: float = M1_ROOT_Z_M
     observations: M1AmeObservationsCfg = M1AmeObservationsCfg()
+    terminations: M1AmeTerminationsCfg = M1AmeTerminationsCfg()
     def __post_init__(self):
         super().__post_init__()
         self.robot_name = "m1"
@@ -90,4 +105,11 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
                     term.params["asset_cfg"].body_names = m1_foot_pattern
         self.experiment_name = "m1_cross_large_complex_ame"
 
-__all__ = ["M1AmeCrossLargeComplexEnvCfg", "M1AmeObservationsCfg", "build_m1_policy_joint_terms", "m1_joint_pos_rel", "m1_joint_vel_rel"]
+__all__ = [
+    "M1AmeCrossLargeComplexEnvCfg",
+    "M1AmeObservationsCfg",
+    "M1AmeTerminationsCfg",
+    "build_m1_policy_joint_terms",
+    "m1_joint_pos_rel",
+    "m1_joint_vel_rel",
+]

@@ -96,8 +96,17 @@ class ActorCriticAME(nn.Module):
         return torch.cat((attended.squeeze(1), state), dim=-1)
 
     def update_distribution(self, observations: torch.Tensor) -> None:
+        torch._assert_async(
+            torch.isfinite(observations).all(),
+            "non-finite AME actor observation",
+        )
         mean = self.actor(self._encode(observations, critic=False))
-        self.distribution = Normal(mean, mean * 0.0 + self.std)
+        torch._assert_async(torch.isfinite(mean).all(), "non-finite AME action mean")
+        torch._assert_async(
+            (torch.isfinite(self.std) & (self.std > 0.0)).all(),
+            "non-finite or non-positive AME action std",
+        )
+        self.distribution = Normal(mean, self.std.expand_as(mean))
 
     def act(self, observations: torch.Tensor, **kwargs) -> torch.Tensor:
         self.update_distribution(observations)

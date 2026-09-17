@@ -58,10 +58,27 @@ class AmeRslRlEnvWrapper(VecEnv):
         obs_dict, _ = self.env.reset()
         return self._format_observations(obs_dict)
 
+    def _sanitize_rewards(self, rewards: torch.Tensor) -> torch.Tensor:
+        termination_manager = self.unwrapped.termination_manager
+        if "nonfinite_robot_state" not in termination_manager.active_terms:
+            return rewards
+
+        nonfinite_state = termination_manager.get_term("nonfinite_robot_state")
+        # get_term() retains the last episode's cause, so intersect it with the
+        # current step reset buffer before masking this step's reward.
+        nonfinite_state = nonfinite_state & self.unwrapped.reset_buf
+        rewards = torch.where(nonfinite_state, torch.zeros_like(rewards), rewards)
+        torch._assert_async(
+            torch.isfinite(rewards).all(),
+            "non-finite AME reward outside non-finite robot-state termination",
+        )
+        return rewards
+
     def step(self, actions):
         if self.clip_actions is not None:
             actions = torch.clamp(actions, -self.clip_actions, self.clip_actions)
         obs_dict, rewards, terminated, truncated, extras = self.env.step(actions)
+        rewards = self._sanitize_rewards(rewards)
         policy, obs_extras = self._format_observations(obs_dict)
         extras["time_outs"] = truncated
         extras["observations"] = obs_extras["observations"]
