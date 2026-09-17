@@ -5,14 +5,26 @@ from __future__ import annotations
 import torch
 
 
-def nonfinite_robot_state(env, asset_cfg) -> torch.Tensor:
-    """Mark environments whose articulation root or joint state contains NaN/Inf."""
-    robot = env.scene[asset_cfg.name]
-    states = (robot.data.root_state_w, robot.data.joint_pos, robot.data.joint_vel)
+_STATE_ABS_LIMITS = (
+    ("root_state_w", 1.0e3),
+    ("body_state_w", 1.0e3),
+    ("joint_pos", 1.0e2),
+    ("joint_vel", 1.0e3),
+    ("joint_acc", 1.0e5),
+    ("applied_torque", 1.0e4),
+)
 
-    invalid = torch.zeros(states[0].shape[0], dtype=torch.bool, device=states[0].device)
-    for state in states:
-        invalid |= ~torch.isfinite(state).reshape(state.shape[0], -1).all(dim=1)
+
+def nonfinite_robot_state(env, asset_cfg) -> torch.Tensor:
+    """Mark environments with non-finite or numerically exploded articulation state."""
+    robot = env.scene[asset_cfg.name]
+    first_state = robot.data.root_state_w
+
+    invalid = torch.zeros(first_state.shape[0], dtype=torch.bool, device=first_state.device)
+    for state_name, abs_limit in _STATE_ABS_LIMITS:
+        state = getattr(robot.data, state_name)
+        valid = torch.isfinite(state) & (torch.abs(state) <= abs_limit)
+        invalid |= ~valid.reshape(state.shape[0], -1).all(dim=1)
     return invalid
 
 

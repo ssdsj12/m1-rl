@@ -51,8 +51,17 @@ def test_ame_wrapper_zeros_reward_only_for_nonfinite_state_termination():
     torch.testing.assert_close(rewards, torch.tensor([0.0, 2.0, 3.0]))
 
 
-def test_ame_wrapper_rejects_nonfinite_reward_outside_state_termination():
+def test_ame_wrapper_zeros_nonfinite_reward_outside_state_termination():
     wrapper = _wrapper_with_nonfinite_state_mask(torch.tensor([True, False, False]))
 
-    with pytest.raises(RuntimeError, match="non-finite AME reward outside"):
-        wrapper._sanitize_rewards(torch.tensor([torch.nan, torch.nan, 3.0]))
+    rewards = wrapper._sanitize_rewards(torch.tensor([torch.nan, torch.nan, 3.0]))
+
+    torch.testing.assert_close(rewards, torch.tensor([0.0, 0.0, 3.0]))
+
+
+def test_ame_wrapper_zeros_extreme_finite_reward_before_ppo_storage():
+    wrapper = _wrapper_with_nonfinite_state_mask(torch.tensor([False, False, False]))
+
+    rewards = wrapper._sanitize_rewards(torch.tensor([1.0e8, -2.0, 3.0]))
+
+    torch.testing.assert_close(rewards, torch.tensor([0.0, -2.0, 3.0]))

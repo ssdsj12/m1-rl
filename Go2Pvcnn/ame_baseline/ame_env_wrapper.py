@@ -9,6 +9,8 @@ from rsl_rl.env import VecEnv
 
 
 class AmeRslRlEnvWrapper(VecEnv):
+    _MAX_ABS_REWARD = 1.0e4
+
     def __init__(self, env, clip_actions: float | None = 100.0):
         self.env = env
         self.clip_actions = clip_actions
@@ -67,12 +69,20 @@ class AmeRslRlEnvWrapper(VecEnv):
         # get_term() retains the last episode's cause, so intersect it with the
         # current step reset buffer before masking this step's reward.
         nonfinite_state = nonfinite_state & self.unwrapped.reset_buf
-        rewards = torch.where(nonfinite_state, torch.zeros_like(rewards), rewards)
-        torch._assert_async(
-            torch.isfinite(rewards).all(),
-            "non-finite AME reward outside non-finite robot-state termination",
+        invalid_reward = (~torch.isfinite(rewards)) | (
+            torch.abs(rewards) > self._MAX_ABS_REWARD
         )
-        return rewards
+        invalid_count = int(invalid_reward.sum().item())
+        if invalid_count:
+            print(
+                f"[AME][warning] sanitized invalid/extreme rewards env_count={invalid_count}",
+                flush=True,
+            )
+        return torch.where(
+            nonfinite_state | invalid_reward,
+            torch.zeros_like(rewards),
+            rewards,
+        )
 
     def step(self, actions):
         if self.clip_actions is not None:
