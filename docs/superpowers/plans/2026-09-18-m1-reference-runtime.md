@@ -23,7 +23,7 @@ Files: `metrics.py`, `tests/test_metrics.py`; numpy dependency, no Isaac imports
 
 ## Task 4: Source-bound adapter, configuration, recorder, process
 
-Execution status: implemented; main deployedunion150passed21.68s, including actual bundled-USD in-memory geometry tests. Specreview passed; finalqualityre-review ofground-facegeometry andfloat32 scannerownership fix ispending. NoIsaac executionyet. Testenvironment additionallybinds amp'somni.usd.libs package anditsbin loaderpath; no installation.
+Execution status: complete atf5842d4; main deployedunion150passed21.68s, including actual bundled-USD in-memory geometry tests. Specandqualityreviews passed afterreviewfixes. NoIsaac executionyet. Testenvironment additionallybinds amp'somni.usd.libs package anditsbin loaderpath; no installation.
 
 Files: `run.py`, `runtime.py`, `run.sh`, `tests/test_runtime_contract.py`. LazyIsaacimports enableCPUtests.
 
@@ -43,6 +43,8 @@ Files: `run.py`, `runtime.py`, `run.sh`, `tests/test_runtime_contract.py`. LazyI
 - [ ] GREENCPUtests; specreviewthenqualityreview; allnewtests+88referencebaseline.
 
 ## Task 5: Sequential physical validation
+
+Execution status: blockedbeforefirstIsaaclaunch bysharedGPUresourceat2026-09-18 14:22CST. PhysicalGPU4 isoccupiedbyanotheruserliuxx'straining,21710MiBused/2372MiBfree,100%utilization. Noforeignprocessstopped,nootherGPUchosen,noautomaticmonitor/restart. RequiresGPU4availabilitycoordination; CPUimplementationdoesnotcountas8-envbehaviorpass.
 
 - [ ] Real8×32startup: correctsources,wrapper/IKcalled,8isolated,validcontacts,completebudget+cleanclose. Notbehaviorpass.
 - [ ] Onfailure collectexactfirstexception/stall; minimaladapterfix withRED/GREEN/review thenexplicitnewrunID. No silentrepeats/parametersweeps.
