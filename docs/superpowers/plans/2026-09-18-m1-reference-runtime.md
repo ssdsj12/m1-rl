@@ -8,6 +8,8 @@ Only new `tools/m1_reference_validation/` files in m1_rl. Reference `/home/hexin
 
 ## Task 3: Pure first-episode diagnostic accumulator
 
+Execution status: complete at9672385;77focused and112deployedunion tests passed, independent spec+quality approved; original-source clearance differential CPUcheck also passed. Runtime remains unverified.
+
 Files: `metrics.py`, `tests/test_metrics.py`; numpy dependency, no Isaac imports. Inputs are copied pre-reset arrays for ALL environments, never defaults for missing attributes. Consecutive step indices start at zero.
 
 - [ ] RED: missing/nonfinite/wrong-shaped data rejected; firstfailure survives later good samples; goal followed by fall fails; timeout fails; missing overbar/touchdown/recovery samples fail; partial steps incomplete; all environments required; strict clearance uses0.0959radius; rearwheelpass uses rear edge+radius; no JSON NaN/Inf.
@@ -20,6 +22,8 @@ Files: `metrics.py`, `tests/test_metrics.py`; numpy dependency, no Isaac imports
 - [ ] GREEN; spec review; quality review; mainrerun.
 
 ## Task 4: Source-bound adapter, configuration, recorder, process
+
+Execution status: implemented; main deployedunion150passed21.68s, including actual bundled-USD in-memory geometry tests. Specreview passed; finalqualityre-review ofground-facegeometry andfloat32 scannerownership fix ispending. NoIsaac executionyet. Testenvironment additionallybinds amp'somni.usd.libs package anditsbin loaderpath; no installation.
 
 Files: `run.py`, `runtime.py`, `run.sh`, `tests/test_runtime_contract.py`. LazyIsaacimports enableCPUtests.
 
