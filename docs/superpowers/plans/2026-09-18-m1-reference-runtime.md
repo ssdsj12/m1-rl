@@ -4,6 +4,8 @@
 
 ## Boundaries
 
+2026-09-18 user amendment: physicalGPU7 supersedesGPU4 below. User explicitly approved preservingthe15GBreservationandtrying8-envwithremainingapproximately8GB. Do notstopreservationorotherjobs;noGPUfallback;capacityfailurestopsrun. Allotherstagedvalidation/amp/source/behaviorboundariesunchanged.
+
 Only new `tools/m1_reference_validation/` files in m1_rl. Reference `/home/hexinkun/m1` stays read-only. Runtime amp, physical GPU4, explicit ContactFreePlay configuration + reference M1RslRlEnvWrapper, zero16column residuals, no runner/checkpoint/restart. No production reward or controller tuning. Provenance guard must pass before simulation. Main owns deployment/notes.
 
 ## Task 3: Pure first-episode diagnostic accumulator

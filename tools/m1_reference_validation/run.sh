@@ -25,7 +25,7 @@ export VK_DRIVER_FILES="/home/hexinkun/m1_rl/Go2Pvcnn/config/vulkan/nvidia_egl_i
 export VK_ICD_FILENAMES="${VK_DRIVER_FILES}"
 unset CUDA_VISIBLE_DEVICES
 export LD_LIBRARY_PATH="${ISAAC_ENV}/lib/python3.10/site-packages/torch/lib:${ISAAC_ENV}/lib/python3.10/site-packages/nvidia/cuda_nvrtc/lib:${ISAAC_ENV}/lib/python3.10/site-packages/nvidia/cudnn/lib:${ISAAC_ENV}/lib:${ISAAC_ENV}/lib/python3.10/site-packages/nvidia/cuda/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH:-}"
-"${PYTHON_BIN}" "${SCRIPT_DIR}/run.py" "$@" --device cuda:4 --headless \
+"${PYTHON_BIN}" "${SCRIPT_DIR}/run.py" "$@" --device cuda:7 --headless \
   --kit_args "--/renderer/multiGpu/enabled=false --/renderer/multiGpu/autoEnable=false" &
 SIM_PID=$!
 wait "${SIM_PID}"

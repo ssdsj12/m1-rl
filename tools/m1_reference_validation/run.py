@@ -10,7 +10,7 @@ import uuid
 
 from provenance import audit_provenance
 from runtime import (
-    REQUIRED_MODULES, RuntimeSink, adapt_cfg, cleanup_run, create_output, instrument_reference_wrapper,
+    DEVICE, PHYSICAL_GPU, REQUIRED_MODULES, RuntimeSink, adapt_cfg, cleanup_run, create_output, instrument_reference_wrapper,
     interpreter_evidence,
     jsonable, make_diagnostic_cfgs, parse_args, step_once, validate_scene,
     validate_source_bindings, write_json,
@@ -27,7 +27,7 @@ def main(argv=None):
              "started_unix": time.time()}
     write_json(output / "run_start.json", start)
     write_json(output / "status.json", {**start, "status": "source_preflight", "received_steps": 0})
-    print(f"M1_REFERENCE_START pid={os.getpid()} device=cuda:4 output={output}", flush=True)
+    print(f"M1_REFERENCE_START pid={os.getpid()} device={DEVICE} output={output}", flush=True)
     simulation_app = None
     env = None
     sink = None
@@ -54,14 +54,14 @@ def main(argv=None):
         from go2_pvcnn.tasks.m1_rsl_rl_wrapper import M1RslRlEnvWrapper
         from isaaclab.utils.io import dump_yaml
 
-        torch.cuda.set_device(4)
-        torch.cuda.reset_peak_memory_stats(4)
-        properties = torch.cuda.get_device_properties(4)
-        gpu = {"physical_index": 4, "name": properties.name, "uuid": str(properties.uuid),
+        torch.cuda.set_device(PHYSICAL_GPU)
+        torch.cuda.reset_peak_memory_stats(PHYSICAL_GPU)
+        properties = torch.cuda.get_device_properties(PHYSICAL_GPU)
+        gpu = {"physical_index": PHYSICAL_GPU, "name": properties.name, "uuid": str(properties.uuid),
                "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
                "fast_shutdown": False, "fast_shutdown_default_override_reason": "allow normal Python cleanup and native exit accounting"}
         if gpu["cuda_visible_devices"] is not None:
-            raise ValueError("CUDA_VISIBLE_DEVICES must be unset for physical GPU4")
+            raise ValueError(f"CUDA_VISIBLE_DEVICES must be unset for physical GPU{PHYSICAL_GPU}")
         write_json(output / "runtime_metadata.json", gpu)
         cfg = M1PvcnnCrossing60mmContactFreePlayEnvCfg()
         holder = {"sink": None}
@@ -84,7 +84,7 @@ def main(argv=None):
         scene_report, bboxes, generic_rows = validate_scene(env.unwrapped, output)
         sink = RuntimeSink(env.unwrapped, args.steps, output, bboxes, generic_rows, counters)
         holder["sink"] = sink
-        zeros = torch.zeros((args.num_envs, 16), device="cuda:4")
+        zeros = torch.zeros((args.num_envs, 16), device=DEVICE)
         print("M1_REFERENCE_SCENE_READY", f"exposed_height_m={scene_report['actual_exposed_bar_height_m'][0]:.6f}", flush=True)
         with torch.inference_mode():
             for step in range(args.steps):
@@ -95,7 +95,7 @@ def main(argv=None):
                 if (step + 1) % 32 == 0:
                     progress = {**start, "status": "running", "received_steps": sink.received_steps,
                                 "elapsed_seconds": time.perf_counter() - started,
-                                "cuda_peak_allocated_bytes": torch.cuda.max_memory_allocated(4), **counters}
+                                "cuda_peak_allocated_bytes": torch.cuda.max_memory_allocated(PHYSICAL_GPU), **counters}
                     write_json(output / "status.json", progress)
                     print("M1_REFERENCE_PROGRESS", jsonable(progress), flush=True)
         sink.flush()
@@ -112,7 +112,7 @@ def main(argv=None):
                           "sensor_sampling_seconds": sensor.sample_seconds,
                           "physical_sensor_updates": sensor.physical_update_count,
                           "elapsed_seconds": time.perf_counter() - started,
-                          "cuda_peak_allocated_bytes": torch.cuda.max_memory_allocated(4),
+                          "cuda_peak_allocated_bytes": torch.cuda.max_memory_allocated(PHYSICAL_GPU),
                           "gpu": gpu})
     except BaseException as error:
         exit_code = 1

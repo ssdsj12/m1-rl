@@ -14,6 +14,8 @@ import numpy as np
 
 REFERENCE = "/home/hexinkun/m1/Go2Pvcnn"
 AMP_PYTHON = "/home/hexinkun/miniconda3/envs/amp/bin/python"
+PHYSICAL_GPU = 7
+DEVICE = f"cuda:{PHYSICAL_GPU}"
 ISAAC_SOURCE = "/home/hexinkun/IsaacLab45/source/isaaclab"
 CONTACT_BODY_NAMES = ("BASE_LINK",) + tuple(
     f"{leg}_{part}_LINK" for leg in ("FAR", "FBL", "RAR", "RBL")
@@ -42,7 +44,7 @@ def parse_args(argv=None):
     parser.add_argument("--steps", type=int, choices=(32, 1600), required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--reference", choices=(REFERENCE,), default=REFERENCE)
-    parser.add_argument("--device", choices=("cuda:4",), default="cuda:4")
+    parser.add_argument("--device", choices=(DEVICE,), default=DEVICE)
     parser.add_argument("--headless", action="store_true", default=True)
     parser.add_argument("--kit_args", default="--/renderer/multiGpu/enabled=false --/renderer/multiGpu/autoEnable=false")
     return parser.parse_args(argv)
@@ -157,7 +159,7 @@ def adapt_cfg(cfg, num_envs, steps, overlay, sensor_cfg, recorder_cfg):
     before = jsonable(cfg.to_dict())
     validate_acceptance_cfg(cfg)
     cfg.scene.num_envs = num_envs
-    cfg.sim.device = "cuda:4"
+    cfg.sim.device = DEVICE
     cfg.scene.robot.spawn.usd_path = str(overlay)
     generator = cfg.scene.terrain.terrain_generator
     generator.num_rows, generator.num_cols, generator.size = 1, num_envs, (8.0, 8.0)

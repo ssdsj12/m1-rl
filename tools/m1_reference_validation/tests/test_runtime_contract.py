@@ -22,7 +22,8 @@ def runtime():
 
 @pytest.mark.parametrize("args", [[], ["--num-envs", "1", "--steps", "32", "--output", "out"],
     ["--num-envs", "8", "--steps", "33", "--output", "out"],
-    ["--num-envs", "8", "--steps", "32", "--device", "cuda:0", "--output", "out"]])
+    ["--num-envs", "8", "--steps", "32", "--device", "cuda:0", "--output", "out"],
+    ["--num-envs", "8", "--steps", "32", "--device", "cuda:4", "--output", "out"]])
 def test_invalid_arguments_are_rejected(args):
     with pytest.raises(SystemExit):
         runtime().parse_args(args)
@@ -31,7 +32,9 @@ def test_invalid_arguments_are_rejected(args):
 def test_valid_arguments_and_exclusive_output(tmp_path):
     rt = runtime()
     args = rt.parse_args(["--num-envs", "8", "--steps", "32", "--output", str(tmp_path / "new")])
-    assert args.device == "cuda:4" and args.headless is True
+    assert args.device == "cuda:7" and args.headless is True
+    explicit = rt.parse_args(["--num-envs", "8", "--steps", "32", "--device", "cuda:7", "--output", str(tmp_path / "new")])
+    assert explicit.device == args.device
     rt.create_output(args.output)
     with pytest.raises(FileExistsError):
         rt.create_output(args.output)
@@ -276,6 +279,11 @@ def test_scripts_do_not_import_runtime_simulator_early_or_restart():
     assert runner.index("audit_provenance(") < runner.index("from isaaclab.app import AppLauncher")
     assert "fast_shutdown=False" in runner
     assert "unset CUDA_VISIBLE_DEVICES" in shell
+    assert "--device cuda:7" in shell
+    assert "cuda:4" not in runner
+    assert 'device=DEVICE' in runner
+    for function in ("set_device", "reset_peak_memory_stats", "get_device_properties", "max_memory_allocated"):
+        assert f"torch.cuda.{function}(PHYSICAL_GPU)" in runner
     assert shell.count('"${PYTHON_BIN}" "${SCRIPT_DIR}/run.py"') == 1
     assert '"${SCRIPT_DIR}/runtime.py" finalize' in shell
     assert "restart" not in shell.lower()
@@ -392,6 +400,7 @@ def test_adapt_cfg_executes_only_authorized_changes():
     before, after, changes = rt.adapt_cfg(cfg, 8, 1600, "portable.usda", ns(class_type="sensor"), ns(mode="none"))
     assert cfg.scene.terrain.terrain_generator.size == (8.0, 8.0)
     assert cfg.scene.terrain.terrain_generator.num_cols == 8
+    assert cfg.sim.device == "cuda:7"
     assert cfg.scene.robot.spawn.usd_path == "portable.usda"
     assert cfg.episode_length_s == pytest.approx(32.02)
     assert cfg.terminations.crossing_success is None
