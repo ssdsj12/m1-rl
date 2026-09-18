@@ -2,7 +2,10 @@
 
 import importlib.util
 import json
+import os
 from pathlib import Path
+import signal
+import subprocess
 import sys
 import weakref
 from types import SimpleNamespace
@@ -504,8 +507,10 @@ def test_main_partial_initialization_releases_native_owners_before_app_close(tmp
         events.append("app.close")
         events.append(all(ref() is None for ref in refs))
     def launcher(*args, **kwargs):
+        events.append("launcher")
         return Owner(app=SimpleNamespace(close=app_close))
     def fail_cfg():
+        events.append("cfg")
         raise RuntimeError("injected partial initialization failure")
     names = ("isaaclab", "isaaclab.app", "isaaclab.utils", "isaaclab.utils.io", "gymnasium", "torch",
              "go2_pvcnn", "go2_pvcnn.tasks", "go2_pvcnn.tasks.m1_pvcnn_small_obstacle_env_cfg",
@@ -528,10 +533,60 @@ def test_main_partial_initialization_releases_native_owners_before_app_close(tmp
     runner = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(runner)
     monkeypatch.setattr(runner, "validate_source_bindings", lambda *args, **kwargs: {})
+    monkeypatch.setattr(runner, "enable_fatal_diagnostics", lambda: events.append("fatal-diagnostics"))
     original_path = list(sys.path)
     try:
         code = runner.main(["--num-envs", "8", "--steps", "32", "--output", str(tmp_path / "partial")])
     finally:
         sys.path[:] = original_path
     assert code != 0
+    assert events.index("launcher") < events.index("fatal-diagnostics") < events.index("cfg")
     assert events[-2:] == ["app.close", True], "main retained native owners across application close"
+
+
+@pytest.mark.parametrize("fatal_signal", ["SIGABRT", "SIGSEGV"])
+@pytest.mark.parametrize("saved_sdk_handler", [False, True])
+def test_fatal_diagnostics_rearm_native_trace_and_preserve_real_exit(tmp_path, fatal_signal, saved_sdk_handler):
+    path = Path(__file__).resolve().parents[1] / "runtime.py"
+    script = f'''
+import faulthandler, importlib.util, os, resource, signal, sys, threading
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+faulthandler.disable()
+def sdk_handler(signum, frame):
+    print("SDK_PYTHON_HANDLER_CALLED", flush=True)
+def terminate_handler(signum, frame):
+    pass
+signal.signal(signal.SIGTERM, terminate_handler)
+if not {saved_sdk_handler!r}:
+    faulthandler.enable(file=sys.stderr, all_threads=True)
+signal.signal(signal.SIGABRT, sdk_handler)
+signal.signal(signal.SIGSEGV, sdk_handler)
+if {saved_sdk_handler!r}:
+    faulthandler.enable(file=sys.stderr, all_threads=True)
+spec = importlib.util.spec_from_file_location("diagnostic_probe_runtime", {str(path)!r})
+rt = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(rt)
+assert hasattr(rt, "enable_fatal_diagnostics"), "Missing post-AppLauncher fatal diagnostics"
+rt.enable_fatal_diagnostics()
+assert signal.getsignal(signal.SIGTERM) is terminate_handler
+assert faulthandler.is_enabled()
+ready = threading.Event()
+def diagnostic_background_wait():
+    ready.set()
+    threading.Event().wait()
+threading.Thread(target=diagnostic_background_wait, daemon=True).start()
+assert ready.wait(2)
+def diagnostic_fatal_probe():
+    os.kill(os.getpid(), signal.{fatal_signal})
+diagnostic_fatal_probe()
+raise SystemExit("Fatal signal was incorrectly suppressed")
+'''
+    child = subprocess.run([sys.executable, "-c", script], cwd=tmp_path,
+                           env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                           capture_output=True, text=True, timeout=10)
+    assert child.returncode == -int(getattr(signal, fatal_signal)), child.stdout + child.stderr
+    assert "M1_REFERENCE_FATAL_DIAGNOSTICS_ENABLED" in child.stdout
+    assert "Fatal Python error:" in child.stderr
+    assert "diagnostic_fatal_probe" in child.stderr and "diagnostic_background_wait" in child.stderr
+    assert "SDK_PYTHON_HANDLER_CALLED" not in child.stdout
+    assert not list(tmp_path.glob("core*"))

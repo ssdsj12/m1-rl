@@ -66,6 +66,20 @@ def interpreter_evidence(executable, version):
             "python_version": str(version), "expected_amp_executable_resolved": str(expected)}
 
 
+def enable_fatal_diagnostics():
+    """Re-arm Python fatal traces after AppLauncher installs SDK signal callbacks."""
+    import faulthandler
+    import signal
+
+    # disable() restores saved native handlers; do it before selecting defaults.
+    # enable() alone is a no-op when its internal enabled flag is already true.
+    faulthandler.disable()
+    signal.signal(signal.SIGSEGV, signal.SIG_DFL)
+    signal.signal(signal.SIGABRT, signal.SIG_DFL)
+    faulthandler.enable(file=sys.stderr, all_threads=True)
+    print("M1_REFERENCE_FATAL_DIAGNOSTICS_ENABLED signals=SIGSEGV,SIGABRT all_threads=true stderr=true", flush=True)
+
+
 def jsonable(value):
     if isinstance(value, dict):
         return {str(key): jsonable(item) for key, item in value.items()}

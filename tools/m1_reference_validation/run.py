@@ -11,7 +11,7 @@ import uuid
 from provenance import audit_provenance
 from runtime import (
     DEVICE, PHYSICAL_GPU, REQUIRED_MODULES, RuntimeSink, adapt_cfg, cleanup_run, create_output, instrument_reference_wrapper,
-    interpreter_evidence,
+    enable_fatal_diagnostics, interpreter_evidence,
     jsonable, make_diagnostic_cfgs, parse_args, step_once, validate_scene,
     validate_source_bindings, write_json,
 )
@@ -59,6 +59,7 @@ def main(argv=None):
         from isaaclab.app import AppLauncher
         launcher = AppLauncher(args, fast_shutdown=False)
         simulation_app = launcher.app
+        enable_fatal_diagnostics()
         # Simulator-dependent imports must remain below successful AppLauncher.
         import torch
         import gymnasium as gym
