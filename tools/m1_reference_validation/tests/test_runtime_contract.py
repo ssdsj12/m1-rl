@@ -493,9 +493,13 @@ def test_cleanup_releases_caller_and_helper_cyclic_owners_before_app_close(tmp_p
     assert ("marker" in events) is (failure is None)
 
 
-def test_main_partial_initialization_releases_native_owners_before_app_close(tmp_path, monkeypatch):
+@pytest.mark.parametrize("unsubscribe_failure", [None, "hide", "unhide"])
+def test_main_partial_initialization_releases_native_owners_before_app_close(tmp_path, monkeypatch, unsubscribe_failure):
     rt = runtime()
     events, refs = [], []
+    subscriptions = []
+    close_evidence = []
+    previous_term = signal.getsignal(signal.SIGTERM)
     class Owner(SimpleNamespace):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
@@ -503,12 +507,32 @@ def test_main_partial_initialization_releases_native_owners_before_app_close(tmp
             refs.append(weakref.ref(self))
         def __del__(self):
             events.append("destroy")
+        def signal_callback(self, signum, frame):
+            pass
+    class Subscription:
+        def __init__(self, name, callback):
+            self.name, self.callback = name, callback
+            subscriptions.append(self)  # stand-in for the C timeline registry
+        def unsubscribe(self):
+            events.append("unsubscribe:" + self.name)
+            if self.name == unsubscribe_failure:
+                raise RuntimeError("injected unsubscribe failure")
+            self.callback = None
+            subscriptions.remove(self)
     def app_close():
         events.append("app.close")
         events.append(all(ref() is None for ref in refs))
+        close_evidence.append((sum(ref() is not None for ref in refs),
+                               signal.getsignal(signal.SIGTERM) is previous_term))
+        assert all(getattr(ref(), name, None) is None for ref in refs
+                   for name in ("_hide_play_button_callback", "_unhide_play_button_callback"))
     def launcher(*args, **kwargs):
         events.append("launcher")
-        return Owner(app=SimpleNamespace(close=app_close))
+        owner = Owner(app=SimpleNamespace(close=app_close))
+        owner._hide_play_button_callback = Subscription("hide", lambda: owner)
+        owner._unhide_play_button_callback = Subscription("unhide", lambda: owner)
+        signal.signal(signal.SIGTERM, owner.signal_callback)
+        return owner
     def fail_cfg():
         events.append("cfg")
         raise RuntimeError("injected partial initialization failure")
@@ -539,9 +563,37 @@ def test_main_partial_initialization_releases_native_owners_before_app_close(tmp
         code = runner.main(["--num-envs", "8", "--steps", "32", "--output", str(tmp_path / "partial")])
     finally:
         sys.path[:] = original_path
+        signal.signal(signal.SIGTERM, previous_term)
+        subscriptions.clear()
     assert code != 0
     assert events.index("launcher") < events.index("fatal-diagnostics") < events.index("cfg")
-    assert events[-2:] == ["app.close", True], "main retained native owners across application close"
+    assert "unsubscribe:hide" in events and "unsubscribe:unhide" in events
+    assert events[-2:] == ["app.close", unsubscribe_failure is None]
+    assert close_evidence == [(0 if unsubscribe_failure is None else 1, True)]
+    if unsubscribe_failure is not None:
+        assert not (tmp_path / "partial" / "POST_CLEANUP.json").exists()
+
+
+def test_launcher_detach_preserves_third_party_signals_and_handles_absent_attributes():
+    rt = runtime()
+    class Launcher:
+        def handler(self, signum, frame):
+            pass
+    launcher, third_party = Launcher(), Launcher()
+    previous_term = signal.getsignal(signal.SIGTERM)
+    fatal_before = {signum: signal.getsignal(signum) for signum in (signal.SIGABRT, signal.SIGSEGV)}
+    try:
+        signal.signal(signal.SIGTERM, third_party.handler)
+        current = signal.getsignal(signal.SIGTERM)
+        rt.detach_launcher_owners(None, previous_term)
+        rt.detach_launcher_owners(launcher, previous_term)
+        assert signal.getsignal(signal.SIGTERM) is current
+        assert all(signal.getsignal(signum) is handler for signum, handler in fatal_before.items())
+        signal.signal(signal.SIGTERM, launcher.handler)
+        rt.detach_launcher_owners(launcher, previous_term)
+        assert signal.getsignal(signal.SIGTERM) is previous_term
+    finally:
+        signal.signal(signal.SIGTERM, previous_term)
 
 
 @pytest.mark.parametrize("fatal_signal", ["SIGABRT", "SIGSEGV"])

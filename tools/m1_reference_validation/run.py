@@ -3,6 +3,7 @@
 import importlib
 import os
 from pathlib import Path
+import signal
 import sys
 import time
 import traceback
@@ -11,7 +12,7 @@ import uuid
 from provenance import audit_provenance
 from runtime import (
     DEVICE, PHYSICAL_GPU, REQUIRED_MODULES, RuntimeSink, adapt_cfg, cleanup_run, create_output, instrument_reference_wrapper,
-    enable_fatal_diagnostics, interpreter_evidence,
+    detach_launcher_owners, enable_fatal_diagnostics, interpreter_evidence,
     jsonable, make_diagnostic_cfgs, parse_args, step_once, validate_scene,
     validate_source_bindings, write_json,
 )
@@ -34,16 +35,20 @@ def main(argv=None):
     restore_ik = None
     holder = wrapped = sensor = zeros = None
     launcher = properties = cfg = sensor_cfg = recorder_cfg = wrapper_type = wrapper_module = None
+    previous_sigterm_handler = None
 
     def release_runtime_owners():
         # Recorder closures retain holder; sink/wrapper retain env and native views.
         # Initialize every slot above so partial initialization has the same cleanup.
         nonlocal env, sink, restore_ik, holder, wrapped, sensor, zeros
         nonlocal launcher, properties, cfg, sensor_cfg, recorder_cfg, wrapper_type, wrapper_module
-        if holder is not None:
-            holder.clear()
-        env = sink = restore_ik = holder = wrapped = sensor = zeros = None
-        launcher = properties = cfg = sensor_cfg = recorder_cfg = wrapper_type = wrapper_module = None
+        try:
+            detach_launcher_owners(launcher, previous_sigterm_handler)
+        finally:
+            if holder is not None:
+                holder.clear()
+            env = sink = restore_ik = holder = wrapped = sensor = zeros = None
+            launcher = properties = cfg = sensor_cfg = recorder_cfg = wrapper_type = wrapper_module = None
 
     candidate = {"run_id": run_id, "measurement_issues": [], "source_bindings_valid": False}
     counters = {"prepare_calls": 0, "ik_calls": 0}
@@ -57,6 +62,7 @@ def main(argv=None):
         validate_source_bindings(reference)
 
         from isaaclab.app import AppLauncher
+        previous_sigterm_handler = signal.getsignal(signal.SIGTERM)
         launcher = AppLauncher(args, fast_shutdown=False)
         simulation_app = launcher.app
         enable_fatal_diagnostics()

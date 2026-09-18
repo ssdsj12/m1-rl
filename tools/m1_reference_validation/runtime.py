@@ -80,6 +80,35 @@ def enable_fatal_diagnostics():
     print("M1_REFERENCE_FATAL_DIAGNOSTICS_ENABLED signals=SIGSEGV,SIGABRT all_threads=true stderr=true", flush=True)
 
 
+def detach_launcher_owners(launcher, previous_sigterm_handler):
+    """Drop only this launcher's timeline registrations and still-owned SIGTERM."""
+    import signal
+
+    if launcher is None:
+        return
+    failures = []
+    for name in ("_hide_play_button_callback", "_unhide_play_button_callback"):
+        try:
+            subscription = getattr(launcher, name, None)
+            if subscription is not None:
+                subscription.unsubscribe()
+        except BaseException as error:
+            failures.append(f"{name} unsubscribe: {type(error).__name__}: {error}")
+        finally:
+            try:
+                setattr(launcher, name, None)
+            except BaseException as error:
+                failures.append(f"{name} clear: {type(error).__name__}: {error}")
+    try:
+        if getattr(signal.getsignal(signal.SIGTERM), "__self__", None) is launcher:
+            signal.signal(signal.SIGTERM, previous_sigterm_handler)
+    except BaseException as error:
+        failures.append(f"SIGTERM restore: {type(error).__name__}: {error}")
+    if failures:
+        raise RuntimeError("Launcher owner detach failed: " + "; ".join(failures))
+    print("M1_REFERENCE_LAUNCHER_OWNERS_DETACHED", flush=True)
+
+
 def jsonable(value):
     if isinstance(value, dict):
         return {str(key): jsonable(item) for key, item in value.items()}
