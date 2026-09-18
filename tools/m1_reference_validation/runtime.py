@@ -369,6 +369,13 @@ class RecorderBridge:
         sink.sample(env, peaks)
         return None, None
 
+    def post_reset(self, env_ids):
+        sink = self.sink_supplier()
+        observer = getattr(sink, "sync_observer", None)
+        if observer is not None:
+            observer.on_reset(env_ids)
+        return None, None
+
 
 def step_once(wrapped, sink, step, zeros, is_running):
     if not is_running():
@@ -617,7 +624,7 @@ def make_diagnostic_cfgs(filter_expressions, sink_holder, decimation=4):
             return None, None
 
         def record_post_reset(self, env_ids):
-            return None, None
+            return bridge.post_reset(env_ids)
 
     @configclass
     class DiagnosticRecorderCfg(RecorderManagerBaseCfg):
@@ -813,6 +820,7 @@ class RuntimeSink:
         self.env, self.output, self.bboxes = env, Path(output), bboxes
         self.generic_rows, self.counters = generic_rows, counters
         self.expected_step = None
+        self.sync_observer = None
         self.num_envs = env.num_envs
         self.robot = env.scene["robot"]
         n = self.num_envs
@@ -914,11 +922,15 @@ class RuntimeSink:
                    "scanner_own_counts": scanner_result["own_counts"],
                    "scanner_foreign_counts": scanner_result["foreign_counts"],
                    "step": np.asarray(self.expected_step), "elapsed_seconds": np.asarray(time.perf_counter() - self.started)}
+        if self.sync_observer is not None:
+            self.sync_observer.sample(self.expected_step, compact)
         self.chunks.append(compact)
         if len(self.chunks) == 32:
             self.flush()
 
     def flush(self):
+        if self.sync_observer is not None:
+            self.sync_observer.flush()
         if not self.chunks:
             return
         started = time.perf_counter()

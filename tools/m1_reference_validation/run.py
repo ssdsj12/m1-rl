@@ -10,6 +10,7 @@ import traceback
 import uuid
 
 from provenance import audit_provenance
+from sync_bridge import candidate_metadata, make_sync_wrapper
 from runtime import (
     DEVICE, PHYSICAL_GPU, REQUIRED_MODULES, RuntimeSink, adapt_cfg, cleanup_run, create_output, instrument_reference_wrapper,
     detach_launcher_owners, enable_fatal_diagnostics, interpreter_evidence,
@@ -56,6 +57,7 @@ def main(argv=None):
     started = time.perf_counter()
     try:
         provenance = audit_provenance(args.reference)
+        provenance["diagnostic_candidate"] = candidate_metadata()
         write_json(output / "provenance.json", provenance)
         reference = str(Path(args.reference).resolve())
         sys.path[:0] = [reference, str(Path(reference) / "rsl_rl")]
@@ -90,6 +92,7 @@ def main(argv=None):
         sensor_cfg, recorder_cfg = make_diagnostic_cfgs(cfg.scene.semantic_contact_small.filter_prim_paths_expr, holder, cfg.decimation)
         before, after, changes = adapt_cfg(cfg, args.num_envs, args.steps, provenance["overlay_path"], sensor_cfg, recorder_cfg)
         write_json(output / "configuration.json", {"before": before, "after": after, "allowlisted_changes": changes,
+            "diagnostic_candidate": candidate_metadata(),
             "source_wave_and_acceptance": {key: value for key, value in before.items() if key.startswith(("wave_", "acceptance_", "base_height_"))}})
         dump_yaml(str(output / "cfg_before.yaml"), before)
         dump_yaml(str(output / "cfg_after.yaml"), after)
@@ -99,6 +102,7 @@ def main(argv=None):
         env = gym.make("Isaac-M1-Pvcnn-Crossing-60mm-ContactFree-Play-v0", cfg=cfg)
         wrapper_module = importlib.import_module("go2_pvcnn.tasks.m1_rsl_rl_wrapper")
         wrapper_type, restore_ik = instrument_reference_wrapper(M1RslRlEnvWrapper, wrapper_module, counters)
+        wrapper_type = make_sync_wrapper(wrapper_type)
         # Original wrapper __init__ performs the one and only explicit reset.
         wrapped = wrapper_type(env.unwrapped, clip_actions=1)
         if wrapped.num_actions != 16 or wrapped.num_envs != args.num_envs:
@@ -106,6 +110,7 @@ def main(argv=None):
         scene_report, bboxes, generic_rows = validate_scene(env.unwrapped, output)
         sink = RuntimeSink(env.unwrapped, args.steps, output, bboxes, generic_rows, counters)
         holder["sink"] = sink
+        wrapped.bind_post_cross(output, sink)
         zeros = torch.zeros((args.num_envs, 16), device=DEVICE)
         print("M1_REFERENCE_SCENE_READY", f"exposed_height_m={scene_report['actual_exposed_bar_height_m'][0]:.6f}", flush=True)
         with torch.inference_mode():
