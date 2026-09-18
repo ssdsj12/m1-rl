@@ -21,6 +21,8 @@
 
 ## Task 1: Source provenance guard
 
+Execution status: complete, code commit88888f7.35RED (missing implementation) →35GREEN; independent spec+quality reviews approved; deployed-test mainrerun35passed in0.33s and main real-reference guardpassed. Universalnewlines follow the read_text blueprint. Exactevidence in notes/log/2026-09-18-m1-reference-preflight.md.
+
 - [ ] Create the following test file first. Its loader uses an assertion so absence of the module is a failing feature test, not an unrelated import error.
 
 ```python
@@ -165,6 +167,8 @@ def audit_provenance(project):
 - [ ] Run `audit_provenance(Path('/home/hexinkun/m1/Go2Pvcnn'))` with amp; save its JSON to the task's evidence directory through a reviewed caller. Confirm four binary records and equivalent overlay. Main agent commits only the two new files.
 
 ## Task 2: Read-only USD dependency gate (no application start)
+
+Execution status: complete. Mainobserved3layers/1MDL/0unresolved,17rigidbodies/16revolutejoints/onefloatingroot and13mesh+4cylinders. Installedpxr lacksStage.GetCompositionErrors; allprim.GetPrimIndex().localErrors empty andTf.Error.Mark clean. This is not a renderer or simulator runtime pass.
 
 - [ ] Use the installed amp `omni.usd.libs` Python/bin paths and the installed `omni/mdl/core/Base` MDL search directory, not any tests directory. Verify `Ar` resolver context can resolve `OmniPBR.mdl`.
 - [ ] Open the provenance-verified floating overlay in `Usd.Stage`; compute `UsdUtils.ComputeAllDependencies` under the bound resolver context. Require zero unresolved USD/mesh/material asset names and zero stage composition errors.
