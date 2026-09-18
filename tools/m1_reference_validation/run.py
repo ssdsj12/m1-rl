@@ -32,6 +32,19 @@ def main(argv=None):
     env = None
     sink = None
     restore_ik = None
+    holder = wrapped = sensor = zeros = None
+    launcher = properties = cfg = sensor_cfg = recorder_cfg = wrapper_type = wrapper_module = None
+
+    def release_runtime_owners():
+        # Recorder closures retain holder; sink/wrapper retain env and native views.
+        # Initialize every slot above so partial initialization has the same cleanup.
+        nonlocal env, sink, restore_ik, holder, wrapped, sensor, zeros
+        nonlocal launcher, properties, cfg, sensor_cfg, recorder_cfg, wrapper_type, wrapper_module
+        if holder is not None:
+            holder.clear()
+        env = sink = restore_ik = holder = wrapped = sensor = zeros = None
+        launcher = properties = cfg = sensor_cfg = recorder_cfg = wrapper_type = wrapper_module = None
+
     candidate = {"run_id": run_id, "measurement_issues": [], "source_bindings_valid": False}
     counters = {"prepare_calls": 0, "ik_calls": 0}
     exit_code = 0
@@ -126,7 +139,9 @@ def main(argv=None):
             except Exception as flush_error:
                 candidate["measurement_issues"].append(f"chunk flush: {flush_error}")
     finally:
-        exit_code = cleanup_run(output, start, candidate, sink, env, simulation_app, restore_ik, exit_code)
+        exit_code = cleanup_run(output, start, candidate, {"sink": sink, "env": env, "restore_ik": restore_ik},
+                                simulation_app, exit_code,
+                                release_runtime_owners=release_runtime_owners)
     return exit_code
 
 

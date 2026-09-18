@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import weakref
 from types import SimpleNamespace
 from types import ModuleType
 
@@ -429,7 +430,7 @@ def test_cleanup_still_closes_everything_after_report_write_failure(tmp_path, fa
     env = SimpleNamespace(close=lambda: events.append("env.close"))
     app = SimpleNamespace(close=lambda: events.append("app.close"))
     code = rt.cleanup_run(tmp_path, {"run_id": "test", "pid": 123}, {},
-        SimpleNamespace(received_steps=32), env, app, lambda: events.append("restore"), 0,
+        {"sink": SimpleNamespace(received_steps=32), "env": env, "restore_ik": lambda: events.append("restore")}, app, 0,
         writer=writer, marker_writer=lambda *args: events.append("marker"), emit=lambda *args, **kwargs: events.append(str(args[0])))
     assert code != 0
     assert "env.close" in events and "app.close" in events and "restore" in events
@@ -441,10 +442,96 @@ def test_cleanup_marker_is_written_only_after_every_close_and_report(tmp_path):
     rt = runtime()
     events = []
     code = rt.cleanup_run(tmp_path, {"run_id": "test", "pid": 123}, {},
-        SimpleNamespace(received_steps=32), SimpleNamespace(close=lambda: events.append("env.close")),
-        SimpleNamespace(close=lambda: events.append("app.close")), lambda: events.append("restore"), 0,
+        {"sink": SimpleNamespace(received_steps=32), "env": SimpleNamespace(close=lambda: events.append("env.close")),
+         "restore_ik": lambda: events.append("restore")}, SimpleNamespace(close=lambda: events.append("app.close")), 0,
         writer=lambda path, data: events.append("write:" + path.name),
         marker_writer=lambda *args: events.append("marker"), emit=lambda *args, **kwargs: None)
     assert code == 0
     assert events[-1] == "marker"
     assert events.index("env.close") < events.index("app.close") < events.index("marker")
+
+
+@pytest.mark.parametrize("failure", [None, "candidate_report.json", "status.json", "env.close", "restore"])
+def test_cleanup_releases_caller_and_helper_cyclic_owners_before_app_close(tmp_path, failure):
+    rt = runtime()
+    events, refs = [], []
+    class Owner:
+        def __init__(self, name):
+            self.name, self.cycle = name, self
+            self.received_steps = 32
+            refs.append(weakref.ref(self))
+        def close(self):
+            operation("env.close")
+        def __del__(self):
+            events.append("destroy:" + self.name)
+    def operation(name):
+        events.append(name)
+        if name == failure:
+            raise OSError("injected " + name)
+    env, sink, wrapped, sensor, zeros = (Owner(name) for name in ("env", "sink", "wrapped", "sensor", "zeros"))
+    sink.env, wrapped.env, sink.robot = env, env, sensor
+    holder = {"sink": sink}
+    def release():
+        nonlocal env, sink, wrapped, sensor, zeros
+        holder.clear()
+        env = sink = wrapped = sensor = zeros = None
+        events.append("caller.release")
+    def app_close():
+        events.append("app.close")
+        assert all(ref() is None for ref in refs), "Runtime owners survived until plugin unload"
+    code = rt.cleanup_run(tmp_path, {"run_id": "test", "pid": 123}, {},
+        {"sink": sink, "env": env, "restore_ik": lambda: operation("restore")}, SimpleNamespace(close=app_close), 0,
+        writer=lambda path, data: operation(path.name), marker_writer=lambda *args: events.append("marker"),
+        emit=lambda *args, **kwargs: None, release_runtime_owners=release)
+    assert code == (0 if failure is None else 1)
+    assert all(ref() is None for ref in refs)
+    assert events.index("env.close") < events.index("restore") < events.index("caller.release")
+    assert max(events.index("destroy:" + name) for name in ("env", "sink", "wrapped", "sensor", "zeros")) < events.index("app.close")
+    assert ("marker" in events) is (failure is None)
+
+
+def test_main_partial_initialization_releases_native_owners_before_app_close(tmp_path, monkeypatch):
+    rt = runtime()
+    events, refs = [], []
+    class Owner(SimpleNamespace):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.cycle = self
+            refs.append(weakref.ref(self))
+        def __del__(self):
+            events.append("destroy")
+    def app_close():
+        events.append("app.close")
+        events.append(all(ref() is None for ref in refs))
+    def launcher(*args, **kwargs):
+        return Owner(app=SimpleNamespace(close=app_close))
+    def fail_cfg():
+        raise RuntimeError("injected partial initialization failure")
+    names = ("isaaclab", "isaaclab.app", "isaaclab.utils", "isaaclab.utils.io", "gymnasium", "torch",
+             "go2_pvcnn", "go2_pvcnn.tasks", "go2_pvcnn.tasks.m1_pvcnn_small_obstacle_env_cfg",
+             "go2_pvcnn.tasks.m1_rsl_rl_wrapper")
+    modules = {name: ModuleType(name) for name in names}
+    for name, module in modules.items():
+        module.__path__ = []
+        monkeypatch.setitem(sys.modules, name, module)
+    modules["isaaclab.app"].AppLauncher = launcher
+    modules["isaaclab.utils.io"].dump_yaml = lambda *args: None
+    modules["go2_pvcnn.tasks.m1_pvcnn_small_obstacle_env_cfg"].M1PvcnnCrossing60mmContactFreePlayEnvCfg = fail_cfg
+    modules["go2_pvcnn.tasks.m1_rsl_rl_wrapper"].M1RslRlEnvWrapper = object
+    modules["torch"].cuda = SimpleNamespace(set_device=lambda *args: None, reset_peak_memory_stats=lambda *args: None,
+        get_device_properties=lambda *args: Owner(name="fake GPU", uuid="fake UUID"))
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    monkeypatch.setitem(sys.modules, "runtime", rt)
+    monkeypatch.setitem(sys.modules, "provenance", SimpleNamespace(audit_provenance=lambda *args: {}))
+    path = Path(__file__).resolve().parents[1] / "run.py"
+    spec = importlib.util.spec_from_file_location("reference_runner_cleanup_test", path)
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    monkeypatch.setattr(runner, "validate_source_bindings", lambda *args, **kwargs: {})
+    original_path = list(sys.path)
+    try:
+        code = runner.main(["--num-envs", "8", "--steps", "32", "--output", str(tmp_path / "partial")])
+    finally:
+        sys.path[:] = original_path
+    assert code != 0
+    assert events[-2:] == ["app.close", True], "main retained native owners across application close"

@@ -1,6 +1,7 @@
 """Isolated reference-run measurement helpers; importing this module starts no simulator."""
 
 import argparse
+import gc
 import hashlib
 import json
 import os
@@ -343,11 +344,13 @@ def write_cleanup_marker(output, run_id, pid, steps):
     })
 
 
-def cleanup_run(output, start, candidate, sink, env, simulation_app, restore_ik, exit_code,
-                writer=write_json, marker_writer=write_cleanup_marker, emit=print):
-    """Attempt every cleanup independently, even when report persistence fails."""
+def cleanup_run(output, start, candidate, runtime_owners, simulation_app, exit_code,
+                writer=write_json, marker_writer=write_cleanup_marker, emit=print,
+                release_runtime_owners=None):
+    """Persist CPU evidence, close/release runtime owners, then unload the app."""
     output = Path(output)
     failures = []
+    sink, env, restore_ik = (runtime_owners.get(name) for name in ("sink", "env", "restore_ik"))
     received = sink.received_steps if sink is not None else 0
 
     def attempt(label, operation):
@@ -371,6 +374,15 @@ def cleanup_run(output, start, candidate, sink, env, simulation_app, restore_ik,
             attempt("environment close log", lambda: emit("M1_REFERENCE_ENV_CLOSED", flush=True))
     if restore_ik is not None:
         attempt("restore original IK binding", restore_ik)
+    if release_runtime_owners is not None:
+        attempt("release caller runtime owners", release_runtime_owners)
+    # The argument stack retains direct arguments until this function returns.
+    # Pass owners only through a mutable container, then empty both caller and
+    # helper ownership before collecting cycles while native plugins are loaded.
+    attempt("clear cleanup owner container", runtime_owners.clear)
+    sink = env = restore_ik = release_runtime_owners = None
+    attempt("collect runtime owner cycles", gc.collect)
+    attempt("runtime references released log", lambda: emit("M1_REFERENCE_RUNTIME_REFS_RELEASED", flush=True))
     if simulation_app is not None:
         if attempt("application close", simulation_app.close):
             attempt("application close log", lambda: emit("M1_REFERENCE_APP_CLOSED", flush=True))

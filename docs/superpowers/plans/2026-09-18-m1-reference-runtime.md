@@ -46,7 +46,7 @@ Files: `run.py`, `runtime.py`, `run.sh`, `tests/test_runtime_contract.py`. LazyI
 
 ## Task 5: Sequential physical validation
 
-Execution status: blockedbeforefirstIsaaclaunch bysharedGPUresourceat2026-09-18 14:22CST. PhysicalGPU4 isoccupiedbyanotheruserliuxx'straining,21710MiBused/2372MiBfree,100%utilization. Noforeignprocessstopped,nootherGPUchosen,noautomaticmonitor/restart. RequiresGPU4availabilitycoordination; CPUimplementationdoesnotcountas8-envbehaviorpass.
+Execution status (supersedes14:22GPU4 resource block): user changed device toGPU7 and approved8env while keeping15GB reservation. Bindingddad702 passed151 CPU tests. Two8×32 real attempts onamp/GPU7 collected fullsamples but exited139 afterapp.close; startup notpassed. TaskT306.6h.5 nowtests minimal adapter-owned resource release beforepluginunload; noforcedexit/restart/source/controller/thresholdchanges. Actual exposedbar45mm measured; preserve originalbaseline. No8×1600/1024untilnormal startup exit0. See[smoke](../../../notes/log/2026-09-18-m1-reference-gpu7-smoke.md),[diagnostic](../../../notes/log/2026-09-18-m1-reference-gpu7-faulttrace.md).
 
 - [ ] Real8×32startup: correctsources,wrapper/IKcalled,8isolated,validcontacts,completebudget+cleanclose. Notbehaviorpass.
 - [ ] Onfailure collectexactfirstexception/stall; minimaladapterfix withRED/GREEN/review thenexplicitnewrunID. No silentrepeats/parametersweeps.
