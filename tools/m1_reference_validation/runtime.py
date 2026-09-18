@@ -32,6 +32,7 @@ REQUIRED_MODULES = (
 )
 _ALLOWED_CFG = {
     "scene.num_envs", "sim.device", "scene.robot.spawn.usd_path",
+    "scene.replicate_physics",
     "scene.terrain.terrain_generator.num_rows", "scene.terrain.terrain_generator.num_cols",
     "scene.terrain.terrain_generator.size", "scene.terrain.max_init_terrain_level",
     "terminations.crossing_success", "episode_length_s", "recorders", "scene.diagnostic_bar_contacts",
@@ -47,7 +48,7 @@ def parse_args(argv=None):
     parser.add_argument("--reference", choices=(REFERENCE,), default=REFERENCE)
     parser.add_argument("--device", choices=(DEVICE,), default=DEVICE)
     parser.add_argument("--headless", action="store_true", default=True)
-    parser.add_argument("--kit_args", default="--/renderer/multiGpu/enabled=false --/renderer/multiGpu/autoEnable=false")
+    parser.add_argument("--kit_args", default="--/renderer/multiGpu/enabled=false --/renderer/multiGpu/autoEnable=false --/app/extensions/pathStatCacheEnabled=false")
     return parser.parse_args(argv)
 
 
@@ -78,6 +79,35 @@ def enable_fatal_diagnostics():
     signal.signal(signal.SIGABRT, signal.SIG_DFL)
     faulthandler.enable(file=sys.stderr, all_threads=True)
     print("M1_REFERENCE_FATAL_DIAGNOSTICS_ENABLED signals=SIGSEGV,SIGABRT all_threads=true stderr=true", flush=True)
+
+
+def validate_path_stat_cache_disabled():
+    """Observe the startup setting and active hook without resetting/patching SDK state."""
+    import carb.settings
+    import importlib._bootstrap_external as bootstrap
+
+    key = "/app/extensions/pathStatCacheEnabled"
+    actual = carb.settings.get_settings().get(key)
+    ext_settings = sys.modules.get("omni.ext._impl.ext_settings")
+    effective = ext_settings._is_path_stat_cache_enabled() if ext_settings is not None else None
+    sdk = sys.modules.get("omni.ext._impl.stat_cache")
+    hook = bootstrap._path_stat
+    module = getattr(hook, "__module__", None)
+    qualname = getattr(hook, "__qualname__", None)
+    filename = getattr(getattr(hook, "__code__", None), "co_filename", None)
+    sdk_active = ((sdk is not None and hook is getattr(sdk, "_os_stat_cached", None))
+                  or module == "omni.ext._impl.stat_cache" or qualname == "_os_stat_cached"
+                  or (isinstance(filename, str) and filename.replace("\\", "/").endswith("/omni/ext/_impl/stat_cache.py")))
+    evidence = {"setting_key": key, "actual_setting": actual,
+                "ext_settings_loaded": ext_settings is not None, "effective_cache_enabled": effective,
+                "path_stat_module": module, "path_stat_qualname": qualname, "path_stat_code_filename": filename,
+                "sdk_cached_hook_active": bool(sdk_active), "non_physics_runtime_difference": True,
+                "reason": "Disable SDK path-stat exception caching that retains traceback/frame owners; adapter-only lifecycle A/B test, with no controller or physics changes."}
+    if (actual is not False or (ext_settings is not None and effective is not False)
+            or sdk_active or not callable(hook) or not all((module, qualname, filename))):
+        raise ValueError("path-stat cache guard rejected runtime: " + json.dumps(evidence, allow_nan=False))
+    print("M1_REFERENCE_PATH_STAT_CACHE_DISABLED", flush=True)
+    return evidence
 
 
 def detach_launcher_owners(launcher, previous_sigterm_handler):
@@ -203,6 +233,7 @@ def adapt_cfg(cfg, num_envs, steps, overlay, sensor_cfg, recorder_cfg):
     before = jsonable(cfg.to_dict())
     validate_acceptance_cfg(cfg)
     cfg.scene.num_envs = num_envs
+    cfg.scene.replicate_physics = False
     cfg.sim.device = DEVICE
     cfg.scene.robot.spawn.usd_path = str(overlay)
     generator = cfg.scene.terrain.terrain_generator
@@ -676,6 +707,7 @@ def validate_scene(env, output):
     from pxr import Usd, UsdGeom
     from isaaclab.sim import utils as sim_utils
     from extension.semantic_course import DEFAULT_GROUNDING_EMBED_DEPTH_M
+    from clone_evidence import clone_collision_evidence
 
     n = env.num_envs
     robot, sensor = env.scene["robot"], env.scene["diagnostic_bar_contacts"]
@@ -728,6 +760,9 @@ def validate_scene(env, output):
     ground_surface = ground_surface_evidence(stage)
     ground_z = ground_surface["surface_height_m"]
     paths = sensor.semantic_filter_paths
+    if stage != env.scene.stage:
+        raise ValueError("clone collision evidence: actual scene stage differs from current stage")
+    clone_evidence = clone_collision_evidence(env.scene, [paths[index] for index in sensor.own_indices])
     bboxes = np.stack([bounds(paths[index]) for index in sensor.own_indices])
     centers = bboxes.mean(axis=1)
     dimensions = bboxes[:, 1] - bboxes[:, 0]
@@ -745,6 +780,7 @@ def validate_scene(env, output):
         raise ValueError("Reference grounding embed depth changed")
     manifest = {
         "valid": True, "num_envs": n, "env_origins": origins,
+        "clone_collision_evidence": clone_evidence,
         "min_environment_spacing_m": minimum_spacing, "bar_paths": [paths[index] for index in sensor.own_indices],
         "own_filter_indices": sensor.own_indices, "sensor_row_for_env": sensor.row_for_env,
         "actual_contact_view_path_evidence": sensor.contact_path_evidence,

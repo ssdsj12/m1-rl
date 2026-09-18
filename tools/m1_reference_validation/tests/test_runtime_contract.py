@@ -44,6 +44,55 @@ def test_valid_arguments_and_exclusive_output(tmp_path):
         rt.create_output(args.output)
 
 
+def test_path_stat_cache_disabled_in_both_default_and_shell_launch_contract():
+    rt = runtime()
+    args = rt.parse_args(["--num-envs", "8", "--steps", "32", "--output", "unused"])
+    expected = {"--/app/extensions/pathStatCacheEnabled=false", "--/renderer/multiGpu/enabled=false",
+                "--/renderer/multiGpu/autoEnable=false"}
+    assert set(args.kit_args.split()) == expected
+    shell = (Path(__file__).resolve().parents[1] / "run.sh").read_text()
+    for flag in expected:
+        assert shell.count(flag) == 1
+
+
+@pytest.mark.parametrize("fault", [None, "setting_true", "setting_missing", "effective_true", "sdk_hook"])
+def test_path_stat_cache_guard_checks_actual_setting_effective_cache_and_hook(monkeypatch, fault):
+    import importlib._bootstrap_external as bootstrap
+    rt = runtime()
+    original = bootstrap._path_stat
+    queried = []
+    def get_setting(key):
+        queried.append(key)
+        return True if fault == "setting_true" else None if fault == "setting_missing" else False
+    def sdk_cached_hook(path):
+        return os.stat(path)
+    # Identity must reject even an alias whose name does not expose SDK origin.
+    sdk = SimpleNamespace(_os_stat_cached=sdk_cached_hook)
+    carb = ModuleType("carb")
+    settings = ModuleType("carb.settings")
+    settings.get_settings = lambda: SimpleNamespace(get=get_setting)
+    carb.settings = settings
+    monkeypatch.setitem(sys.modules, "carb", carb)
+    monkeypatch.setitem(sys.modules, "carb.settings", settings)
+    monkeypatch.setitem(sys.modules, "omni.ext._impl.stat_cache", sdk)
+    monkeypatch.setitem(sys.modules, "omni.ext._impl.ext_settings",
+                        SimpleNamespace(_is_path_stat_cache_enabled=lambda: fault == "effective_true"))
+    if fault == "sdk_hook":
+        monkeypatch.setattr(bootstrap, "_path_stat", sdk_cached_hook)
+    if fault is None:
+        evidence = rt.validate_path_stat_cache_disabled()
+        assert evidence["actual_setting"] is False and evidence["effective_cache_enabled"] is False
+        assert evidence["path_stat_module"] == original.__module__
+        assert evidence["path_stat_qualname"] == original.__qualname__
+        assert evidence["path_stat_code_filename"] == original.__code__.co_filename
+        assert evidence["sdk_cached_hook_active"] is False
+        assert evidence["non_physics_runtime_difference"] is True and evidence["reason"]
+    else:
+        with pytest.raises(ValueError, match="path-stat cache"):
+            rt.validate_path_stat_cache_disabled()
+    assert queried == ["/app/extensions/pathStatCacheEnabled"]
+
+
 def test_source_binding_rejects_editable_production_module(tmp_path):
     rt = runtime()
     reference = tmp_path / "reference"
@@ -391,7 +440,8 @@ def test_adapt_cfg_executes_only_authorized_changes():
     class FakeCfg(SimpleNamespace):
         def to_dict(self): return dictionary(self)
     cfg = FakeCfg(seed=20260711, decimation=4, sim=ns(dt=0.005, device="cuda:0"),
-        scene=ns(num_envs=1, robot=ns(spawn=ns(usd_path="original.usda")),
+        scene=ns(num_envs=1, replicate_physics=True, filter_collisions=True,
+                 robot=ns(spawn=ns(usd_path="original.usda")),
                  terrain=ns(terrain_generator=ns(num_rows=1, num_cols=1, size=(4, 4)), max_init_terrain_level=0)),
         terminations=ns(crossing_success={"function": "original"}), episode_length_s=20,
         acceptance_max_tilt_rad=0.45, wave_max_action_delta_acceptance=2.0,
@@ -409,7 +459,15 @@ def test_adapt_cfg_executes_only_authorized_changes():
     assert cfg.episode_length_s == pytest.approx(32.02)
     assert cfg.terminations.crossing_success is None
     assert before["commands"] == after["commands"] and before["events"] == after["events"]
-    assert "scene.diagnostic_bar_contacts" in changes and "recorders" in changes
+    assert before["scene"]["replicate_physics"] is True
+    assert after["scene"]["replicate_physics"] is False and cfg.scene.replicate_physics is False
+    assert before["scene"]["filter_collisions"] is after["scene"]["filter_collisions"] is True
+    assert set(changes) == {
+        "episode_length_s", "recorders", "scene.diagnostic_bar_contacts", "scene.num_envs",
+        "scene.replicate_physics", "scene.robot.spawn.usd_path",
+        "scene.terrain.terrain_generator.num_cols", "scene.terrain.terrain_generator.size",
+        "sim.device", "terminations.crossing_success",
+    }
 
 
 def test_actual_interpreter_metadata_requires_the_amp_executable():
@@ -558,6 +616,8 @@ def test_main_partial_initialization_releases_native_owners_before_app_close(tmp
     spec.loader.exec_module(runner)
     monkeypatch.setattr(runner, "validate_source_bindings", lambda *args, **kwargs: {})
     monkeypatch.setattr(runner, "enable_fatal_diagnostics", lambda: events.append("fatal-diagnostics"))
+    cache_evidence = {"actual_setting": False, "non_physics_runtime_difference": True, "reason": "test reason"}
+    monkeypatch.setattr(runner, "validate_path_stat_cache_disabled", lambda: events.append("cache-guard") or cache_evidence)
     original_path = list(sys.path)
     try:
         code = runner.main(["--num-envs", "8", "--steps", "32", "--output", str(tmp_path / "partial")])
@@ -566,7 +626,8 @@ def test_main_partial_initialization_releases_native_owners_before_app_close(tmp
         signal.signal(signal.SIGTERM, previous_term)
         subscriptions.clear()
     assert code != 0
-    assert events.index("launcher") < events.index("fatal-diagnostics") < events.index("cfg")
+    assert events.index("launcher") < events.index("fatal-diagnostics") < events.index("cache-guard") < events.index("cfg")
+    assert json.loads((tmp_path / "partial" / "runtime_metadata.json").read_text())["path_stat_cache"] == cache_evidence
     assert "unsubscribe:hide" in events and "unsubscribe:unhide" in events
     assert events[-2:] == ["app.close", unsubscribe_failure is None]
     assert close_evidence == [(0 if unsubscribe_failure is None else 1, True)]
