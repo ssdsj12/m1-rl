@@ -31,6 +31,10 @@ def _parse_args():
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--keep_std", action="store_true")
+    parser.add_argument("--semantic-crossing", action="store_true")
+    parser.add_argument("--obstacle-threshold", type=float, default=None)
+    parser.add_argument("--min-crossing-rate", type=float, default=0.50)
+    parser.add_argument("--disable-crossing-reset", action="store_true")
     AppLauncher.add_app_launcher_args(parser)
     return parser.parse_args()
 
@@ -117,6 +121,17 @@ def main() -> int:
         print(f"[AME] log_dir={log_dir}", flush=True)
 
         env = gym.make("Isaac-M1-Cross-Large-Complex-AME-v0", cfg=env_cfg)
+        # Install the M1 MPC trajectory manager before wrapping the env so the
+        # teacher adapter can consume current_reference() during rollouts.
+        from extension.trajectory_manager_factory import attach_trajectory_manager_if_enabled
+        attach_trajectory_manager_if_enabled(
+            env.unwrapped,
+            env_cfg,
+            experiment_name="m1_cross_large_complex_ame_teacher",
+            device=device,
+        )
+        if env.unwrapped.scene["robot"].is_fixed_base:
+            raise RuntimeError("M1 locomotion requires a floating base; check USD root_joint")
         wrapped_env = AmeRslRlEnvWrapper(env, clip_actions=100.0)
         policy_obs, extras = wrapped_env.get_observations()
         critic_obs = extras["observations"]["critic"]
@@ -147,6 +162,11 @@ def main() -> int:
         runner.learn(num_learning_iterations=args.max_iterations, init_at_random_ep_len=True)
         print("Training Complete - m1_cross_large_complex_ame", flush=True)
         return 0
+    except BaseException:
+        import traceback
+        traceback.print_exc()
+        print("EARLY_TERMINATION Python exception before training completion", file=sys.stderr, flush=True)
+        raise
     finally:
         if env is not None:
             env.close()

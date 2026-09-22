@@ -56,6 +56,21 @@ class AmeRslRlEnvWrapper(VecEnv):
     def get_observations(self):
         return self._format_observations(self.unwrapped.observation_manager.compute())
 
+    def get_mpc_teacher_action(self):
+        """Return the current M1 MPC action and validity mask when attached."""
+        manager = getattr(self.unwrapped, "_trajectory_manager", None)
+        if manager is None or not callable(getattr(manager, "current_reference", None)):
+            return None, None
+        from .m1_mpc_teacher import reference_to_m1_action
+        reference = manager.current_reference()
+        default_pos = self.unwrapped.scene["robot"].data.default_joint_pos
+        return reference_to_m1_action(reference, default_pos)
+
+    def get_obstacle_presence(self):
+        """Return semantic-small and semantic-large masks for crossing metrics."""
+        from .m1_obstacle_rewards import m1_obstacle_presence
+        return m1_obstacle_presence(self.unwrapped)
+
     def reset(self):
         obs_dict, _ = self.env.reset()
         return self._format_observations(obs_dict)
