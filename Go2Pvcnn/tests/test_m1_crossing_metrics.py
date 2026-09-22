@@ -1,5 +1,5 @@
 import torch
-from m1_crossing_metrics import CrossingEpisodeAccumulator
+from ame_baseline.m1_crossing_metrics import CrossingEpisodeAccumulator
 
 
 def test_no_candidate_is_unsampled_and_complete_counts():
