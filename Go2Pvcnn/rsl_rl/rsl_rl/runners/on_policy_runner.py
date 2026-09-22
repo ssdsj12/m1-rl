@@ -264,7 +264,9 @@ class OnPolicyRunner:
                             teacher_action, teacher_valid = get_teacher()
                             if teacher_action is not None:
                                 ratio_start = float(os.environ.get("M1_MPC_TEACHER_RATIO_START", "0.30"))
-                                ratio = m1_teacher_ratio(it, tot_iter, start=ratio_start)
+                                ratio = m1_teacher_ratio(
+                                    it - start_iter, num_learning_iterations, start=ratio_start
+                                )
                                 teacher_valid = teacher_valid.to(device=actions.device, dtype=torch.bool)
                                 use_teacher = teacher_valid & (torch.rand(actions.shape[0], device=actions.device) < ratio)
                                 actions = torch.where(use_teacher.unsqueeze(-1), teacher_action.to(actions.device), actions)
@@ -425,7 +427,8 @@ class OnPolicyRunner:
         self.writer.add_scalar("Loss/learning_rate", self.alg.learning_rate, locs["it"])
         self.writer.add_scalar("Policy/mean_noise_std", mean_std.item(), locs["it"])
         teacher_ratio = m1_teacher_ratio(
-            locs["it"], locs["tot_iter"],
+            locs["it"] - locs.get("start_iter", 0),
+            locs["num_learning_iterations"],
             start=float(os.environ.get("M1_MPC_TEACHER_RATIO_START", "0.30")),
         )
         self.writer.add_scalar("Policy/m1_teacher_ratio", teacher_ratio, locs["it"])
