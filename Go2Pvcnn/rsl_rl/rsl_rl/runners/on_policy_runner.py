@@ -7,6 +7,44 @@ import os
 import statistics
 import time
 import torch
+
+
+def m1_teacher_ratio(iteration: int, total_iterations: int,
+                     start: float = 0.30,
+                     warmup_end: float = 0.30,
+                     decay_end: float = 0.80) -> float:
+    """Scheduled M1 MPC teacher mixing ratio for PPO rollouts."""
+    if total_iterations <= 0:
+        return 0.0
+    progress = min(max(float(iteration) / float(total_iterations), 0.0), 1.0)
+    if progress <= warmup_end:
+        return float(start)
+    if progress >= decay_end:
+        return 0.0
+    return float(start * (decay_end - progress) / (decay_end - warmup_end))
+
+
+def m1_obstacle_metrics(ep_infos):
+    """Return live episode-level obstacle signals and a conservative proxy rate.
+
+    The training environment does not expose a binary crossing event. The proxy
+    therefore requires both positive obstacle progress and positive articulated
+    climb reward; it is intentionally named as a proxy in TensorBoard.
+    """
+    progress = []
+    climb = []
+    for info in ep_infos:
+        if "Episode_Reward/small_obstacle_progress" in info:
+            progress.append(float(torch.as_tensor(info["Episode_Reward/small_obstacle_progress"]).mean()))
+        if "Episode_Reward/small_obstacle_climb" in info:
+            climb.append(float(torch.as_tensor(info["Episode_Reward/small_obstacle_climb"]).mean()))
+    if not progress or not climb:
+        return 0.0, 0.0, 0.0
+    count = min(len(progress), len(climb))
+    progress = progress[:count]
+    climb = climb[:count]
+    crossing = sum(p > 0.0 and c > 0.0 for p, c in zip(progress, climb)) / count
+    return sum(progress) / count, sum(climb) / count, crossing
 from collections import deque
 from torch.utils.tensorboard import SummaryWriter as TensorboardSummaryWriter
 
@@ -219,6 +257,17 @@ class OnPolicyRunner:
                         actions = self.alg.act(obs, teacher_obs)
                     else:
                         actions = self.alg.act(obs, critic_obs, env=self.env)  # (num_envs, action_dim)
+                        # Optional direct M1 MPC teacher action.  This keeps the
+                        # AME network unchanged and blends only valid MPC rows.
+                        get_teacher = getattr(self.env, "get_mpc_teacher_action", None)
+                        if callable(get_teacher):
+                            teacher_action, teacher_valid = get_teacher()
+                            if teacher_action is not None:
+                                ratio_start = float(os.environ.get("M1_MPC_TEACHER_RATIO_START", "0.30"))
+                                ratio = m1_teacher_ratio(it, tot_iter, start=ratio_start)
+                                teacher_valid = teacher_valid.to(device=actions.device, dtype=torch.bool)
+                                use_teacher = teacher_valid & (torch.rand(actions.shape[0], device=actions.device) < ratio)
+                                actions = torch.where(use_teacher.unsqueeze(-1), teacher_action.to(actions.device), actions)
                     
                     # 执行动作，获取下一步观测、奖励、结束标志和额外信息
                     obs, rewards, dones, infos = self.env.step(actions)
@@ -375,6 +424,18 @@ class OnPolicyRunner:
         self.writer.add_scalar("Loss/surrogate", locs["mean_surrogate_loss"], locs["it"])
         self.writer.add_scalar("Loss/learning_rate", self.alg.learning_rate, locs["it"])
         self.writer.add_scalar("Policy/mean_noise_std", mean_std.item(), locs["it"])
+        teacher_ratio = m1_teacher_ratio(
+            locs["it"], locs["tot_iter"],
+            start=float(os.environ.get("M1_MPC_TEACHER_RATIO_START", "0.30")),
+        )
+        self.writer.add_scalar("Policy/m1_teacher_ratio", teacher_ratio, locs["it"])
+        crossing_snapshot = getattr(self.env, "crossing_metrics_snapshot", lambda: {})()
+        for name, value in crossing_snapshot.items():
+            self.writer.add_scalar(f"Metrics/{name}", value, locs["it"])
+        obstacle_progress, obstacle_climb, crossing_proxy = m1_obstacle_metrics(locs["ep_infos"])
+        self.writer.add_scalar("Metrics/small_obstacle_progress_mean", obstacle_progress, locs["it"])
+        self.writer.add_scalar("Metrics/small_obstacle_climb_mean", obstacle_climb, locs["it"])
+        self.writer.add_scalar("Metrics/crossing_success_rate_proxy", crossing_proxy, locs["it"])
         if locs.get("loss_dict") is not None:
             metric_prefix = "AMP" if self.training_type == "amp" else "Distillation"
             for key, value in locs["loss_dict"].items():
@@ -417,6 +478,10 @@ class OnPolicyRunner:
             )
 
         log_string += ep_string
+        log_string += (
+            f"{'M1 MPC teacher ratio:':>{pad}} {teacher_ratio:.3f}\n"
+            f"{'Crossing success proxy:':>{pad}} {crossing_proxy:.3f}\n"
+        )
         log_string += (
             f"""{'-' * width}\n"""
             f"""{'Total timesteps:':>{pad}} {self.tot_timesteps}\n"""

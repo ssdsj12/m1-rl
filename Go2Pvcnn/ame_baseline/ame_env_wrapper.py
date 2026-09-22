@@ -21,6 +21,11 @@ class AmeRslRlEnvWrapper(VecEnv):
             self.num_actions = self.unwrapped.action_manager.total_action_dim
         else:
             self.num_actions = gym.spaces.flatdim(self.unwrapped.single_action_space)
+        from .m1_crossing_metrics import CrossingEpisodeAccumulator
+        self.crossing_metrics = CrossingEpisodeAccumulator(self.num_envs, self.device)
+        self._small_candidate_prev = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        self._small_candidate_seen = torch.zeros_like(self._small_candidate_prev)
+        self._large_candidate_seen = torch.zeros_like(self._small_candidate_prev)
         self.env.reset()
 
     @property
@@ -71,6 +76,9 @@ class AmeRslRlEnvWrapper(VecEnv):
         from .m1_obstacle_rewards import m1_obstacle_presence
         return m1_obstacle_presence(self.unwrapped)
 
+    def crossing_metrics_snapshot(self):
+        return self.crossing_metrics.snapshot()
+
     def reset(self):
         obs_dict, _ = self.env.reset()
         return self._format_observations(obs_dict)
@@ -103,6 +111,28 @@ class AmeRslRlEnvWrapper(VecEnv):
         if self.clip_actions is not None:
             actions = torch.clamp(actions, -self.clip_actions, self.clip_actions)
         obs_dict, rewards, terminated, truncated, extras = self.env.step(actions)
+        small_candidate, large_candidate = self.get_obstacle_presence()
+        done = (terminated | truncated).bool()
+        crossing_complete = self._small_candidate_prev & ~small_candidate & self._small_candidate_seen
+        term = terminated.bool()
+        collision = torch.zeros_like(done)
+        names = list(self.unwrapped.reward_manager.active_terms)
+        if "parallelism_geometry_collision" in names:
+            collision |= self.unwrapped.reward_manager._step_reward[:, names.index("parallelism_geometry_collision")] != 0
+        self.crossing_metrics.update(
+            candidate=small_candidate,
+            large_candidate=large_candidate,
+            crossing_complete=crossing_complete,
+            done=done,
+            terminated=term,
+            collision=collision,
+            large_avoided=large_candidate & ~collision,
+        )
+        self._small_candidate_prev = small_candidate
+        self._small_candidate_seen |= small_candidate
+        self._large_candidate_seen |= large_candidate
+        self._small_candidate_seen = torch.where(done, torch.zeros_like(self._small_candidate_seen), self._small_candidate_seen)
+        self._large_candidate_seen = torch.where(done, torch.zeros_like(self._large_candidate_seen), self._large_candidate_seen)
         rewards = self._sanitize_rewards(rewards)
         policy, obs_extras = self._format_observations(obs_dict)
         extras["time_outs"] = truncated
