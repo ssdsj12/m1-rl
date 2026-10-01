@@ -1,0 +1,83 @@
+"""Register the active Go2 semantic MPC environments with Gymnasium."""
+
+import gymnasium as gym
+
+from go2_pvcnn.tasks.teacher_elevation_trajectory_mpc_semantic_env_cfg import (
+    TeacherElevationTrajectoryMpcSemanticEnvCfg,
+    TeacherElevationTrajectoryMpcSemanticFlatSmallAvoidanceEnvCfg,
+    TeacherElevationTrajectoryMpcSemanticFlatSmallAvoidanceEnvCfg_PLAY,
+    TeacherElevationTrajectoryMpcSemanticEnvCfg_PLAY,
+)
+
+
+gym.register(
+    id="Isaac-Teacher-Elevation-Trajectory-Mpc-Semantic-Go2-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": TeacherElevationTrajectoryMpcSemanticEnvCfg,
+        "rsl_rl_cfg_entry_point": None,
+    },
+)
+
+gym.register(
+    id="Isaac-Teacher-Elevation-Trajectory-Mpc-Semantic-Go2-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": TeacherElevationTrajectoryMpcSemanticEnvCfg_PLAY,
+        "rsl_rl_cfg_entry_point": None,
+    },
+)
+
+gym.register(
+    id="Isaac-Teacher-Elevation-Trajectory-Mpc-Semantic-Flat-Small-Avoidance-Go2-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": TeacherElevationTrajectoryMpcSemanticFlatSmallAvoidanceEnvCfg,
+        "rsl_rl_cfg_entry_point": None,
+    },
+)
+
+gym.register(
+    id="Isaac-Teacher-Elevation-Trajectory-Mpc-Semantic-Flat-Small-Avoidance-Go2-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": TeacherElevationTrajectoryMpcSemanticFlatSmallAvoidanceEnvCfg_PLAY,
+        "rsl_rl_cfg_entry_point": None,
+    },
+)
+
+print("[go2_pvcnn] Registered Go2 semantic MPC environments:")
+print("[go2_pvcnn]   - Isaac-Teacher-Elevation-Trajectory-Mpc-Semantic-Go2-v0")
+print("[go2_pvcnn]   - Isaac-Teacher-Elevation-Trajectory-Mpc-Semantic-Go2-Play-v0")
+print("[go2_pvcnn]   - Isaac-Teacher-Elevation-Trajectory-Mpc-Semantic-Flat-Small-Avoidance-Go2-v0")
+print("[go2_pvcnn]   - Isaac-Teacher-Elevation-Trajectory-Mpc-Semantic-Flat-Small-Avoidance-Go2-Play-v0")
+
+try:
+    import tracking.register_envs  # noqa: F401
+except Exception as exc:  # noqa: BLE001 - tracking registration is optional for static imports.
+    print(f"[go2_pvcnn] Tracking env registration skipped: {exc}")
+
+try:
+    from tracking.m1_parallelism_viewer_env_cfg import M1ParallelismViewerEnvCfg
+
+    gym.register(
+        id="Isaac-M1-Parallelism-Viewer-v0",
+        entry_point="isaaclab.envs:ManagerBasedRLEnv",
+        kwargs={
+            "env_cfg_entry_point": M1ParallelismViewerEnvCfg,
+            "rsl_rl_cfg_entry_point": None,
+        },
+        disable_env_checker=True,
+    )
+    print("[go2_pvcnn]   - Isaac-M1-Parallelism-Viewer-v0")
+except Exception as exc:  # noqa: BLE001 - M1 registration is optional outside Isaac Sim.
+    print(f"[go2_pvcnn] M1 viewer registration skipped: {exc}")
+
+
+# M1 RL environments are registered lazily by their launchers. Importing the
+# configs here creates a cycle through ``go2_pvcnn.assets`` during IsaacLab
+# startup, so keep this module limited to the base/task registrations.

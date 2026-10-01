@@ -1,0 +1,19 @@
+"""Environment configuration for the isolated Parallelism AMP experiment."""
+
+from isaaclab.utils import configclass
+
+from tracking.cross_large_complex_ppo_env_cfg import CrossLargeComplexPpoEnvCfg
+
+
+@configclass
+class ParallelismAmpCrossLargeComplexEnvCfg(CrossLargeComplexPpoEnvCfg):
+    experiment_name: str = "parallelism_tracking_cross_large_complex_amp"
+    planner_owned_reference_cache: bool = True
+    parallelism_plan_batch_size: int = 1024
+    amp_window_frames: int = 24
+    amp_dt: float = 0.02
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.experiment_name = "parallelism_tracking_cross_large_complex_amp"
+        self.planner_owned_reference_cache = True

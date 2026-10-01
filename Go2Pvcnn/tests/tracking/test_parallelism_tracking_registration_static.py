@@ -1,0 +1,63 @@
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_parallelism_tracking_task_id_is_registered() -> None:
+    source = (ROOT / "tracking/register_envs.py").read_text()
+    assert "Isaac-Go2-Parallelism-Tracking-Flat-v0" in source
+    assert "ParallelismTrackingFlatEnvCfg" in source
+    assert "Isaac-Go2-Parallelism-Tracking-Small-Obstacles-v0" in source
+    assert "ParallelismTrackingSmallObstaclesEnvCfg" in source
+    assert "Isaac-Go2-Parallelism-Tracking-Cross-Large-Complex-v0" in source
+    assert "ParallelismTrackingCrossLargeComplexEnvCfg" in source
+
+
+def test_cross_large_complex_experiment_is_registered_in_all_entrypoints() -> None:
+    experiment = "parallelism_tracking_cross_large_complex"
+    train_source = (ROOT / "scripts/train.py").read_text()
+    play_source = (ROOT / "scripts/play.py").read_text()
+    registration_source = (ROOT / "tracking/register_envs.py").read_text()
+    train_cfg_source = (ROOT / "agent/train_cfg.py").read_text()
+    assert experiment in train_source
+    assert experiment in play_source
+    assert experiment in registration_source
+    assert experiment in train_cfg_source
+
+
+def test_main_task_registration_imports_tracking_registration() -> None:
+    source = (ROOT / "go2_pvcnn/tasks/register_envs.py").read_text()
+    assert "tracking.register_envs" in source
+
+
+def test_play_entrypoint_maps_parallelism_to_the_tracking_play_cfg() -> None:
+    source = (ROOT / "scripts/play.py").read_text()
+
+    assert "ParallelismTrackingFlatEnvCfg_PLAY" in source
+    assert '"parallelism_tracking_flat": (' in source
+    assert '"Isaac-Go2-Parallelism-Tracking-Flat-v0"' in source
+    assert "ParallelismTrackingSmallObstaclesEnvCfg_PLAY" in source
+    assert '"parallelism_tracking_small_obstacles": (' in source
+
+
+def test_parallelism_tracking_env_logs_episode_reference_metrics() -> None:
+    source = (ROOT / "tracking/env.py").read_text()
+    registration = (ROOT / "tracking/register_envs.py").read_text()
+
+    assert "class ParallelismTrackingEnv" in source
+    assert 'Episode_Tracking/episode_joint_mean_error' in source
+    assert 'Episode_Tracking/episode_joint_max_error' in source
+    assert 'Episode_Tracking/episode_reference_root_pos_error' in source
+    assert 'Episode_Tracking/episode_reference_root_rot_error' in source
+    assert 'Episode_Tracking/episode_active_swing_foot_mean_error' in source
+    assert 'Episode_Tracking/episode_active_swing_foot_max_error' in source
+    assert 'Episode_Tracking/episode_active_swing_foot_z_mean_error' in source
+    assert 'Episode_Tracking/episode_active_swing_foot_z_max_error' in source
+    assert 'Episode_Tracking/episode_swing_foot_{leg_name}_mean_error' in source
+    assert 'Episode_Tracking/episode_swing_foot_{leg_name}_max_error' in source
+    assert 'Episode_Tracking/episode_swing_foot_{leg_name}_z_mean_error' in source
+    assert 'Episode_Tracking/episode_joint_{leg_name}_max_error' in source
+    assert "reset_parallelism_tracking_error_stats(self, ids)" in source
+    assert 'Episode_Tracking/episode_reference_root_lin_vel_error' not in source
+    assert 'Episode_Tracking/episode_reference_root_ang_vel_error' not in source
+    assert 'entry_point="tracking.env:ParallelismTrackingEnv"' in registration

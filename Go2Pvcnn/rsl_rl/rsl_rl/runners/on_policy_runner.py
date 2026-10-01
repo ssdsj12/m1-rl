@@ -1,0 +1,794 @@
+#  Copyright 2021 ETH Zurich, NVIDIA CORPORATION
+#  SPDX-License-Identifier: BSD-3-Clause
+
+from __future__ import annotations
+
+import os
+import statistics
+import time
+import torch
+
+
+def m1_teacher_ratio(iteration: int, total_iterations: int,
+                     start: float = 1.0,
+                     end: float = 0.0,
+                     warmup_end: float = 0.0,
+                     decay_end: float = 1.0) -> float:
+    """Return the bounded, resume-relative MPC control share."""
+    if total_iterations <= 0:
+        return float(end)
+    start = min(max(float(start), 0.0), 1.0)
+    end = min(max(float(end), 0.0), 1.0)
+    warmup_end = min(max(float(warmup_end), 0.0), 1.0)
+    decay_end = min(max(float(decay_end), warmup_end), 1.0)
+    progress = min(max(float(iteration) / float(total_iterations), 0.0), 1.0)
+    if progress <= warmup_end:
+        return start
+    if progress >= decay_end:
+        return end
+    alpha = (progress - warmup_end) / max(decay_end - warmup_end, 1.0e-6)
+    return start + (end - start) * alpha
+
+
+def m1_teacher_ratio_schedule_from_env() -> tuple[float, float, float, float]:
+    """Return one shared MPC control-share schedule for rollout and logging.
+
+    The previous implementation used 0.50->0.05 while sampling actions but
+    logged a separate 1.0->0.0 schedule, making the TensorBoard ratio appear
+    higher than the actual teacher-control probability.  Keeping the schedule
+    in one helper makes the metric describe the policy that was actually run.
+    """
+    return (
+        float(os.environ.get("M1_MPC_TEACHER_RATIO_START", "0.50")),
+        float(os.environ.get("M1_MPC_TEACHER_RATIO_END", "0.05")),
+        float(os.environ.get("M1_MPC_TEACHER_WARMUP_PCT", "0.0")),
+        float(os.environ.get("M1_MPC_TEACHER_DECAY_END_PCT", "1.0")),
+    )
+
+
+def m1_obstacle_metrics(ep_infos):
+    """Return live episode-level obstacle signals and a conservative proxy rate.
+
+    The training environment does not expose a binary crossing event. The proxy
+    therefore requires both positive obstacle progress and positive articulated
+    climb reward; it is intentionally named as a proxy in TensorBoard.
+    """
+    progress = []
+    climb = []
+    for info in ep_infos:
+        if "Episode_Reward/small_obstacle_progress" in info:
+            progress.append(float(torch.as_tensor(info["Episode_Reward/small_obstacle_progress"]).mean()))
+        if "Episode_Reward/small_obstacle_climb" in info:
+            climb.append(float(torch.as_tensor(info["Episode_Reward/small_obstacle_climb"]).mean()))
+    if not progress or not climb:
+        return 0.0, 0.0, 0.0
+    count = min(len(progress), len(climb))
+    progress = progress[:count]
+    climb = climb[:count]
+    crossing = sum(p > 0.0 and c > 0.0 for p, c in zip(progress, climb)) / count
+    return sum(progress) / count, sum(climb) / count, crossing
+from collections import deque
+from torch.utils.tensorboard import SummaryWriter as TensorboardSummaryWriter
+
+import rsl_rl
+from rsl_rl.algorithms import HybridDistillationPPO, PPO, Distillation, ParallelismAMPPPO
+from rsl_rl.env import VecEnv
+from rsl_rl.modules import ActorCritic, ActorCriticCNN, ActorCriticRecurrent, EmpiricalNormalization, StudentTeacherCNN, AmpActorCriticCNN
+from rsl_rl.utils import store_code_state
+
+
+class IncompleteAMPCheckpointError(RuntimeError):
+    """Raised when only one half of the AMP checkpoint state is present."""
+
+
+class OnPolicyRunner:
+    """On-policy runner for training and evaluation."""
+
+    def __init__(self, env: VecEnv, train_cfg, log_dir=None, device="cpu"):
+        self.cfg = train_cfg
+        self.alg_cfg = train_cfg["algorithm"]
+        self.policy_cfg = train_cfg["policy"]
+        self.device = device
+        self.env = env
+        if self.alg_cfg["class_name"] == "PPO":
+            self.training_type = "rl"
+        elif self.alg_cfg["class_name"] == "Distillation":
+            self.training_type = "distillation"
+        elif self.alg_cfg["class_name"] == "HybridDistillationPPO":
+            self.training_type = "hybrid_distillation"
+        elif self.alg_cfg["class_name"] == "ParallelismAMPPPO":
+            self.training_type = "amp"
+        else:
+            raise ValueError(f"Unknown algorithm class: {self.alg_cfg['class_name']}")
+
+        obs, extras = self.env.get_observations()
+        num_obs = obs.shape[1]
+        if self.training_type == "hybrid_distillation":
+            if "teacher" not in extras["observations"]:
+                raise ValueError("Distillation training requires extras['observations']['teacher']")
+            if "critic" not in extras["observations"]:
+                raise ValueError("Hybrid distillation training requires extras['observations']['critic']")
+            if "distillation_context" not in extras["observations"]:
+                raise ValueError("Hybrid distillation training requires extras['observations']['distillation_context']")
+            num_teacher_obs = extras["observations"]["teacher"].shape[1]
+            num_critic_obs = extras["observations"]["critic"].shape[1]
+            self.privileged_obs_type = "critic"
+        elif self.training_type == "distillation":
+            if "teacher" not in extras["observations"]:
+                raise ValueError("Distillation training requires extras['observations']['teacher']")
+            num_teacher_obs = extras["observations"]["teacher"].shape[1]
+            num_critic_obs = num_teacher_obs
+            self.privileged_obs_type = "teacher"
+        elif "critic" in extras["observations"]:
+            num_critic_obs = extras["observations"]["critic"].shape[1]
+            self.privileged_obs_type = "critic"
+        else:
+            num_critic_obs = num_obs
+            self.privileged_obs_type = None
+        actor_critic_class = eval(self.policy_cfg.pop("class_name"))  # ActorCritic
+        if self.training_type == "hybrid_distillation":
+            actor_critic = actor_critic_class(
+                num_obs,
+                num_teacher_obs,
+                self.env.num_actions,
+                num_critic_obs=num_critic_obs,
+                **self.policy_cfg,
+            ).to(self.device)
+        else:
+            actor_critic = actor_critic_class(
+                num_obs, num_critic_obs, self.env.num_actions, **self.policy_cfg
+            ).to(self.device)
+        alg_class = eval(self.alg_cfg.pop("class_name"))  # PPO
+        self.alg: PPO | Distillation | HybridDistillationPPO = alg_class(
+            actor_critic,
+            device=self.device,
+            **self.alg_cfg,
+        )
+        self.num_steps_per_env = self.cfg["num_steps_per_env"] #这个参数决定什么时候更新一次策略
+        self.save_interval = self.cfg["save_interval"] #保存间隔的权重
+        self.empirical_normalization = self.cfg["empirical_normalization"] #什么是经验归一化 ？维护Running Mean和Variance
+        if self.empirical_normalization:
+            self.obs_normalizer = EmpiricalNormalization(shape=[num_obs], until=1.0e8).to(self.device)
+            self.critic_obs_normalizer = EmpiricalNormalization(shape=[num_critic_obs], until=1.0e8).to(self.device)
+        else:
+            self.obs_normalizer = torch.nn.Identity()  # no normalization
+            self.critic_obs_normalizer = torch.nn.Identity()  # no normalization
+        # init storage and model
+        if self.training_type in ("distillation", "hybrid_distillation"):
+            self.alg.init_storage(
+                self.training_type,
+                self.env.num_envs,
+                self.num_steps_per_env,
+                [num_obs],
+                [num_critic_obs],
+                [self.env.num_actions],
+            )
+        else:
+            self.alg.init_storage(
+                self.env.num_envs,
+                self.num_steps_per_env,
+                [num_obs],
+                [num_critic_obs],
+                [self.env.num_actions],
+            )
+
+        # Log
+        self.log_dir = log_dir
+        self.writer = None
+        self.tot_timesteps = 0
+        self.tot_time = 0
+        self.current_learning_iteration = 0
+        self.git_status_repos = [rsl_rl.__file__]
+        
+        # Synchronous PVCNN training
+        self.enable_pvcnn_sync_training = self.cfg.get("enable_pvcnn_sync_training", False)
+        self.pvcnn_train_interval = self.cfg.get("pvcnn_train_interval", 10)  # Train PVCNN every N iterations
+        self.pvcnn_train_epochs = self.cfg.get("pvcnn_train_epochs", 5)  # PVCNN training epochs per update
+
+    def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):
+        """
+        主训练循环函数。
+        
+        参数:
+            num_learning_iterations: 训练迭代次数（每次迭代包含数据收集→策略更新→可选的PVCNN训练）
+            init_at_random_ep_len: 是否在随机episode长度处开始训练（用于curriculum learning）
+        """
+        # ========================================
+        # 初始化日志记录器
+        # ========================================
+        if self.log_dir is not None and self.writer is None:  # 如果有日志目录且writer未初始化
+            # 启动Tensorboard、Neptune或WandB日志记录器，默认使用Tensorboard
+            self.logger_type = self.cfg.get("logger", "tensorboard")  # 获取日志类型配置
+            self.logger_type = self.logger_type.lower()  # 转换为小写
+
+            if self.logger_type == "neptune":  # Neptune云端实验追踪
+                from rsl_rl.utils.neptune_utils import NeptuneSummaryWriter
+
+                self.writer = NeptuneSummaryWriter(log_dir=self.log_dir, flush_secs=10, cfg=self.cfg)
+                self.writer.log_config(self.env.cfg, self.cfg, self.alg_cfg, self.policy_cfg)
+            elif self.logger_type == "wandb":  # Weights & Biases云端实验追踪
+                from rsl_rl.utils.wandb_utils import WandbSummaryWriter
+
+                self.writer = WandbSummaryWriter(log_dir=self.log_dir, flush_secs=10, cfg=self.cfg)
+                self.writer.log_config(self.env.cfg, self.cfg, self.alg_cfg, self.policy_cfg)
+            elif self.logger_type == "tensorboard":  # TensorBoard本地日志记录
+                self.writer = TensorboardSummaryWriter(log_dir=self.log_dir, flush_secs=10)
+            else:
+                raise AssertionError("logger type not found")
+
+        # ========================================
+        # 初始化训练环境
+        # ========================================
+        if init_at_random_ep_len:  # 如果启用随机episode长度初始化
+            # 将每个环境的episode长度设置为随机值（用于课程学习，避免所有环境同时reset）
+            self.env.episode_length_buf = torch.randint_like(
+                self.env.episode_length_buf, high=int(self.env.max_episode_length)
+            )
+        
+        # 获取初始观测值
+        obs, extras = self.env.get_observations()  # obs: (num_envs, obs_dim)
+        if self.training_type == "hybrid_distillation":
+            teacher_obs = extras["observations"]["teacher"]
+            critic_obs = extras["observations"]["critic"]
+            distillation_context = extras["observations"]["distillation_context"]
+        elif self.training_type == "distillation":
+            teacher_obs = extras["observations"].get("teacher", obs)
+            critic_obs = teacher_obs
+        else:
+            critic_obs = extras["observations"].get("critic", obs)  # critic观测（可能包含额外信息）
+        obs, critic_obs = obs.to(self.device), critic_obs.to(self.device)
+        if self.training_type in ("distillation", "hybrid_distillation"):
+            teacher_obs = teacher_obs.to(self.device)
+        if self.training_type == "hybrid_distillation":
+            distillation_context = distillation_context.to(self.device)
+        self.train_mode()  # 切换到训练模式（启用dropout、batchnorm训练行为等）
+        
+
+        # ========================================
+        # 初始化训练统计变量
+        # ========================================
+        ep_infos = []  # 存储episode信息（每个episode结束时的统计数据）
+        rewbuffer = deque(maxlen=100)  # 最近100个episode的奖励，用于计算平均奖励
+        lenbuffer = deque(maxlen=100)  # 最近100个episode的长度，用于计算平均长度
+        cur_reward_sum = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)  # 当前episode累积奖励
+        cur_episode_length = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)  # 当前episode长度
+
+        # ========================================
+        # 主训练循环
+        # ========================================
+        start_iter = self.current_learning_iteration  # 起始迭代次数（用于resume训练）
+        tot_iter = start_iter + num_learning_iterations  # 总迭代次数 = 起始 + 新增迭代
+        for it in range(start_iter, tot_iter):  # 迭代训练
+            if self.training_type in ("distillation", "hybrid_distillation", "amp") and hasattr(self.alg, "set_iteration"):
+                self.alg.set_iteration(
+                    it,
+                    tot_iter,
+                    schedule_start_iteration=start_iter,
+                )
+            start = time.time()  # 记录数据收集开始时间
+            m1_teacher_valid_count = 0
+            m1_teacher_applied_count = 0
+            m1_teacher_saturated_count = 0
+            m1_teacher_total_count = 0
+            
+            # ========================================
+            # 阶段1: Rollout（数据收集）
+            # ========================================
+            with torch.inference_mode():  # 推理模式，不计算梯度（节省内存和计算）
+                for i in range(self.num_steps_per_env):  # 每个环境收集num_steps_per_env步数据
+                    # 使用当前策略选择动作
+                    if self.training_type == "hybrid_distillation":
+                        actions = self.alg.act(obs, teacher_obs, critic_obs, distillation_context)
+                    elif self.training_type == "distillation":
+                        actions = self.alg.act(obs, teacher_obs)
+                    else:
+                        actions = self.alg.act(obs, critic_obs, env=self.env)  # (num_envs, action_dim)
+                        # Optional direct M1 MPC teacher action.  This keeps the
+                        # AME network unchanged and blends only valid MPC rows.
+                        get_teacher = getattr(self.env, "get_mpc_teacher_action", None)
+                        if callable(get_teacher):
+                            teacher_action, teacher_valid = get_teacher()
+                            if teacher_action is not None:
+                                teacher_start, teacher_end, teacher_warmup, teacher_decay = m1_teacher_ratio_schedule_from_env()
+                                ratio = m1_teacher_ratio(
+                                    it - start_iter,
+                                    num_learning_iterations,
+                                    # A full teacher takeover at iteration 0 can
+                                    # inject a discontinuous joint target into a
+                                    # stable checkpoint.  Keep the teacher
+                                    # available for every detected obstacle, but
+                                    # stage its control share so PPO retains a
+                                    # stabilising vote during adaptation.
+                                    start=teacher_start,
+                                    end=teacher_end,
+                                    warmup_end=teacher_warmup,
+                                    decay_end=teacher_decay,
+                                )
+                                teacher_valid = teacher_valid.to(device=actions.device, dtype=torch.bool)
+                                teacher_action = teacher_action.to(actions.device)
+                                teacher_action_finite = torch.isfinite(teacher_action).all(dim=-1)
+                                teacher_action = torch.nan_to_num(
+                                    teacher_action,
+                                    nan=0.0,
+                                    posinf=1.0,
+                                    neginf=-1.0,
+                                ).clamp(-1.0, 1.0)
+                                teacher_valid = teacher_valid & teacher_action_finite
+                                use_teacher = teacher_valid & (torch.rand(actions.shape[0], device=actions.device) < ratio)
+                                # Mark teacher-controlled transitions so the
+                                # PPO actor loss does not treat off-policy
+                                # teacher actions as samples from the student.
+                                # The value target still retains these rows.
+                                self.alg.transition.ppo_active = (~use_teacher).to(
+                                    dtype=actions.dtype
+                                )
+                                m1_teacher_valid_count += int(teacher_valid.sum().item())
+                                m1_teacher_applied_count += int(use_teacher.sum().item())
+                                m1_teacher_saturated_count = int(m1_teacher_saturated_count + (use_teacher & (teacher_action.abs().amax(dim=-1) >= 0.999)).sum().item())
+                                m1_teacher_total_count += int(actions.shape[0])
+                                # Teacher references contain zero wheel targets
+                                # by design.  Replacing all 16 action channels
+                                # therefore made the robot stop and slide into
+                                # the obstacle.  Inject only the 12 articulated
+                                # leg channels and keep the student's 4 wheel
+                                # velocity commands.
+                                leg_mask = torch.ones(actions.shape[-1], dtype=torch.bool, device=actions.device)
+                                leg_mask[3::4] = False
+                                blend = min(max(float(os.environ.get("M1_MPC_TEACHER_BLEND", "0.50")), 0.0), 1.0)
+                                leg_teacher = actions + blend * (teacher_action - actions)
+                                teacher_blended = torch.where(
+                                    leg_mask.unsqueeze(0), leg_teacher, actions,
+                                )
+                                # A valid crossing plan must also reach the
+                                # obstacle.  Early-stage M1 policies were
+                                # trained mostly at near-zero velocity, so
+                                # leaving wheels entirely to PPO made the
+                                # teacher valid but physically stationary.
+                                # Drive only teacher-controlled rows with the
+                                # commanded forward speed; lateral/yaw wheels
+                                # remain policy-controlled for stability.
+                                if os.environ.get("M1_TEACHER_FORWARD_WHEELS", "1") == "1":
+                                    command = self.env.unwrapped.command_manager.get_command("base_velocity")
+                                    wheel_command = command[:, 0].to(actions.device).clamp(-1.0, 1.0)
+                                    # Slow the approach while a semantic small
+                                    # obstacle is in the corridor.  A full
+                                    # command-speed push makes the first leg
+                                    # reach the box before the serial swing has
+                                    # completed, which is exactly the scrape /
+                                    # tip failure seen in the GPU7 probe.
+                                    if os.environ.get("M1_TEACHER_SLOW_APPROACH", "1") == "1":
+                                        get_presence = getattr(self.env, "get_obstacle_presence", None)
+                                        if callable(get_presence):
+                                            small_candidate, _ = get_presence()
+                                            approach_speed = float(os.environ.get("M1_TEACHER_APPROACH_SPEED", "0.12"))
+                                            wheel_command = torch.where(
+                                                small_candidate.to(device=actions.device, dtype=torch.bool),
+                                                wheel_command.clamp(min=-approach_speed, max=approach_speed),
+                                                wheel_command,
+                                            )
+                                    teacher_blended[:, ~leg_mask] = wheel_command[:, None]
+                                actions = torch.where(use_teacher.unsqueeze(-1), teacher_blended, actions)
+
+                                # Keep an imitation target for only the rows
+                                # actually controlled by the teacher.  Wheels
+                                # remain policy-controlled, so use the policy
+                                # mean for those four columns instead of a
+                                # moving sampled-wheel target.
+                                teacher_target = teacher_blended.detach().clone()
+                                policy_mean = self.alg.actor_critic.action_mean.detach()
+                                wheel_mask = ~leg_mask
+                                # Keep imitation targets identical to the
+                                # executed action.  When forward-wheel teacher
+                                # control is enabled, copying policy_mean here
+                                # silently trained PPO against zero wheel speed
+                                # while the environment received command speed.
+                                teacher_target[:, wheel_mask] = teacher_blended[:, wheel_mask]
+                                self.alg.transition.privileged_actions = teacher_target
+                                self.alg.transition.imitation_weight = use_teacher.to(
+                                    dtype=actions.dtype
+                                )
+                                self.alg.transition.plan_valid = teacher_valid.to(
+                                    dtype=actions.dtype
+                                )
+
+                                # Store the action actually sent to the
+                                # environment.  Otherwise PPO records the
+                                # pre-teacher policy action and learns from a
+                                # different transition than the one executed.
+                                self.alg.transition.actions = actions.detach()
+                                self.alg.transition.actions_log_prob = (
+                                    self.alg.actor_critic.get_actions_log_prob(actions).detach()
+                                )
+                    
+                    # 执行动作，获取下一步观测、奖励、结束标志和额外信息
+                    obs, rewards, dones, infos = self.env.step(actions)
+                    
+                    # 归一化观测值（使用running mean/std）
+                    obs = self.obs_normalizer(obs)
+                    
+                    # 获取critic观测值（可能包含特权信息，如真实状态）
+                    if self.training_type == "hybrid_distillation" and "teacher" in infos["observations"]:
+                        teacher_obs = infos["observations"]["teacher"]
+                        critic_obs = self.critic_obs_normalizer(infos["observations"]["critic"])
+                        distillation_context = infos["observations"]["distillation_context"]
+                    elif self.training_type == "distillation" and "teacher" in infos["observations"]:
+                        teacher_obs = infos["observations"]["teacher"]
+                        critic_obs = self.critic_obs_normalizer(teacher_obs)
+                    elif "critic" in infos["observations"]:
+                        critic_obs = self.critic_obs_normalizer(infos["observations"]["critic"])
+                    else:
+                        critic_obs = obs  # 如果没有特权信息，使用普通观测
+                    
+                    # 将所有数据移动到训练设备（GPU/CPU）
+                    obs, critic_obs, rewards, dones = (
+                        obs.to(self.device),
+                        critic_obs.to(self.device),
+                        rewards.to(self.device),
+                        dones.to(self.device),
+                    )
+                    if self.training_type in ("distillation", "hybrid_distillation"):
+                        teacher_obs = teacher_obs.to(self.device)
+                    if self.training_type == "hybrid_distillation":
+                        distillation_context = distillation_context.to(self.device)
+                    
+                    # 将数据存储到rollout buffer（用于后续训练）
+                    self.alg.process_env_step(rewards, dones, infos)
+
+                    # ========================================
+                    # 日志记录（episode统计）
+                    # ========================================
+                    if self.log_dir is not None:
+                        # 收集episode信息（当episode结束时会有"episode"或"log"字段）
+                        if "episode" in infos:
+                            ep_infos.append(infos["episode"])
+                        elif "log" in infos:
+                            ep_infos.append(infos["log"])
+                        
+                        # 累积奖励和episode长度
+                        cur_reward_sum += rewards  # 每步累加奖励 shape: (num_envs,)
+                        cur_episode_length += 1  # 每步增加长度
+                        
+                        # 找到所有完成的episode（dones > 0）
+                        new_ids = (dones > 0).nonzero(as_tuple=False)
+                        
+                        # 将完成的episode的统计数据添加到buffer
+                        rewbuffer.extend(cur_reward_sum[new_ids][:, 0].cpu().numpy().tolist())
+                        lenbuffer.extend(cur_episode_length[new_ids][:, 0].cpu().numpy().tolist())
+                        
+                        # 重置已完成episode的统计变量
+                        cur_reward_sum[new_ids] = 0
+                        cur_episode_length[new_ids] = 0
+
+                stop = time.time()
+                collection_time = stop - start  # 计算数据收集耗时
+
+                # ========================================
+                # 阶段2: 计算returns（优势函数和回报）
+                # ========================================
+                start = stop
+                if self.training_type in ("rl", "hybrid_distillation", "amp"):
+                    self.alg.compute_returns(critic_obs)  # 使用GAE计算优势函数和回报值
+
+            # ========================================
+            # 阶段3: 策略更新（PPO update）
+            # ========================================
+            loss_dict = None
+            if self.training_type in ("distillation", "hybrid_distillation"):
+                loss_dict = self.alg.update()
+                mean_value_loss = float(loss_dict.get("value_loss", 0.0))
+                mean_surrogate_loss = float(
+                    loss_dict.get("surrogate_loss", loss_dict.get("behavior", 0.0))
+                )
+            elif self.training_type == "amp":
+                loss_dict = self.alg.update()
+                mean_value_loss = float(loss_dict.get("value_loss", 0.0))
+                mean_surrogate_loss = float(loss_dict.get("surrogate_loss", 0.0))
+            else:
+                mean_value_loss, mean_surrogate_loss = self.alg.update()  # PPO策略更新
+            stop = time.time()
+            learn_time = stop - start  # 计算策略更新耗时
+            
+            # ========================================
+            # 阶段4: PVCNN同步训练（可选）
+            # ========================================
+            pvcnn_loss = 0.0  # 初始化PVCNN loss
+            if self.enable_pvcnn_sync_training and (it + 1) % self.pvcnn_train_interval == 0:
+                # 每pvcnn_train_interval次PPO迭代后训练一次PVCNN
+                pvcnn_start = time.time()
+                # 使用收集到的点云数据训练PVCNN语义分割模型
+                pvcnn_loss = self.alg.train_pvcnn_on_collected_data(num_epochs=self.pvcnn_train_epochs)
+                pvcnn_time = time.time() - pvcnn_start
+                print(f"[PVCNN Training] Iter {it}: Loss={pvcnn_loss:.4f}, Time={pvcnn_time:.2f}s")
+                
+                # 记录PVCNN loss到TensorBoard
+                if self.log_dir is not None:
+                    self.writer.add_scalar("Loss/pvcnn_semantic", pvcnn_loss, it)
+            
+            # ========================================
+            # 阶段5: 日志记录和模型保存
+            # ========================================
+            self.current_learning_iteration = it  # 更新当前迭代次数
+            
+            if self.log_dir is not None:
+                self.log(locals())  # 记录所有统计数据到TensorBoard
+            
+            if it % self.save_interval == 0:  # 每save_interval次迭代保存一次模型
+                self.save(os.path.join(self.log_dir, f"model_{it}.pt"))
+            
+            ep_infos.clear()  # 清空episode信息列表，准备下一次迭代
+
+        # ========================================
+        # 训练结束，保存最终模型
+        # ========================================
+        self.save(os.path.join(self.log_dir, f"model_{self.current_learning_iteration}.pt"))
+
+    def log(self, locs: dict, width: int = 80, pad: int = 35):
+        self.tot_timesteps += self.num_steps_per_env * self.env.num_envs
+        self.tot_time += locs["collection_time"] + locs["learn_time"]
+        iteration_time = locs["collection_time"] + locs["learn_time"]
+
+        ep_string = ""
+        if locs["ep_infos"]:
+            for key in locs["ep_infos"][0]:
+                infotensor = torch.tensor([], device=self.device)
+                for ep_info in locs["ep_infos"]:
+                    # handle scalar and zero dimensional tensor infos
+                    if key not in ep_info:
+                        continue
+                    if not isinstance(ep_info[key], torch.Tensor):
+                        ep_info[key] = torch.Tensor([ep_info[key]])
+                    if len(ep_info[key].shape) == 0:
+                        ep_info[key] = ep_info[key].unsqueeze(0)
+                    infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
+                value = torch.mean(infotensor)
+                # log to logger and terminal
+                if "/" in key:
+                    self.writer.add_scalar(key, value, locs["it"])
+                    ep_string += f"""{f'{key}:':>{pad}} {value:.4f}\n"""
+                else:
+                    self.writer.add_scalar("Episode/" + key, value, locs["it"])
+                    ep_string += f"""{f'Mean episode {key}:':>{pad}} {value:.4f}\n"""
+        mean_std = self.alg.actor_critic.std.mean()
+        fps = int(self.num_steps_per_env * self.env.num_envs / (locs["collection_time"] + locs["learn_time"]))
+
+        self.writer.add_scalar("Loss/value_function", locs["mean_value_loss"], locs["it"])
+        self.writer.add_scalar("Loss/surrogate", locs["mean_surrogate_loss"], locs["it"])
+        self.writer.add_scalar("Loss/learning_rate", self.alg.learning_rate, locs["it"])
+        self.writer.add_scalar("Policy/mean_noise_std", mean_std.item(), locs["it"])
+        teacher_start, teacher_end, teacher_warmup, teacher_decay = m1_teacher_ratio_schedule_from_env()
+        teacher_ratio = m1_teacher_ratio(
+            locs["it"] - locs.get("start_iter", 0),
+            locs["num_learning_iterations"],
+            start=teacher_start,
+            end=teacher_end,
+            warmup_end=teacher_warmup,
+            decay_end=teacher_decay,
+        )
+        self.writer.add_scalar("Policy/m1_teacher_ratio", teacher_ratio, locs["it"])
+        total = max(int(locs.get("m1_teacher_total_count", 0)), 1)
+        self.writer.add_scalar("Policy/m1_teacher_valid_fraction", float(locs.get("m1_teacher_valid_count", 0)) / total, locs["it"])
+        self.writer.add_scalar("Policy/m1_teacher_applied_fraction", float(locs.get("m1_teacher_applied_count", 0)) / total, locs["it"])
+        self.writer.add_scalar("Policy/m1_teacher_saturated_fraction", float(locs.get("m1_teacher_saturated_count", 0)) / total, locs["it"])
+        teacher_valid_fraction = float(locs.get("m1_teacher_valid_count", 0)) / total
+        teacher_applied_fraction = float(locs.get("m1_teacher_applied_count", 0)) / total
+        teacher_saturated_fraction = float(locs.get("m1_teacher_saturated_count", 0)) / total
+        ep_string += f"{'M1 teacher valid/applied/saturated:':>{pad}} {teacher_valid_fraction:.3f}/{teacher_applied_fraction:.3f}/{teacher_saturated_fraction:.3f}\n"
+        crossing_snapshot = getattr(self.env, "crossing_metrics_snapshot", lambda: {})()
+        for name, value in crossing_snapshot.items():
+            self.writer.add_scalar(f"Metrics/{name}", value, locs["it"])
+        obstacle_progress, obstacle_climb, _legacy_proxy = m1_obstacle_metrics(locs["ep_infos"])
+        self.writer.add_scalar("Metrics/small_obstacle_progress_mean", obstacle_progress, locs["it"])
+        self.writer.add_scalar("Metrics/small_obstacle_climb_mean", obstacle_climb, locs["it"])
+        # Use the wrapper's episode accumulator: success means candidate
+        # disappearance after 5 cm clearance and a collision-free episode.
+        # The former progress-and-reward proxy counted any tiny positive lift.
+        crossing_success = float(crossing_snapshot.get("crossing_success_rate", float("nan")))
+        self.writer.add_scalar("Metrics/crossing_success_rate", crossing_success, locs["it"])
+        if locs.get("loss_dict") is not None:
+            metric_prefix = "AMP" if self.training_type == "amp" else "Distillation"
+            for key, value in locs["loss_dict"].items():
+                self.writer.add_scalar(f"{metric_prefix}/{key}", float(value), locs["it"])
+        self.writer.add_scalar("Perf/total_fps", fps, locs["it"])
+        self.writer.add_scalar("Perf/collection time", locs["collection_time"], locs["it"])
+        self.writer.add_scalar("Perf/learning_time", locs["learn_time"], locs["it"])
+        if len(locs["rewbuffer"]) > 0:
+            self.writer.add_scalar("Train/mean_reward", statistics.mean(locs["rewbuffer"]), locs["it"])
+            self.writer.add_scalar("Train/mean_episode_length", statistics.mean(locs["lenbuffer"]), locs["it"])
+            if self.logger_type != "wandb":  # wandb does not support non-integer x-axis logging
+                self.writer.add_scalar("Train/mean_reward/time", statistics.mean(locs["rewbuffer"]), self.tot_time)
+                self.writer.add_scalar(
+                    "Train/mean_episode_length/time", statistics.mean(locs["lenbuffer"]), self.tot_time
+                )
+
+        str = f" \033[1m Learning iteration {locs['it']}/{locs['tot_iter']} \033[0m "
+
+        if len(locs["rewbuffer"]) > 0:
+            log_string = (
+                f"""{'#' * width}\n"""
+                f"""{str.center(width, ' ')}\n\n"""
+                f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs[
+                            'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
+                f"""{'Value function loss:':>{pad}} {locs['mean_value_loss']:.4f}\n"""
+                f"""{'Surrogate loss:':>{pad}} {locs['mean_surrogate_loss']:.4f}\n"""
+                f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
+                f"""{'Mean reward:':>{pad}} {statistics.mean(locs['rewbuffer']):.2f}\n"""
+                f"""{'Mean episode length:':>{pad}} {statistics.mean(locs['lenbuffer']):.2f}\n"""
+            )
+        else:
+            log_string = (
+                f"""{'#' * width}\n"""
+                f"""{str.center(width, ' ')}\n\n"""
+                f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs[
+                            'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
+                f"""{'Value function loss:':>{pad}} {locs['mean_value_loss']:.4f}\n"""
+                f"""{'Surrogate loss:':>{pad}} {locs['mean_surrogate_loss']:.4f}\n"""
+                f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
+            )
+
+        log_string += ep_string
+        log_string += (
+            f"{'M1 MPC teacher ratio:':>{pad}} {teacher_ratio:.3f}\n"
+            f"{'Crossing success rate:':>{pad}} {crossing_success:.3f}\n"
+        )
+        log_string += (
+            f"""{'-' * width}\n"""
+            f"""{'Total timesteps:':>{pad}} {self.tot_timesteps}\n"""
+            f"""{'Iteration time:':>{pad}} {iteration_time:.2f}s\n"""
+            f"""{'Total time:':>{pad}} {self.tot_time:.2f}s\n"""
+            f"""{'ETA:':>{pad}} {self.tot_time / (locs['it'] + 1) * (
+                            locs['num_learning_iterations'] - locs['it']):.1f}s\n"""
+        )
+        print(log_string, flush=True)
+
+    def save(self, path, infos=None):
+        saved_dict = {
+            "model_state_dict": self.alg.actor_critic.state_dict(),
+            "optimizer_state_dict": self.alg.optimizer.state_dict(),
+            "iter": self.current_learning_iteration,
+            "infos": infos,
+        }
+        if self.empirical_normalization:
+            saved_dict["obs_norm_state_dict"] = self.obs_normalizer.state_dict()
+            saved_dict["critic_obs_norm_state_dict"] = self.critic_obs_normalizer.state_dict()
+        
+        # 保存PVCNN模型和优化器 (如果存在)
+        if hasattr(self.alg, 'pvcnn_model') and self.alg.pvcnn_model is not None:
+            saved_dict["pvcnn_state_dict"] = self.alg.pvcnn_model.state_dict()
+            if hasattr(self.alg, 'pvcnn_optimizer') and self.alg.pvcnn_optimizer is not None:
+                saved_dict["pvcnn_optimizer_state_dict"] = self.alg.pvcnn_optimizer.state_dict()
+        if hasattr(self.alg, "amp_discriminator") and self.alg.amp_discriminator is not None:
+            saved_dict["amp_discriminator_state_dict"] = self.alg.amp_discriminator.state_dict()
+            saved_dict["amp_optimizer_state_dict"] = self.alg.amp_discriminator.optimizer.state_dict()
+        
+        torch.save(saved_dict, path)
+
+        # Upload model to external logging service
+        if self.logger_type in ["neptune", "wandb"]:
+            self.writer.save_model(path, self.current_learning_iteration)
+
+    def load(self, path, load_optimizer=True, keep_std=True):
+        loaded_dict = torch.load(path)
+        state_dict = loaded_dict["model_state_dict"]
+        if not keep_std:
+            state_dict = dict(state_dict)
+            state_dict.pop("std", None)
+        self.alg.actor_critic.load_state_dict(state_dict, strict=False)
+        if self.empirical_normalization:
+            self.obs_normalizer.load_state_dict(loaded_dict["obs_norm_state_dict"])
+            self.critic_obs_normalizer.load_state_dict(loaded_dict["critic_obs_norm_state_dict"])
+        if load_optimizer:
+            try:
+                self.alg.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
+            except (RuntimeError, ValueError) as exc:
+                print(
+                    "[Checkpoint] Optimizer state is incompatible with the current "
+                    f"algorithm; keeping a fresh optimizer: {exc}"
+                )
+        
+        # 加载PVCNN模型和优化器 (如果存在)
+        if "pvcnn_state_dict" in loaded_dict:
+            if hasattr(self.alg, 'pvcnn_model') and self.alg.pvcnn_model is not None:
+                self.alg.pvcnn_model.load_state_dict(loaded_dict["pvcnn_state_dict"])
+                print("[Checkpoint] PVCNN model loaded successfully")
+            else:
+                print("[Checkpoint] WARNING: PVCNN state_dict found but no pvcnn_model in algorithm")
+        
+        if "pvcnn_optimizer_state_dict" in loaded_dict and load_optimizer:
+            if hasattr(self.alg, 'pvcnn_optimizer') and self.alg.pvcnn_optimizer is not None:
+                self.alg.pvcnn_optimizer.load_state_dict(loaded_dict["pvcnn_optimizer_state_dict"])
+                print("[Checkpoint] PVCNN optimizer loaded successfully")
+        
+        self.current_learning_iteration = loaded_dict["iter"]
+        return loaded_dict["infos"]
+
+    def load_amp(self, path, load_optimizer=True, keep_std=True):
+        """Load a legacy PPO policy or a complete AMP checkpoint explicitly."""
+
+        loaded_dict = torch.load(path, map_location=self.device)
+        state_dict = dict(loaded_dict["model_state_dict"])
+        has_amp_value = any(key.startswith("amp_value_head.") for key in state_dict)
+        has_amp_disc = "amp_discriminator_state_dict" in loaded_dict
+        if has_amp_value != has_amp_disc:
+            raise IncompleteAMPCheckpointError(
+                "AMP checkpoint must contain both amp_value_head.* and amp_discriminator_state_dict"
+            )
+        if not keep_std:
+            state_dict.pop("std", None)
+        if not has_amp_value:
+            self.alg.actor_critic.load_common_state_dict(state_dict)
+            from rsl_rl.modules import AMPDiscriminator
+
+            self.alg.amp_discriminator = AMPDiscriminator().to(self.device)
+            self.current_learning_iteration = 0
+            print("[Checkpoint] checkpoint_mode=legacy_policy_warm_start")
+            print("[Checkpoint] amp_value_head=initialized")
+            return "legacy_policy_warm_start"
+
+        self.alg.actor_critic.load_state_dict(state_dict, strict=True)
+        from rsl_rl.modules import AMPDiscriminator
+
+        if not hasattr(self.alg, "amp_discriminator") or self.alg.amp_discriminator is None:
+            self.alg.amp_discriminator = AMPDiscriminator().to(self.device)
+        self.alg.amp_discriminator.load_state_dict(loaded_dict["amp_discriminator_state_dict"], strict=True)
+        if load_optimizer and "amp_optimizer_state_dict" in loaded_dict:
+            self.alg.amp_discriminator.optimizer.load_state_dict(loaded_dict["amp_optimizer_state_dict"])
+        self.current_learning_iteration = int(loaded_dict.get("iter", 0))
+        print(f"[Checkpoint] checkpoint_mode=full_amp_resume iter={self.current_learning_iteration}")
+        return "full_amp_resume"
+
+    def load_student_checkpoint(self, path, load_optimizer=True, keep_std=True):
+        """Load a hybrid student checkpoint without restoring its embedded teacher."""
+
+        loaded_dict = torch.load(path, map_location=self.device)
+        state_dict = loaded_dict["model_state_dict"]
+        if not hasattr(self.alg.actor_critic, "load_student_state_dict"):
+            raise TypeError("Student checkpoint loading requires a StudentTeacherCNN policy")
+        self.alg.actor_critic.load_student_state_dict(state_dict, keep_std=keep_std)
+        if self.empirical_normalization:
+            self.obs_normalizer.load_state_dict(loaded_dict["obs_norm_state_dict"])
+            self.critic_obs_normalizer.load_state_dict(loaded_dict["critic_obs_norm_state_dict"])
+        if load_optimizer:
+            try:
+                self.alg.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
+            except (RuntimeError, ValueError) as exc:
+                print(
+                    "[Checkpoint] Student optimizer state is incompatible with the current "
+                    f"algorithm; keeping a fresh optimizer: {exc}"
+                )
+        self.current_learning_iteration = loaded_dict["iter"]
+        return loaded_dict.get("infos")
+
+    def load_teacher(self, path, keep_std=True):
+        loaded_dict = torch.load(path)
+        state_dict = loaded_dict["model_state_dict"]
+        if not keep_std:
+            state_dict = dict(state_dict)
+            state_dict.pop("std", None)
+        self.alg.actor_critic.load_state_dict(state_dict, strict=False)
+        return loaded_dict.get("infos")
+
+    def get_inference_policy(self, device=None):
+        self.eval_mode()  # switch to evaluation mode (dropout for example)
+        if device is not None:
+            self.alg.actor_critic.to(device)
+        policy = self.alg.actor_critic.act_inference
+        if self.cfg["empirical_normalization"]:
+            if device is not None:
+                self.obs_normalizer.to(device)
+            policy = lambda x: self.alg.actor_critic.act_inference(self.obs_normalizer(x))  # noqa: E731
+        return policy
+
+    def train_mode(self):
+        self.alg.actor_critic.train()
+        if self.empirical_normalization:
+            self.obs_normalizer.train()
+            self.critic_obs_normalizer.train()
+
+    def eval_mode(self):
+        self.alg.actor_critic.eval()
+        if self.empirical_normalization:
+            self.obs_normalizer.eval()
+            self.critic_obs_normalizer.eval()
+
+    def add_git_repo_to_log(self, repo_file_path):
+        self.git_status_repos.append(repo_file_path)

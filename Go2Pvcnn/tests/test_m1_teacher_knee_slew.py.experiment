@@ -1,0 +1,24 @@
+import torch
+
+
+def test_m1_teacher_gives_knee_more_slew_than_hip(monkeypatch):
+    from ame_baseline.m1_mpc_teacher import reference_to_m1_action
+    from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES
+
+    monkeypatch.setenv("M1_TEACHER_SLEW_RAD", "0.21")
+    default = torch.zeros((1, len(M1_ASSET_JOINT_NAMES)))
+    target = torch.tensor([[0.25, 0.25, 1.90] + [0.0] * 9])
+    action, valid = reference_to_m1_action(
+        {
+            "joint_angles": target,
+            "valid_mask": torch.ones(1, dtype=torch.bool),
+            "contact_state": torch.tensor([[False, True, True, True]]),
+            "phase_index": torch.tensor([0]),
+        },
+        default,
+        current_joint_pos=default.clone(),
+    )
+    assert bool(valid.item())
+    # The knee must have enough authority to clear the 10 cm block, while
+    # keeping hip/abduction slew smaller to avoid tipping the base.
+    assert float(action[0, 2]) > float(action[0, 1]) + 0.03

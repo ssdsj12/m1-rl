@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Logs
+logs/
+*.log
+nohup.out
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Model checkpoints and training outputs
+runs/
+checkpoints/
+*.pth
+*.ckpt
+
+# Data
+data/*/
+!data/*/.gitkeep
+
+# External source repositories kept locally for reference
+raw/
+
+# OS
+.DS_Store
+Thumbs.db
+onlyReference/
+results/policy_benchmark/
+results/policy_benchmark_smoke/
+results/policy_benchmark_smoke_*/
+results/diag_*/
+results/tmp_benchmark/
+eval_output/*/
+!eval_output/README.md
+!eval_output/run_index.jsonl
