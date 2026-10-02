@@ -217,7 +217,11 @@ class AmeRslRlEnvWrapper(VecEnv):
                 # phase and destabilize the body before touchdown.
                 default_hit = mask.gather(1, default_leg[:, None]).squeeze(1)
                 first_hit = mask.to(torch.long).argmax(dim=1)
-                selected = torch.where(default_hit, default_leg, torch.where(hit, first_hit, default_leg))
+                prefer_scheduled = os.environ.get("M1_TEACHER_PREFER_SCHEDULED", "1") not in {"0", "false", "False"}
+                if prefer_scheduled:
+                    selected = torch.where(default_hit, default_leg, torch.where(hit, first_hit, default_leg))
+                else:
+                    selected = torch.where(hit, first_hit, default_leg)
             else:
                 selected = default_leg
             self._m1_teacher_selected_leg = torch.where(
