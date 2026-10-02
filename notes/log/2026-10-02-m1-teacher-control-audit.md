@@ -45,3 +45,9 @@ The isolated generic-MPC single-leg mode (planner joint target, stance hold, no 
 - A phase-boundary refresh of stance targets was tested and reverted: it caused up to four nonzero leg targets and 0.60–0.78 rad tilt because a handoff can capture a leg before touchdown. The original fixed reset-pose stance lock is still active pending an obstacle-conditioned support/root plan.
 
 All probes restored `/home/hexinkun/sleep.py`; no long training was started. The strict gate remains NOT passed.
+
+## Heading/proximity follow-up
+
+- The teacher now receives measured yaw and advances the Cartesian swing along the body heading instead of hard-coded world `+X`. A 160-step smoke reached 160/160 valid steps, one commanded leg, 0.241 rad peak tilt, and one geometry-collision step.
+- The probe now gates the diagnostic wheel command on the post-safety `valid` mask; invalid rows no longer keep driving forward. A 320-step random smoke without per-leg proximity had 47 collision steps, so it was not accepted.
+- Added per-leg semantic-small obstacle proximity from the scanner (0.24 m forward, 0.09 m lateral corridor) and ORed it with live geometry collision hints. A 320-step run reduced collisions to 17 with one commanded leg and 0.318 rad peak tilt; this is an improvement but still fails the zero-collision/stability gate. Wider/longer corridors and stance measured blending were tested and rejected due to increased tilt or collision counts. The proximity selector remains active at its conservative default for the next deterministic multi-seed evaluation.

@@ -158,6 +158,17 @@ def reference_to_m1_action(
                 hold_legs = torch.as_tensor(hold_legs, device=target.device, dtype=target.dtype)
                 if tuple(hold_legs.shape) == tuple(stance_legs.shape):
                     stance_legs = hold_legs
+            measured_stance_blend = min(
+                max(float(os.environ.get("M1_TEACHER_MEASURED_STANCE_BLEND", "0.0")), 0.0),
+                1.0,
+            )
+            if measured_stance_blend > 0.0:
+                # A small correction toward the live support pose lets the
+                # stance polygon follow body heave/roll without capturing a
+                # fully lifted leg as the next phase's permanent target.
+                stance_legs = stance_legs + measured_stance_blend * (
+                    current_joint_pos[:, planner_cols] - stance_legs
+                )
             support_blend = float(os.environ.get("M1_TEACHER_SUPPORT_BLEND", "0.0"))
             if support_blend > 0.0:
                 support_blend = min(support_blend, 1.0)
@@ -325,7 +336,17 @@ def reference_to_m1_action(
                     backstep_distance = float(os.environ.get("M1_TEACHER_FOOT_BACKSTEP_M", "0.0"))
                     early_backstep = ((0.45 - phase_progress) / 0.45).clamp(0.0, 1.0) * backstep_distance
                     advance = advance - early_backstep
-                    foot_target[..., 0] = foot_target[..., 0] + advance.unsqueeze(-1) * swing.to(target.dtype)
+                    # Advance in the measured body-heading direction, not a
+                    # hard-coded world +X axis.  The scanner/MPC reference
+                    # is world-frame, so using +X after a yaw or reset
+                    # rotation sends the foot sideways relative to the
+                    # obstacle and invalidates the touchdown plan.
+                    heading_xy = torch.stack((root_rpy[:, 2].cos(), root_rpy[:, 2].sin()), dim=-1)
+                    foot_target[..., :2] = foot_target[..., :2] + (
+                        advance.unsqueeze(-1).unsqueeze(-1)
+                        * heading_xy[:, None, :]
+                        * swing.unsqueeze(-1).to(target.dtype)
+                    )
                     foot_target[..., 2] = foot_target[..., 2] + lift.unsqueeze(-1) * swing.to(target.dtype)
                     if (
                         os.environ.get("M1_TEACHER_USE_PLANNER_TOUCHDOWN", "0") == "1"

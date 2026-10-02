@@ -48,6 +48,9 @@ try:
     cfg.scene.num_envs = 1
     cfg.scene.env_spacing = 8.0
     cfg.sim.device = str(args.device)
+    probe_seed = os.environ.get("M1_PROBE_SEED")
+    if probe_seed:
+        cfg.seed = int(probe_seed)
     cfg.events.push_robot = None
     # Optional start offset lets the physics gate exercise the actual
     # pre-contact single-leg trajectory instead of spending the whole probe
@@ -90,7 +93,13 @@ try:
         # drives the forward wheel channels from the commanded base velocity.
         # Leaving them at zero only tests a stationary leg lift against a
         # fixed course, not an actual approach/crossing.
-        action[:, 3::4] = 0.10
+        # Match the runner's gate: an invalid/safety-stopped teacher row must
+        # not keep driving the base forward just because this is a probe.
+        action[:, 3::4] = torch.where(
+            valid.view(-1, 1),
+            torch.full_like(action[:, 3::4], 0.10),
+            torch.zeros_like(action[:, 3::4]),
+        )
         if bool(valid.any().item()):
             valid_steps += 1
             leg_groups = action[:, planner_cols].reshape(1, 4, 3).abs().amax(dim=-1) > 1.0e-4

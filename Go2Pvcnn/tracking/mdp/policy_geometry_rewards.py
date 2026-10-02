@@ -336,6 +336,56 @@ def live_m1_policy_geometry_collision_by_leg(
     return bits.any(dim=(2, 3))
 
 
+def live_m1_obstacle_proximity_by_leg(
+    root_pos_w: Tensor,
+    root_quat_w: Tensor,
+    joint_pos: Tensor,
+    joint_names: Sequence[str],
+    terrain: ParallelismTerrain,
+    forward_m: float = 0.24,
+    lateral_m: float = 0.09,
+) -> Tensor:
+    """Detect semantic-small terrain in a short corridor ahead of each M1 foot.
+
+    This is an anticipatory selector, not a collision/success metric.  It
+    samples the live scanner in each foot's lane so the serial teacher can
+    lift the threatened leg before the current geometry intersects the block.
+    Large semantic obstacles are intentionally excluded; their side-avoidance
+    branch remains owned by the environment/policy.
+    """
+    backend = get_robot_backend("m1")
+    root_pos = torch.as_tensor(root_pos_w, dtype=torch.float32)
+    root_quat = torch.as_tensor(root_quat_w, dtype=root_pos.dtype, device=root_pos.device)
+    joint = torch.as_tensor(joint_pos, dtype=root_pos.dtype, device=root_pos.device)
+    planner_joint = select_named_joint_state(
+        joint, source_names=tuple(joint_names), selected_names=backend.planner_joint_names,
+    )
+    roll, pitch = extract_roll_pitch_batch(root_quat)
+    yaw = extract_yaw_batch(root_quat)
+    geometry = backend.fk(
+        root_pos, torch.stack((roll, pitch, yaw), dim=-1), planner_joint,
+        capsule_samples=1,
+    )
+    foot_xy = geometry.foot_pos_w[..., :2]
+    heading = torch.stack((yaw.cos(), yaw.sin()), dim=-1)
+    lateral = torch.stack((-heading[:, 1], heading[:, 0]), dim=-1)
+    sample_x = torch.linspace(
+        0.04, max(float(forward_m), 0.04), 6,
+        dtype=foot_xy.dtype, device=foot_xy.device,
+    )
+    sample_y = foot_xy.new_tensor((-float(lateral_m), 0.0, float(lateral_m)))
+    offsets = heading[:, None, None, :] * sample_x[None, None, :, None]
+    offsets = offsets + lateral[:, None, None, :] * sample_y[None, None, None, :]
+    # [B,4,Sx,Sy,2] -> query batch points.
+    query_xy = foot_xy[:, :, None, None, :] + offsets
+    query = query_height_semantic_valid(
+        terrain, query_xy.reshape(query_xy.shape[0], -1, 2),
+    )
+    valid = query.valid.reshape(query_xy.shape[:-1])
+    semantic = query.semantic.reshape(query_xy.shape[:-1])
+    return (valid & (semantic == 1)).any(dim=(-1, -2))
+
+
 def m1_policy_geometry_collision_penalty(
     env,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
@@ -381,6 +431,7 @@ def m1_policy_geometry_collision_penalty(
 
 __all__ = [
     "live_m1_policy_geometry_collision_by_leg",
+    "live_m1_obstacle_proximity_by_leg",
     "live_m1_policy_geometry_collision_event",
     "live_policy_geometry_collision_event",
     "m1_policy_geometry_collision_penalty",

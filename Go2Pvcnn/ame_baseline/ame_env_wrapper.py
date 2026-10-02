@@ -138,9 +138,10 @@ class AmeRslRlEnvWrapper(VecEnv):
         reference = dict(reference)
         reference["serial_phase_index"] = self._m1_teacher_age.clone()
         robot = self.unwrapped.scene["robot"]
-        from extension.convention import extract_roll_pitch_batch
+        from extension.convention import extract_roll_pitch_batch, extract_yaw_batch
         root_rpy = torch.zeros((self.num_envs, 3), device=robot.data.root_pos_w.device, dtype=robot.data.root_pos_w.dtype)
         root_rpy[:, 0], root_rpy[:, 1] = extract_roll_pitch_batch(robot.data.root_quat_w)
+        root_rpy[:, 2] = extract_yaw_batch(robot.data.root_quat_w)
         # Feed the previous live collision event back into the teacher.  A
         # timer-only leg sequence can leave a support foot against the next
         # obstacle while a different leg is lifted; the collision-by-leg
@@ -149,6 +150,7 @@ class AmeRslRlEnvWrapper(VecEnv):
             from tracking.mdp.policy_geometry_rewards import (
                 _terrain_from_scanner,
                 live_m1_policy_geometry_collision_by_leg,
+                live_m1_obstacle_proximity_by_leg,
             )
             from extension.parallelism.types import ParallelismTerrain
             scanner = self.unwrapped.scene["semantic_height_scanner"]
@@ -164,7 +166,7 @@ class AmeRslRlEnvWrapper(VecEnv):
                 yaw_w=live_terrain.yaw_w,
                 resolution=live_terrain.resolution,
             )
-            reference["collision_leg_mask"] = live_m1_policy_geometry_collision_by_leg(
+            collision_mask = live_m1_policy_geometry_collision_by_leg(
                 robot.data.root_pos_w,
                 robot.data.root_quat_w,
                 robot.data.joint_pos,
@@ -173,6 +175,16 @@ class AmeRslRlEnvWrapper(VecEnv):
                 margin_m=float(os.environ.get("M1_TEACHER_COLLISION_LOOKAHEAD_M", "0.05")),
                 lookahead_m=float(os.environ.get("M1_TEACHER_COLLISION_LOOKAHEAD_X_M", "0.14")),
             )
+            proximity_mask = live_m1_obstacle_proximity_by_leg(
+                robot.data.root_pos_w,
+                robot.data.root_quat_w,
+                robot.data.joint_pos,
+                tuple(getattr(robot, "joint_names", ())),
+                live_terrain,
+                forward_m=float(os.environ.get("M1_TEACHER_PROXIMITY_FORWARD_M", "0.24")),
+                lateral_m=float(os.environ.get("M1_TEACHER_PROXIMITY_LATERAL_M", "0.09")),
+            )
+            reference["collision_leg_mask"] = collision_mask | proximity_mask
         except Exception:
             # The teacher remains usable if a diagnostic-only live collision
             # query is unavailable during unit tests or scene startup.
