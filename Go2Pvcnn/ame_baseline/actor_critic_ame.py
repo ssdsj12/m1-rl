@@ -35,6 +35,7 @@ class ActorCriticAME(nn.Module):
         actor_hidden_dims: tuple[int, ...] | list[int] = (512, 256, 128),
         critic_hidden_dims: tuple[int, ...] | list[int] = (512, 256, 128),
         init_noise_std: float = 1.0,
+        zero_actor_output: bool = False,
         **kwargs,
     ):
         kwargs.pop("activation", None)
@@ -65,6 +66,18 @@ class ActorCriticAME(nn.Module):
         self.mha = nn.MultiheadAttention(embed_dim=mha_dim, num_heads=num_heads, batch_first=True)
         self.actor = _mlp(mha_dim + self.actor_state_dim, num_actions, tuple(actor_hidden_dims))
         self.critic = _mlp(mha_dim + self.critic_state_dim, 1, tuple(critic_hidden_dims))
+        # A fresh M1 policy must start from the configured standing target.
+        # Random AME output-layer weights turn zero observations into arbitrary
+        # leg/wheel targets before PPO has learned a stabilising gait, which
+        # makes the robot tip over even with learning_rate=0.  Keep the
+        # generic AME initializer unchanged and opt into a zero mean only for
+        # the M1 curriculum; exploration still comes from ``std``.
+        if bool(zero_actor_output):
+            output_layer = self.actor[-1]
+            if not isinstance(output_layer, nn.Linear):
+                raise TypeError("Actor output layer must be nn.Linear")
+            nn.init.zeros_(output_layer.weight)
+            nn.init.zeros_(output_layer.bias)
         self.std = nn.Parameter(torch.full((num_actions,), float(init_noise_std)))
         self.distribution: Normal | None = None
         Normal.set_default_validate_args(False)

@@ -86,22 +86,32 @@ class MpcTrajectoryManager:
 
     def _foot_ids(self, robot) -> Tensor:
         if self._foot_body_ids is None:
-            body_ids, body_names = robot.find_bodies(".*_foot")
+            try:
+                body_ids, body_names = robot.find_bodies(".*_foot")
+            except ValueError:
+                # M1 uses upper-case USD link names (FAR_FOOT_LINK, ...),
+                # while Go2 uses lower-case *_foot names.
+                body_ids, body_names = robot.find_bodies(".*_FOOT_LINK")
             ids = torch.as_tensor(body_ids, dtype=torch.long, device=self._device)
+            aliases = {
+                'fbl_foot_link': 'fl_foot', 'far_foot_link': 'fr_foot',
+                'rbl_foot_link': 'rl_foot', 'rar_foot_link': 'rr_foot',
+            }
             if body_names:
                 name_to_id = {
-                    _normalize_body_name(name): int(body_id)
+                    aliases.get(_normalize_body_name(name), _normalize_body_name(name)): int(body_id)
                     for name, body_id in zip(body_names, body_ids)
                 }
                 planner_ids: list[int] = []
                 for planner_name in ("fl_foot", "fr_foot", "rl_foot", "rr_foot"):
                     body_id = name_to_id.get(planner_name)
                     if body_id is None:
-                        planner_ids = []
-                        break
+                        raise ValueError(f'Cannot resolve planner foot {planner_name} from {body_names}')
                     planner_ids.append(int(body_id))
                 if planner_ids:
                     ids = torch.as_tensor(planner_ids, dtype=torch.long, device=self._device)
+            else:
+                raise ValueError('Cannot resolve planner foot order without body names')
             self._foot_body_ids = ids
         return self._foot_body_ids
 
@@ -114,6 +124,12 @@ class MpcTrajectoryManager:
         roll, pitch = extract_roll_pitch_batch(root_quat)
         yaw = extract_yaw_batch(root_quat)
         joint_pos = torch.as_tensor(data.joint_pos, dtype=torch.float32, device=self._device)
+        planner_names = getattr(self._cfg, "planner_joint_names", None)
+        if planner_names is not None and len(planner_names) > 0:
+            name_to_id = {_normalize_body_name(name): idx for idx, name in enumerate(robot.joint_names)}
+            joint_ids = [name_to_id.get(_normalize_body_name(name)) for name in planner_names]
+            if all(idx is not None for idx in joint_ids):
+                joint_pos = joint_pos[:, torch.as_tensor(joint_ids, dtype=torch.long, device=self._device)]
         return MpcRobotState(
             root_pos=torch.as_tensor(data.root_pos_w, dtype=torch.float32, device=self._device),
             root_rpy=torch.stack((roll, pitch, yaw), dim=-1),
@@ -502,10 +518,14 @@ class MpcTrajectoryManager:
             raise RuntimeError("trajectory manager has no reference reward mask; call refresh_from_env() first")
         return self._reference_reward_mask
 
-    def current_reference(self) -> dict[str, Tensor]:
+    def current_reference(self, frame_offset: int = 0) -> dict[str, Tensor]:
         if self._cache is None or self._phase_counter is None:
             raise RuntimeError("trajectory manager has no cached trajectory; call refresh_from_env() first")
-        idx = self.current_frame_ids()
+        if not isinstance(frame_offset, int):
+            raise TypeError(f"frame_offset must be int, got {type(frame_offset).__name__}")
+        idx = (self.current_frame_ids() + frame_offset).clamp(
+            max=int(self._cache.root_pos_w.shape[1]) - 1
+        )
         env_idx = torch.arange(idx.shape[0], device=idx.device)
         return {
             "root_pos_w": self._cache.root_pos_w[env_idx, idx],

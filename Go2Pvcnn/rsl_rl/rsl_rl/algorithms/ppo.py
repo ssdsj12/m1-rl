@@ -11,6 +11,99 @@ from rsl_rl.modules import ActorCritic
 from rsl_rl.storage import RolloutStorage
 
 
+def _safe_ppo_ratio(
+    actions_log_prob: torch.Tensor,
+    old_actions_log_prob: torch.Tensor,
+    *,
+    max_log_ratio: float = 20.0,
+) -> torch.Tensor:
+    """Return a finite PPO ratio from two log-probability tensors.
+
+    Teacher-controlled actions can be far in the tail of the student's
+    Normal distribution.  Computing ``exp(new_log_prob - old_log_prob)``
+    directly lets one such sample overflow and poison the actor update.
+    Keep the log-ratio finite and bounded before exponentiation so PPO's
+    own clipping remains numerically meaningful.
+    """
+    old = old_actions_log_prob
+    if old.ndim > actions_log_prob.ndim:
+        old = old.squeeze(-1)
+    log_ratio = actions_log_prob - old
+    if not bool(torch.isfinite(log_ratio).all().item()):
+        raise RuntimeError("non-finite PPO log ratio")
+    bound = float(max_log_ratio)
+    if not torch.isfinite(torch.as_tensor(bound)) or bound <= 0.0:
+        raise ValueError("max_log_ratio must be finite and positive")
+    return torch.exp(log_ratio.clamp(min=-bound, max=bound))
+
+
+def stable_log_ratio(
+    actions_log_prob: torch.Tensor,
+    old_actions_log_prob: torch.Tensor,
+    *,
+    limit: float = 5.0,
+) -> torch.Tensor:
+    """Return a finite, bounded log-ratio for numerical-regression tests.
+
+    ``_safe_ppo_ratio`` is kept as the runtime API used by PPO.  This helper
+    exposes the bounded pre-exponential quantity so callers can verify the
+    protection without constructing a policy or rollout buffer.
+    """
+    old = old_actions_log_prob
+    if old.ndim > actions_log_prob.ndim:
+        old = old.squeeze(-1)
+    bound = float(limit)
+    if not torch.isfinite(torch.as_tensor(bound)) or bound <= 0.0:
+        raise ValueError("limit must be finite and positive")
+    raw = actions_log_prob - old
+    return torch.nan_to_num(raw, nan=0.0, posinf=bound, neginf=-bound).clamp(
+        min=-bound, max=bound
+    )
+
+
+def ppo_surrogate_loss(
+    actions_log_prob: torch.Tensor,
+    old_actions_log_prob: torch.Tensor,
+    advantages: torch.Tensor,
+    active_mask: torch.Tensor,
+    *,
+    clip_param: float,
+    log_ratio_limit: float = 5.0,
+) -> torch.Tensor:
+    """Stable masked PPO actor loss used by unit tests and diagnostics."""
+    log_ratio = stable_log_ratio(
+        actions_log_prob, old_actions_log_prob, limit=log_ratio_limit
+    )
+    ratio = torch.exp(log_ratio)
+    return _masked_ppo_surrogate_loss(
+        advantages,
+        ratio,
+        clip_param=clip_param,
+        active_mask=active_mask,
+    )[0]
+
+
+def _masked_ppo_surrogate_loss(
+    advantages: torch.Tensor,
+    ratio: torch.Tensor,
+    *,
+    clip_param: float,
+    active_mask: torch.Tensor,
+) -> tuple[torch.Tensor, int]:
+    """Compute PPO's clipped actor loss only for policy-controlled samples."""
+    active = active_mask.reshape(-1) > 0.5
+    active_count = int(active.sum().item())
+    if active_count == 0:
+        return ratio.new_zeros(()), 0
+    adv = advantages.reshape(-1)
+    ratio_flat = ratio.reshape(-1)
+    surrogate = -adv * ratio_flat
+    surrogate_clipped = -adv * torch.clamp(
+        ratio_flat, 1.0 - clip_param, 1.0 + clip_param
+    )
+    return torch.max(surrogate[active], surrogate_clipped[active]).mean(), active_count
+
+
 class PPO:
     actor_critic: ActorCritic
 
@@ -38,6 +131,8 @@ class PPO:
         distributed=False,
         rank=0,
         world_size=1,
+        imitation_coef=0.0,
+        ppo_log_ratio_clip=5.0,
     ):
         self.device = device
         
@@ -93,6 +188,14 @@ class PPO:
         self.clip_min_std = (
             torch.tensor(clip_min_std, device=self.device) if isinstance(clip_min_std, (tuple, list)) else clip_min_std
         )
+        self.imitation_coef = float(imitation_coef)
+        self.ppo_log_ratio_clip = float(ppo_log_ratio_clip)
+        if self.imitation_coef < 0.0:
+            raise ValueError("imitation_coef must be non-negative")
+        if not torch.isfinite(torch.as_tensor(self.ppo_log_ratio_clip)) or self.ppo_log_ratio_clip <= 0.0:
+            raise ValueError("ppo_log_ratio_clip must be finite and positive")
+        self.last_skipped_updates = 0
+        self.last_imitation_loss = 0.0
 
     def init_storage(self, num_envs, num_transitions_per_env, actor_obs_shape, critic_obs_shape, action_shape):
         self.storage = RolloutStorage(
@@ -248,27 +351,55 @@ class PPO:
         self.storage.compute_returns(last_values, self.gamma, self.lam)
 
     def update(self):
+        self.last_skipped_updates = 0
         mean_value_loss = 0
         mean_surrogate_loss = 0
         if self.actor_critic.is_recurrent:
             generator = self.storage.reccurent_mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
+            include_ppo_mask = False
         else:
-            generator = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
-        for (
-            obs_batch,
-            critic_obs_batch,
-            actions_batch,
-            target_values_batch,
-            advantages_batch,
-            returns_batch,
-            old_actions_log_prob_batch,
-            old_mu_batch,
-            old_sigma_batch,
-            hid_states_batch,
-            masks_batch,
-            point_cloud_batch,
-            semantic_labels_batch,
-        ) in generator:
+            generator = self.storage.mini_batch_generator(
+                self.num_mini_batches,
+                self.num_learning_epochs,
+                include_privileged_actions=True,
+                include_ppo_mask=True,
+                include_imitation_context=True,
+            )
+            include_ppo_mask = True
+        for batch in generator:
+            (
+                obs_batch,
+                critic_obs_batch,
+                actions_batch,
+                target_values_batch,
+                advantages_batch,
+                returns_batch,
+                old_actions_log_prob_batch,
+                old_mu_batch,
+                old_sigma_batch,
+                hid_states_batch,
+                masks_batch,
+                point_cloud_batch,
+                semantic_labels_batch,
+                *optional_batches,
+            ) = batch
+            # Optional fields are ordered by RolloutStorage's generator:
+            # privileged action target, PPO actor mask, imitation weight and
+            # plan-valid mask.  Recurrent legacy callers do not provide them.
+            optional_index = 0
+            privileged_actions_batch = torch.zeros_like(actions_batch)
+            if not include_ppo_mask:
+                ppo_active_mask_batch = torch.ones_like(advantages_batch)
+                imitation_weight_batch = torch.zeros_like(advantages_batch)
+                plan_valid_batch = torch.zeros_like(advantages_batch)
+            else:
+                privileged_actions_batch = optional_batches[optional_index]
+                optional_index += 1
+                ppo_active_mask_batch = optional_batches[optional_index]
+                optional_index += 1
+                imitation_weight_batch = optional_batches[optional_index]
+                optional_index += 1
+                plan_valid_batch = optional_batches[optional_index]
             self.actor_critic.act(obs_batch, masks=masks_batch, hidden_states=hid_states_batch[0])
             actions_log_prob_batch = self.actor_critic.get_actions_log_prob(actions_batch)
             value_batch = self.actor_critic.evaluate(
@@ -305,12 +436,17 @@ class PPO:
                         param_group["lr"] = self.learning_rate
 
             # Surrogate loss
-            ratio = torch.exp(actions_log_prob_batch - torch.squeeze(old_actions_log_prob_batch))
-            surrogate = -torch.squeeze(advantages_batch) * ratio
-            surrogate_clipped = -torch.squeeze(advantages_batch) * torch.clamp(
-                ratio, 1.0 - self.clip_param, 1.0 + self.clip_param
+            ratio = _safe_ppo_ratio(
+                actions_log_prob_batch,
+                old_actions_log_prob_batch,
+                max_log_ratio=self.ppo_log_ratio_clip,
             )
-            surrogate_loss = torch.max(surrogate, surrogate_clipped).mean()
+            surrogate_loss, _ppo_active_count = _masked_ppo_surrogate_loss(
+                advantages_batch,
+                ratio,
+                clip_param=self.clip_param,
+                active_mask=ppo_active_mask_batch,
+            )
 
             # Value function loss
             if self.use_clipped_value_loss:
@@ -324,7 +460,44 @@ class PPO:
                 value_loss = (returns_batch - value_batch).pow(2).mean()
 
             # Compute PPO loss
-            loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean()
+            active = ppo_active_mask_batch.reshape(-1) > 0.5
+            entropy_loss = (
+                entropy_batch.reshape(-1)[active].mean()
+                if bool(active.any().item())
+                else entropy_batch.new_zeros(())
+            )
+            # Teacher rows are value-learning data and can optionally provide
+            # a bounded behavior-cloning target.  The target is detached in
+            # storage; only the policy mean receives this gradient.
+            imitation_weight = (
+                imitation_weight_batch.reshape(-1)
+                * plan_valid_batch.reshape(-1)
+            ).clamp(min=0.0, max=1.0)
+            if self.imitation_coef > 0.0 and bool((imitation_weight > 0.0).any().item()):
+                target = torch.nan_to_num(
+                    privileged_actions_batch,
+                    nan=0.0,
+                    posinf=1.0,
+                    neginf=-1.0,
+                ).clamp(-1.0, 1.0)
+                imitation_per_sample = (mu_batch - target).pow(2).mean(dim=-1)
+                weight_sum = imitation_weight.sum().clamp_min(1.0)
+                imitation_loss = (imitation_per_sample * imitation_weight).sum() / weight_sum
+            else:
+                imitation_loss = mu_batch.new_zeros(())
+            loss = (
+                surrogate_loss
+                + self.value_loss_coef * value_loss
+                - self.entropy_coef * entropy_loss
+                + self.imitation_coef * imitation_loss
+            )
+
+            # A bad batch must never write NaNs into the optimizer state.  The
+            # rollout remains usable for value learning on the next update.
+            if not bool(torch.isfinite(loss).item()):
+                self.optimizer.zero_grad(set_to_none=True)
+                self.last_skipped_updates += 1
+                continue
 
             # Gradient step
             self.optimizer.zero_grad()
@@ -339,14 +512,25 @@ class PPO:
                         param.grad.data /= self.world_size
             
             # Clip gradients (only actor_critic, PVCNN not trained)
-            nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm)
+            grad_norm = nn.utils.clip_grad_norm_(
+                self.actor_critic.parameters(), self.max_grad_norm
+            )
+            gradients_finite = bool(torch.isfinite(grad_norm).item()) and all(
+                parameter.grad is None or bool(torch.isfinite(parameter.grad).all().item())
+                for parameter in self.actor_critic.parameters()
+            )
+            if not gradients_finite:
+                self.optimizer.zero_grad(set_to_none=True)
+                self.last_skipped_updates += 1
+                continue
             
             self.optimizer.step()
 
             mean_value_loss += value_loss.item()
             mean_surrogate_loss += surrogate_loss.item()
+            self.last_imitation_loss = float(imitation_loss.detach().item())
 
-        num_updates = self.num_learning_epochs * self.num_mini_batches
+        num_updates = max(self.num_learning_epochs * self.num_mini_batches - self.last_skipped_updates, 1)
         mean_value_loss /= num_updates
         mean_surrogate_loss /= num_updates
         

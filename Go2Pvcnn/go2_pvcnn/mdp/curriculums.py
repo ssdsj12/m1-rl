@@ -45,6 +45,7 @@ def lin_vel_cmd_levels(
     env: ManagerBasedRLEnv,
     env_ids: Sequence[int],
     reward_term_name: str = "track_lin_vel_xy",
+    require_success: bool = False,
 ) -> torch.Tensor:
     """Expand lin_vel command ranges when velocity tracking reward is high enough.
 
@@ -62,7 +63,43 @@ def lin_vel_cmd_levels(
     limit_ranges = command_term.cfg.limit_ranges
 
     reward_term = env.reward_manager.get_term_cfg(reward_term_name)
-    reward = torch.mean(env.reward_manager._episode_sums[reward_term_name][env_ids]) / env.max_episode_length_s
+    eligible_ids = env_ids
+    if require_success:
+        # Count all completed episodes, not just successful survivors. Each
+        # decision needs at least num_envs episodes and one full horizon.
+        manager = env.termination_manager
+        ids = torch.arange(env.num_envs, device=env.device)[env_ids] if isinstance(env_ids, slice) else torch.as_tensor(env_ids, dtype=torch.long, device=env.device).reshape(-1)
+        state = getattr(env, "_m1_velocity_curriculum_window", None)
+        if state is None:
+            state = {"last_decision": 0, "last_sample": -1, "count": 0, "success": 0., "quality": 0.}
+            env._m1_velocity_curriculum_window = state
+        step = int(env.common_step_counter)
+        if step == state["last_sample"]:
+            return torch.tensor(ranges.lin_vel_x[1], device=env.device)
+        state["last_sample"] = step
+        done = manager.terminated | manager.time_outs
+        ids = ids[done[ids] & (env.episode_length_buf[ids] > 0)]
+        if ids.numel():
+            success = manager.time_outs[ids] & ~manager.terminated[ids]
+            success &= env.episode_length_buf[ids] >= .9 * env.max_episode_length
+            quality = env.reward_manager._episode_sums[reward_term_name][ids] / (env.max_episode_length_s * reward_term.weight)
+            state["count"] += ids.numel()
+            state["success"] += success.float().sum().item()
+            state["quality"] += torch.where(success, quality, torch.zeros_like(quality)).sum().item()
+        if state["count"] >= env.num_envs and step - state["last_decision"] >= env.max_episode_length:
+            success_rate = state["success"] / state["count"]
+            quality = state["quality"] / state["count"]
+            delta = .1 if success_rate >= .9 and quality >= .8 else (-.1 if success_rate < .5 else 0.)
+            for axis in ("lin_vel_x", "lin_vel_y"):
+                lo, hi = getattr(ranges, axis)
+                limit_lo, limit_hi = getattr(limit_ranges, axis)
+                setattr(ranges, axis, (max(limit_lo, min(-.1, lo - delta)), min(limit_hi, max(.1, hi + delta))))
+            state.update(last_decision=step, count=0, success=0., quality=0.)
+        return torch.tensor(ranges.lin_vel_x[1], device=env.device)
+
+    reward = torch.mean(
+        env.reward_manager._episode_sums[reward_term_name][eligible_ids]
+    ) / env.max_episode_length_s
 
     interval = max(int(env.max_episode_length // 50), 1)
     if env.common_step_counter % interval == 0:
@@ -271,6 +308,11 @@ def _completed_episode_env_ids(env, *, device: torch.device) -> torch.Tensor:
 
 
 def _env_bool_buffer(env, kind: str, *, device: torch.device) -> torch.Tensor:
+    manager = getattr(env, "termination_manager", None)
+    if manager is not None and callable(getattr(manager, "get_term", None)):
+        if kind in manager.active_terms:
+            return manager.get_term(kind).to(device=device, dtype=torch.bool).reshape(-1)
+        return torch.zeros(int(env.num_envs), dtype=torch.bool, device=device)
     names_by_kind = {
         "time_out": ("time_out_buf", "time_outs", "truncated_buf"),
         "base_contact": ("base_contact_buf",),
@@ -338,6 +380,14 @@ def terrain_levels_vel_semantic_plane_gate(
     move_up = torch.where(is_plane_env, flat_move_up, terrain_move_up)
     flat_failure_move_down = torch.logical_or(base_contact, bad_orientation)
     move_down = torch.where(is_plane_env, torch.logical_or(terrain_move_down, flat_failure_move_down), terrain_move_down)
+
+    # Physical failure cannot promote any terrain type, including non-flat
+    # tiles where the old plane-only gate did not apply.
+    manager = getattr(env, "termination_manager", None)
+    if manager is not None and hasattr(manager, "terminated"):
+        failure = manager.terminated[env_ids_t]
+        move_up = move_up & ~failure
+        move_down = move_down | failure
 
     if terrain_types is not None and len(terrain_names) > 0 and excluded_terrain_names:
         active_all = torch.logical_not(

@@ -1,6 +1,6 @@
 # M1 wheel equalizer single-variable diagnostic A/B
 
-Status: proposed, awaiting user review. Parent T306.6h.6.
+Status: approved single A/B completed; candidate rejected, no promotion. Parent T306.6h.6. Run13 amp/GPU7 exact8×1600/native0, strict1/8 vs baseline4/8. See [result](../../../notes/log/2026-09-18-m1-wheel-equalizer-ab.md). Further behavior changes require a new design, not another run under this authorization.
 
 The first full reference run completed8x1600 with native0, but only4/8passed strict wheel mean speed spread≤.08rad/s. All eight physically completed the required FAR/RAR narrow-bar crossing. Offline data proves a saturated period-two flat wheel command: FAR target alternates0/1rad/s and measured speed approximately.13/1.00. Replaying the reference feedback equation from previous-step speed reproduces applied targets within1.3e-7rad/s.
 

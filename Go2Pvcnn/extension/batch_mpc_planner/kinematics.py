@@ -86,14 +86,28 @@ def solve_joint_angles_from_trajectory(
     foot_pos_w: Tensor,
     *,
     clamp_to_limits: bool = True,
+    robot_name: str = "go2",
 ) -> Tensor:
-    """Solve per-frame Go2 leg IK from world-frame root pose and foot targets."""
+    """Solve batched leg IK for the selected planner robot."""
     if root_pos.ndim != 3 or int(root_pos.shape[-1]) != 3:
         raise ValueError("root_pos must have shape [B, T, 3]")
     if tuple(root_rpy.shape) != tuple(root_pos.shape):
         raise ValueError("root_rpy must match root_pos shape")
     if foot_pos_w.ndim != 4 or tuple(foot_pos_w.shape[-2:]) != (4, 3):
         raise ValueError("foot_pos_w must have shape [B, T, 4, 3]")
+
+    robot_key = str(robot_name).lower()
+    if robot_key == "m1":
+        from extension.parallelism.m1_kinematics import m1_ik, _m1_joint_limits
+
+        joint_by_leg, _reachable = m1_ik(root_pos, root_rpy, foot_pos_w)
+        joint_raw = joint_by_leg.reshape(root_pos.shape[0], root_pos.shape[1], 12)
+        if not bool(clamp_to_limits):
+            return joint_raw
+        lower, upper = _m1_joint_limits(joint_raw)
+        return joint_raw.clamp(min=lower.view(1, 1, 12), max=upper.view(1, 1, 12))
+    if robot_key != "go2":
+        raise ValueError(f"unsupported robot_name={robot_name!r}; expected 'go2' or 'm1'")
 
     device = root_pos.device
     dtype = root_pos.dtype
@@ -139,10 +153,26 @@ def fk_leg_points_from_joint_angles(
     joint_angles: Tensor,
     *,
     shank_sample_count: int = 2,
+    robot_name: str = "go2",
 ) -> MpcLegPoints:
-    """Forward-kinematics foot, knee, and shank samples from planner-order joints."""
+    """Forward-kinematics leg points for Go2 or M1 planner-order joints."""
     if int(shank_sample_count) < 0:
         raise ValueError("shank_sample_count must be non-negative")
+    robot_key = str(robot_name).lower()
+    if robot_key == "m1":
+        from extension.parallelism.m1_kinematics import m1_fk
+
+        joints = joint_angles.reshape(root_pos.shape[0], root_pos.shape[1], 12)
+        capsule_samples = max(int(shank_sample_count) + 2, 2)
+        geometry = m1_fk(root_pos, root_rpy, joints, capsule_samples=capsule_samples)
+        shank = geometry.calf_samples_w[..., 1:-1, :]
+        return MpcLegPoints(
+            foot_pos_world=geometry.foot_pos_w,
+            knee_pos_world=geometry.knee_pos_w,
+            shank_sample_world=shank,
+        )
+    if robot_key != "go2":
+        raise ValueError(f"unsupported robot_name={robot_name!r}; expected 'go2' or 'm1'")
     leg_angles = joint_angles.reshape(root_pos.shape[0], root_pos.shape[1], 4, 3)
     h = leg_angles[..., 0]
     theta_t = leg_angles[..., 1]
@@ -198,9 +228,21 @@ def fk_leg_points_from_joint_angles(
     )
 
 
-def fk_feet_from_joint_angles(root_pos: Tensor, root_rpy: Tensor, joint_angles: Tensor) -> Tensor:
+def fk_feet_from_joint_angles(
+    root_pos: Tensor,
+    root_rpy: Tensor,
+    joint_angles: Tensor,
+    *,
+    robot_name: str = "go2",
+) -> Tensor:
     """Forward-kinematics foot positions from world root pose and planner-order joints."""
-    return fk_leg_points_from_joint_angles(root_pos, root_rpy, joint_angles, shank_sample_count=0).foot_pos_world
+    return fk_leg_points_from_joint_angles(
+        root_pos,
+        root_rpy,
+        joint_angles,
+        shank_sample_count=0,
+        robot_name=robot_name,
+    ).foot_pos_world
 
 
 __all__ = ["MpcLegPoints", "fk_feet_from_joint_angles", "fk_leg_points_from_joint_angles", "solve_joint_angles_from_trajectory"]

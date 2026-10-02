@@ -188,6 +188,8 @@ def decode_parametric_trajectory(
     variables: MpcParametricVariables,
     *,
     horizon: int,
+    foot_contact_offset_m: float = 0.0,
+    nominal_swing_height_m: float | None = None,
 ) -> DecodedParametricTrajectory:
     from .terrain import height_at
 
@@ -227,7 +229,8 @@ def decode_parametric_trajectory(
         + forward[:, None, :] * touchdown_delta[..., 0:1]
         + left[:, None, :] * touchdown_delta[..., 1:2]
     )
-    touchdown_z = height_at(terrain, touchdown_xy).to(dtype=dtype, device=device)
+    foot_offset = float(foot_contact_offset_m)
+    touchdown_z = (height_at(terrain, touchdown_xy) + foot_offset).to(dtype=dtype, device=device)
     touchdown_w = torch.cat((touchdown_xy, touchdown_z.unsqueeze(-1)), dim=-1)
 
     base_center = torch.tensor((0.75, 0.25, 0.25, 0.75), dtype=dtype, device=device).view(1, 4)
@@ -253,9 +256,17 @@ def decode_parametric_trajectory(
     foot_xy = _cubic_bezier_with_leg_phase(p0, p1, p2, p3, leg_phase)
     terrain_z = height_at(terrain, foot_xy.reshape(batch, h * 4, 2)).reshape(batch, h, 4).to(dtype=dtype, device=device)
     clearance = 0.04 + 0.16 * torch.sigmoid(variables.swing_clearance_raw)
+    # The generic 0.12 m midpoint is too small for the M1 wheel centre once
+    # the wheel-radius contact offset is accounted for.  Honour the runtime
+    # nominal swing request as a floor for every swing leg.
+    if nominal_swing_height_m is not None:
+        clearance = torch.maximum(
+            clearance,
+            torch.full_like(clearance, float(nominal_swing_height_m)),
+        )
     base_z = foot0[:, None, :, 2] + (touchdown_z[:, None, :] - foot0[:, None, :, 2]) * leg_phase
     arc = 4.0 * leg_phase * (1.0 - leg_phase) * clearance[:, None, :]
-    foot_z = torch.maximum(base_z + arc, terrain_z + 0.025)
+    foot_z = torch.maximum(base_z + arc, terrain_z + foot_offset + 0.025)
     foot_z = foot_z.clone()
     foot_z[:, 0, :] = foot0[..., 2]
     target_foot_pos = torch.cat((foot_xy, foot_z.unsqueeze(-1)), dim=-1)
@@ -271,7 +282,14 @@ def decode_parametric_trajectory(
     r2 = r3 - forward * (root_c[:, 1:2] * root_len) + left * root_lat[:, 1:2]
     root_xy = cubic_bezier(r0, r1, r2, r3, phase)
     root_ground = height_at(terrain, root_xy).to(dtype=dtype, device=device)
-    root_z = root_ground + 0.32 + 0.06 * torch.tanh(variables.root_height_offset_raw).view(batch, 1)
+    # Preserve the live robot's body-to-ground clearance. The old Go2
+    # constant (0.32 m) puts an M1 base below its reachable wheel workspace,
+    # so the IK validator rejects every swing and the manager falls back to
+    # a stationary trajectory. A measured clearance keeps this generic for
+    # both robots while allowing the M1 root height to remain physical.
+    initial_ground = height_at(terrain, root0[:, None, :2]).reshape(batch)
+    measured_clearance = (root0[:, 2] - initial_ground).clamp(0.30, 0.65)
+    root_z = root_ground + measured_clearance[:, None] + 0.06 * torch.tanh(variables.root_height_offset_raw).view(batch, 1)
     root_z = root_z.clone()
     root_z[:, 0] = root0[:, 2]
     root_pos = torch.cat((root_xy, root_z.unsqueeze(-1)), dim=-1)

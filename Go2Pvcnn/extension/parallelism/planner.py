@@ -459,6 +459,41 @@ def _assemble_foot_targets(
         if leg_swing.shape != (batch, 4):
             raise ValueError(f"leg_swing must have shape {(batch, 4)}, got {tuple(leg_swing.shape)}")
         horizon = int(cfg.horizon)
+        if str(getattr(backend, "name", "")).lower() == "m1":
+            # M1 uses a serial crossing gait: one wheel must complete its
+            # whole lift/traverse/land arc before the next wheel starts.  The
+            # old M1 path authored two diagonal swings over half_cycle and
+            # relied on the adapter to split them, which made each selected
+            # wheel execute only half an arc and the next wheel start midway.
+            # Author the four quarter-phase arcs directly so contact_state,
+            # foot targets, and the teacher's phase selection agree.
+            quarter = max(1, horizon // 4)
+            target = foot0[:, None].expand(-1, horizon, -1, -1).clone()
+            for leg in range(4):
+                start = leg * quarter
+                end = min(horizon, (leg + 1) * quarter)
+                frames = max(1, end - start)
+                curve = _terrain_swing_curve(
+                    foot0[:, leg:leg + 1],
+                    selected_foothold_w[:, leg:leg + 1],
+                    terrain,
+                    cfg,
+                    frames=frames,
+                ).squeeze(1)
+                active = leg_swing[:, leg].reshape(batch, 1, 1)
+                target[:, start:end, leg] = torch.where(
+                    active,
+                    curve,
+                    foot0[:, leg:leg + 1].expand(-1, frames, -1),
+                )
+                if end < horizon:
+                    post = torch.where(
+                        leg_swing[:, leg, None],
+                        selected_foothold_w[:, leg],
+                        foot0[:, leg],
+                    )
+                    target[:, end:, leg] = post[:, None, :].expand(-1, horizon - end, -1)
+            return target
         target = foot0[:, None].expand(-1, horizon, -1, -1).clone()
         half_cycle = int(cfg.half_cycle)
         first_swing = _terrain_swing_curve(
@@ -529,6 +564,14 @@ def _contact_state(
     leg_swing: Tensor | None = None,
 ) -> Tensor:
     contact = torch.ones(root_pos.shape[0], int(cfg.horizon), 4, dtype=torch.bool, device=root_pos.device)
+    if leg_swing is not None:
+        leg_swing = torch.as_tensor(leg_swing, dtype=torch.bool, device=root_pos.device)
+        quarter = max(1, int(cfg.horizon) // 4)
+        for leg in range(4):
+            start = leg * quarter
+            end = min(int(cfg.horizon), (leg + 1) * quarter)
+            contact[:, start:end, leg] = ~leg_swing[:, leg, None]
+        return contact
     contact[:, : int(cfg.half_cycle), (0, 3)] = False
     contact[:, int(cfg.half_cycle) :, (1, 2)] = False
     if leg_swing is not None:

@@ -81,6 +81,7 @@ def parametric_swing_foot_clearance_loss(
     swing_prob: Tensor,
     *,
     margin_m: float,
+    foot_contact_offset_m: float = 0.0,
 ) -> Tensor:
     foot = torch.as_tensor(target_foot_pos)
     batch, horizon = int(foot.shape[0]), int(foot.shape[1])
@@ -88,7 +89,7 @@ def parametric_swing_foot_clearance_loss(
     device = foot.device
     terrain_z = height_at(terrain, foot[..., :2].reshape(batch, horizon * 4, 2)).reshape(batch, horizon, 4)
     terrain_z = terrain_z.to(dtype=dtype, device=device)
-    deficit = torch.relu(terrain_z + float(margin_m) - foot[..., 2])
+    deficit = torch.relu(terrain_z + float(foot_contact_offset_m) + float(margin_m) - foot[..., 2])
     return (deficit.square() * torch.as_tensor(swing_prob, dtype=dtype, device=device)).mean(dim=(1, 2))
 
 

@@ -157,10 +157,12 @@ def cross_large_complex_semantic_obstacle_curriculum_cfg() -> SemanticObstacleCu
         non_plane_counts=(SemanticObstacleCount(small=5, large=2),),
         terrain_obstacle_count_overrides={
             "flat": SemanticObstacleCount(small=0, large=2),
-            "flat_dense_small_obstacles": SemanticObstacleCount(small=40, large=0),
+            # Six separated 3--6 cm obstacles provide repeated crossing
+            # attempts without turning the course into a dense scrape field.
+            "flat_dense_small_obstacles": SemanticObstacleCount(small=6, large=0),
         },
         center_safety_half_extent_m=(0.25,),
-        min_spacing_clearance_m=(0.08,),
+        min_spacing_clearance_m=(1.50,),
         tile_margin_m=(0.50,),
         collision_force_threshold=1.0,
     )
@@ -186,8 +188,8 @@ class ParallelismTrackingCrossLargeComplexEnvCfg(ParallelismTrackingSmallObstacl
         ParallelismCrossLargeTeacherObservationsCfg()
     )
     rewards: ParallelismCrossLargeTeacherRewardsCfg = ParallelismCrossLargeTeacherRewardsCfg()
-    dense_small_obstacle_count: int = 40
-    normal_small_obstacle_count: int = 5
+    dense_small_obstacle_count: int = 6
+    normal_small_obstacle_count: int = 6
     normal_large_obstacle_count: int = 2
     curriculum: ParallelismTrackingCrossLargeComplexCurriculumCfg = (
         ParallelismTrackingCrossLargeComplexCurriculumCfg()

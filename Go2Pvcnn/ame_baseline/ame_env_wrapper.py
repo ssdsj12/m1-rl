@@ -37,6 +37,8 @@ class AmeRslRlEnvWrapper(VecEnv):
         # for the policy: large obstacles always cancel it immediately.
         self._m1_teacher_active = torch.zeros_like(self._small_candidate_prev)
         self._m1_teacher_age = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+        self._m1_teacher_selected_leg = torch.zeros_like(self._m1_teacher_age)
+        self._m1_teacher_selected_phase = torch.full_like(self._m1_teacher_age, -1)
         # Position-action zero means nominal pose, so preserve a fixed stance
         # target across each serial swing phase instead of chasing measured
         # drift every frame.  The target is refreshed only at phase handoff.
@@ -189,6 +191,36 @@ class AmeRslRlEnvWrapper(VecEnv):
             # The teacher remains usable if a diagnostic-only live collision
             # query is unavailable during unit tests or scene startup.
             reference["collision_leg_mask"] = torch.zeros((self.num_envs, 4), dtype=torch.bool, device=robot.data.root_pos_w.device)
+        # Choose the swing leg once per serial phase, rather than changing it
+        # on every collision frame.  A rear leg can be selected at the phase
+        # handoff when the scanner already sees the same block, but the active
+        # leg is then allowed to finish its lift/traverse/touchdown arc.
+        phase_block = max(1, int(os.environ.get("M1_TEACHER_PHASE_BLOCK", "8")))
+        serial_phase = torch.div(self._m1_teacher_age, phase_block, rounding_mode="floor")
+        phase_changed = serial_phase != self._m1_teacher_selected_phase
+        if phase_changed.any():
+            sequence_text = os.environ.get("M1_TEACHER_LEG_SEQUENCE", "0,1,2,3")
+            try:
+                leg_sequence = [int(item.strip()) for item in sequence_text.split(",") if item.strip()]
+                leg_sequence = [item for item in leg_sequence if 0 <= item < 4] or [0, 1, 2, 3]
+            except ValueError:
+                leg_sequence = [0, 1, 2, 3]
+            sequence = torch.as_tensor(leg_sequence, device=self.device, dtype=torch.long)
+            default_leg = sequence.index_select(0, serial_phase.remainder(int(sequence.numel())))
+            mask = torch.as_tensor(reference.get("collision_leg_mask"), device=self.device, dtype=torch.bool)
+            if tuple(mask.shape) == (self.num_envs, 4):
+                hit = mask.any(dim=1)
+                first_hit = mask.to(torch.long).argmax(dim=1)
+                selected = torch.where(hit, first_hit, default_leg)
+            else:
+                selected = default_leg
+            self._m1_teacher_selected_leg = torch.where(
+                phase_changed, selected, self._m1_teacher_selected_leg,
+            )
+            self._m1_teacher_selected_phase = torch.where(
+                phase_changed, serial_phase, self._m1_teacher_selected_phase,
+            )
+        reference["serial_leg_override"] = self._m1_teacher_selected_leg.clone()
         reference["m1_root_pos_w"] = robot.data.root_pos_w.detach().clone()
         reference["m1_root_rpy_w"] = root_rpy.detach().clone()
         default_pos = select_named_joint_state(
@@ -351,6 +383,8 @@ class AmeRslRlEnvWrapper(VecEnv):
         obs_dict, _ = self.env.reset()
         self._m1_teacher_active.zero_()
         self._m1_teacher_age.zero_()
+        self._m1_teacher_selected_leg.zero_()
+        self._m1_teacher_selected_phase.fill_(-1)
         self._m1_teacher_hold_pose = None
         self._m1_teacher_hold_phase = None
         self._m1_teacher_no_candidate_steps.zero_()

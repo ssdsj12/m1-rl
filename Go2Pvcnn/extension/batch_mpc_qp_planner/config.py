@@ -21,9 +21,13 @@ class MpcQpRuntimeCfg(MpcRuntimeCfg):
     terrain_step_cap_sample_count: int = 5
     low_small_swing_repair_radius_m: float = 0.10
     low_small_swing_repair_step_m: float = 0.025
-    low_small_swing_clearance_m: float = 0.06
-    low_small_swing_clearance_max_m: float = 0.16
-    low_small_swing_height_lower_step_m: float = 0.20
+    # A 10 cm authored obstacle needs a visible 5 cm foot-top margin.  The
+    # former 6 cm planner clearance produced only ~2 cm in PhysX after IK and
+    # joint-limit projection, so keep a 12 cm semantic target and a wider
+    # repair cap for the actual M1 leg geometry.
+    low_small_swing_clearance_m: float = 0.12
+    low_small_swing_clearance_max_m: float = 0.22
+    low_small_swing_height_lower_step_m: float = 0.24
     low_small_swing_xy_blend: float = 0.65
     low_small_contact_reland_forward_m: float = 0.16
     body_leg_xy_repair_radius_m: float = 0.12
@@ -71,7 +75,7 @@ class MpcQpRuntimeCfg(MpcRuntimeCfg):
     continuous_low_small_foot_over_lift_m: float = 0.06
     continuous_low_small_crossing_endpoint_step_m: float = 0.10
     continuous_low_small_crossing_arc_margin_m: float = 0.04
-    continuous_low_small_crossing_arc_lift_step_m: float = 0.10
+    continuous_low_small_crossing_arc_lift_step_m: float = 0.14
     continuous_low_small_crossing_arc_lateral_step_m: float = 0.08
     continuous_low_small_crossing_arc_lane_margin_m: float = 0.08
     continuous_low_small_crossing_arc_target_lane_m: float = 0.03

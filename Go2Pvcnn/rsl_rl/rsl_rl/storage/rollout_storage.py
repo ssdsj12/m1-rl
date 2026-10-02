@@ -70,10 +70,12 @@ class RolloutStorage:
         self.ppo_active_masks = torch.ones(
             num_transitions_per_env, num_envs, 1, device=self.device
         )
-        self.imitation_weights = torch.ones(
+        # Imitation is opt-in.  Ordinary PPO transitions must not silently
+        # regress toward the zero-initialized privileged-action buffer.
+        self.imitation_weights = torch.zeros(
             num_transitions_per_env, num_envs, 1, device=self.device
         )
-        self.plan_valid_masks = torch.ones(
+        self.plan_valid_masks = torch.zeros(
             num_transitions_per_env, num_envs, 1, device=self.device
         )
         self.dones = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device).byte()
@@ -123,13 +125,13 @@ class RolloutStorage:
                 transition.imitation_weight.to(device=self.device).view(-1, 1)
             )
         else:
-            self.imitation_weights[self.step].fill_(1.0)
+            self.imitation_weights[self.step].zero_()
         if transition.plan_valid is not None:
             self.plan_valid_masks[self.step].copy_(
                 transition.plan_valid.to(device=self.device).view(-1, 1)
             )
         else:
-            self.plan_valid_masks[self.step].fill_(1.0)
+            self.plan_valid_masks[self.step].zero_()
         self.rewards[self.step].copy_(transition.rewards.view(-1, 1))
         self.dones[self.step].copy_(transition.dones.view(-1, 1))
         if transition.values is not None:

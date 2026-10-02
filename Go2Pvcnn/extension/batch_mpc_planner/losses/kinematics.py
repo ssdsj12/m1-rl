@@ -34,8 +34,10 @@ class MpcKinematicsForLoss:
     leg_points: MpcLegPoints
 
 
-def solve_ik_for_loss(root_pos: Tensor, root_rpy: Tensor, foot_pos: Tensor) -> Tensor:
-    return solve_joint_angles_from_trajectory(root_pos, root_rpy, foot_pos, clamp_to_limits=False)
+def solve_ik_for_loss(root_pos: Tensor, root_rpy: Tensor, foot_pos: Tensor, *, robot_name: str = "go2") -> Tensor:
+    return solve_joint_angles_from_trajectory(
+        root_pos, root_rpy, foot_pos, clamp_to_limits=False, robot_name=robot_name
+    )
 
 
 def evaluate_kinematics_for_loss(
@@ -45,18 +47,21 @@ def evaluate_kinematics_for_loss(
     *,
     clamp_to_limits: bool,
     shank_sample_count: int,
+    robot_name: str = "go2",
 ) -> MpcKinematicsForLoss:
     joint_angles = solve_joint_angles_from_trajectory(
         root_pos,
         root_rpy,
         foot_pos,
         clamp_to_limits=bool(clamp_to_limits),
+        robot_name=robot_name,
     )
     leg_points = fk_leg_points_from_joint_angles(
         root_pos,
         root_rpy,
         joint_angles,
         shank_sample_count=int(shank_sample_count),
+        robot_name=robot_name,
     )
     return MpcKinematicsForLoss(joint_angles=joint_angles, leg_points=leg_points)
 
@@ -67,9 +72,16 @@ def joint_limit_loss_from_root_foot(
     foot_pos: Tensor,
     *,
     joint_limit_margin_rad: float,
+    robot_name: str = "go2",
 ) -> Tensor:
-    joint_angles = solve_ik_for_loss(root_pos, root_rpy, foot_pos)
-    limits = _JOINT_LIMITS.to(device=joint_angles.device, dtype=joint_angles.dtype)
+    joint_angles = solve_ik_for_loss(root_pos, root_rpy, foot_pos, robot_name=robot_name)
+    if str(robot_name).lower() == "m1":
+        from extension.parallelism.m1_kinematics import _m1_joint_limits
+
+        lower_all, upper_all = _m1_joint_limits(joint_angles)
+        limits = torch.stack((lower_all, upper_all), dim=-1)
+    else:
+        limits = _JOINT_LIMITS.to(device=joint_angles.device, dtype=joint_angles.dtype)
     lower = limits[:, 0].view(1, 1, -1) + float(joint_limit_margin_rad)
     upper = limits[:, 1].view(1, 1, -1) - float(joint_limit_margin_rad)
     over_lower = torch.relu(lower - joint_angles)
@@ -84,10 +96,16 @@ def ik_fk_residual_loss(
     contact_prob: Tensor,
     *,
     contact_weight: float,
+    robot_name: str = "go2",
 ) -> Tensor:
     """Penalize foot targets that cannot be reproduced after IK + FK."""
-    solved = solve_joint_angles_from_trajectory(root_pos, root_rpy, foot_pos, clamp_to_limits=True)
-    return ik_fk_residual_loss_from_joint_angles(root_pos, root_rpy, foot_pos, contact_prob, solved, contact_weight=contact_weight)
+    solved = solve_joint_angles_from_trajectory(
+        root_pos, root_rpy, foot_pos, clamp_to_limits=True, robot_name=robot_name
+    )
+    return ik_fk_residual_loss_from_joint_angles(
+        root_pos, root_rpy, foot_pos, contact_prob, solved,
+        contact_weight=contact_weight, robot_name=robot_name,
+    )
 
 
 def ik_fk_residual_loss_from_joint_angles(
@@ -98,9 +116,10 @@ def ik_fk_residual_loss_from_joint_angles(
     joint_angles: Tensor,
     *,
     contact_weight: float,
+    robot_name: str = "go2",
 ) -> Tensor:
     """Penalize foot targets using precomputed clamped IK joint angles."""
-    fk_foot = fk_feet_from_joint_angles(root_pos, root_rpy, joint_angles)
+    fk_foot = fk_feet_from_joint_angles(root_pos, root_rpy, joint_angles, robot_name=robot_name)
     return ik_fk_residual_loss_from_fk(foot_pos, contact_prob, fk_foot, contact_weight=contact_weight)
 
 

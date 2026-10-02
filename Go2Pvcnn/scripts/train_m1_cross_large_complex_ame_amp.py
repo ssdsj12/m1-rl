@@ -133,6 +133,8 @@ def main() -> int:
         env = gym.make(M1_AME_AMP_ENV_ID, cfg=env_cfg)
         assert isinstance(env.unwrapped, ManagerBasedRLEnv)
         base_env = env.unwrapped
+        if base_env.scene["robot"].is_fixed_base:
+            raise RuntimeError("M1 locomotion requires a floating base; check USD root_joint")
         attach_trajectory_manager_if_enabled(
             base_env,
             env_cfg,
@@ -149,6 +151,8 @@ def main() -> int:
         )
 
         train_cfg = get_m1_ame_amp_train_cfg()
+        if os.environ.get("SAVE_INTERVAL"):
+            train_cfg["save_interval"] = int(os.environ["SAVE_INTERVAL"])
         dump_yaml(str(log_dir / "env_cfg.yaml"), _yaml_safe(env_cfg.to_dict()))
         dump_yaml(str(log_dir / "train_cfg.yaml"), _yaml_safe(train_cfg))
         runner = AmeAmpOnPolicyRunner(
@@ -170,6 +174,11 @@ def main() -> int:
         runner.learn(num_learning_iterations=args.max_iterations, init_at_random_ep_len=True)
         print(f"Training Complete - {M1_AME_AMP_EXPERIMENT_NAME}", flush=True)
         return 0
+    except BaseException:
+        import traceback
+        traceback.print_exc()
+        print("EARLY_TERMINATION Python exception before training completion", file=sys.stderr, flush=True)
+        raise
     finally:
         if env is not None:
             env.close()

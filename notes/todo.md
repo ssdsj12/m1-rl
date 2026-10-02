@@ -1,10 +1,108 @@
+## 2026-10-01 latest: stance encoding / auto-reset
+
+- T306 auto-reset latch defect fixed after RED test; 45 focused tests pass.
+- Stance action now encodes measured support pose; physical crossing remains unproven.
+- Ineffective warmup stopped. Bounded LR0 reset probe is the only new experiment.
+- [Evidence, failed trials and next gate](log/2026-10-01-m1-reset-stance-evidence.md).
+
+## 2026-10-01 M1 approach-gate audit (historical)
+
+- T306.approach-gate OPEN: CPU replay of the actual wrapper method confirms
+  premature leg commands on calls 1 and 2 while the near trigger stays false.
+- GPU7 has only the user's placeholder PID 2138492; no new training launched.
+- Previous phase/replan explanations are not established physical root causes.
+  Read the [audit](log/2026-10-01-m1-approach-gate-audit.md) before further tuning.
+
+## 2026-09-29 M1 active conversion checkpoint
+
+- M1 runtime conversion is implemented in the AME scene: M1 asset/body/joint
+  names, M1 planner backend, 16-D mixed action, single-leg teacher, 10 cm
+  semantic obstacles, and explicit collision penalty.
+- The true cross-success path now requires prior candidate, visible lift,
+  local wheel-bottom clearance, age/touchdown completion, no collision, and
+  obstacle disappearance; cross-rate and conditional success-rate are separate.
+- Code gate: 65 focused tests + 1 skipped (including the 10 cm planner test);
+  no training was launched.
+- Physical gate remains open: a short PhysX probe showed single-leg commands
+  and no collision, but not a repeatable >=5 cm wheel-bottom clearance under a
+  deterministic obstacle/foot alignment. Do not promote a checkpoint or start
+  long training until that probe passes.
+
 # Investigation Dashboard
+
+- 2026-09-23 当前长训：已通过在线 MPC teacher 挂载与 12 腿关节/足端命名修复，GPU7 上 PID 3793266 正在从 `model_16900.pt` 继续训练（`--num_envs 256 --max_iterations 10000`），当前约 16927/26901，未见 OOM、Vulkan 或 traceback。占位程序生命周期包装器已接入：长训启动时停止当前用户的 `sleep.py`，训练退出后恢复；本轮未发现占位进程，因此尚无恢复动作。`small_obstacle_climb` 与 `Crossing success proxy` 目前仍为 0，需继续观察后续迭代及真实轨迹，不能据此宣称跨越已验收。详见 [在线 teacher 与生命周期记录](log/2026-09-23-m1-online-teacher-mount-and-lifecycle.md)。
 
 This page is the fast-start dashboard for agent work. Detailed memory lives in [todo/](todo/); evidence lives in [log/](log/).
 
 ## Start Here
 
-- 2026-09-16 T306 M1 AME 1024-env 长训提前退出已定位到坏掉的服务器 Vulkan ICD 与默认 renderer multi-GPU 路径；launcher 现使用物理 `cuda:4`、关闭 renderer multi-GPU 并保留 policy std。监督器 v2 增加单实例锁、进程组清理、谱系隔离、checkpoint 内容校验与精确 `next_iter` 恢复；原子保存避免半写文件。真实 1024-env smoke 精确执行 `model_1040 -> model_1043` 三次更新，正式首个 attempt 已无重启推进到 `model_1100`，AME baseline `30 passed`；系统 Vulkan 修复仍需管理员权限。详见 [T306 branch page](todo/T306-m1-ame-long-train-stability.md) 和 [修复日志](log/2026-09-16-m1-ame-long-train-vulkan-watchdog-fix.md)。
+- T306最新（2026-09-20）：registry `394ea67`、encounter core `d27e26c` 均SPEC→QUALITY通过；最新全套2317passed/252.31s/0skip/exit0，最终聚焦184passed。CPU 1024单hit/row判定12.51s→0.36s，保留全owner/all-ray精确语义；不是Isaac容量验收。下一步明确为pre-helper vendor hook、行级缓存重置、sync release/begin及原始sidecar/独立replay；不得重做已完成的geometry审计。未接runtime/启动训练，GPU7占位3919095未动。新G1三次/1024/G2/AME/policy/10000仍未完成。[本轮证据](log/2026-09-20-m1-encounter-registry-coordinator.md)。下方旧“当前”段为历史。
+
+- T306最新：ACTIVE，9dc0dc7已接全17body/collider向外姿态投影；主代理2128full/237.61s/0skip、SPEC→QUALITY PASS。唯一amp/GPU7 `pose-projection-live-20260919`完整8×32/native0/wrapper0；4352 colliderstep精确独立回放、原28非计时字段及rawpose逐位一致，rawfailed40保留，原占位351307未动。测试oracle中点Minor已以RED→GREEN64修复，生产不变。下一步直接registry/coordinator/reference hook和遇障交接，不重复基础投影审计；三次新G1/1024/G2/AME/policy/10000尚未完成。[本轮证据](log/2026-09-19-m1-pose-projection.md)。下方旧“当前”段为历史。
+
+- T306最新：ACTIVE，live source owner＋17body逐步raw pose已实现47167e8；主代理2026full/226.43s/0skip、SPEC→QUALITY通过。唯一amp/GPU7实测live-provider-20260919-1830完整8×32/native0/wrapper0、正常先关lease后关env，23raw守卫逐位相同，32×8×17完整姿态；与旧startup28非计时字段逐位一致。原rawfailed40保留，GPU7原占位351307未动。下一步显式向外pose投影→registry/coordinator，不能把本次raw采集称CLEAR/G1/PPO或10000通过；长训尚未启动。[在线实施与实测](log/2026-09-19-m1-live-provider.md)。下列旧“当前”段为历史。
+
+- T306当前：ACTIVE，root944G/495G可用。保守局部geometry已实现3d97e9b，focused222/main1929full/0skip/exit0，SPEC→QUALITY复审通过。主代理对既有现场负例独立回放：136colliders、104Mesh/3664vertices和32native Cylinder全覆盖，原rawfailed40与JSON SHA不变。新模块不改collector/SDK/阈值，不将关闭的probe伪作live provider；下一步open lease＋同一步17body raw poses＋保守world/frame投影接线。GPU7仅原占位351307，无新训练。coordinator/新G1/1024/G2/AME/policy/10000仍未完成。[实现与真实数据回放](log/2026-09-19-m1-conservative-geometry.md)。
+
+- T306当前：BLOCKED，等待精确pip缓存迁移授权或根盘空间恢复；同一条件已连续3个目标轮。fresh root533224KiB，低于1GiB启动门槛；b16168b clean，GPU7仅原占位351307。代码92278b7 CPU门槛已完成（main1687full/169.98s/0skip、SPEC→QUALITY PASS），真实query/G1/G2/AME/policy/10000均未验收。未迁移/删除/启Kit，不再重复CPU基础审计。恢复后fresh资源检查→单次8×32实际query，完整目标不变。[本轮记录](log/2026-09-19-m1-collision-query-initialization.md)。
+
+- T306当前：B2b2b source watch/query lease完成，代码8a3746f；主代理1565full/152.72s/exit0/0skip、实际Carb＋8个M1内存实例CPU probe通过，SPEC→QUALITY PASS。修复真实USD callback保活、finalize失败锁存及构造清理异常公开retry owner。下一步直接8-env实际PhysX query初始化/无额外physics-step诊断，不重复旧基础审计。未启Kit/GPU训练，旧run/SDK/参考/占位不变；完整G1/G2/AME/policy/10000仍未完成。[本轮记录](log/2026-09-19-m1-collision-scene-lease-implementation.md)。
+
+- T306当前：B2b2a静态scene binding与显式CollisionPathScope完成，c608945，main1452full/146.49s/0skip、SPEC→QUALITY PASS。修复真实proxy ID借用引用导致的延后解码SIGSEGV；两次正式scope真实8内存实例136collider/104proxy解码、运动hash不变、只读及关闭拒绝通过。下一步watch/lease与8-env初始化真实query无额外physics-step验证；不重复旧基础审计，不把CPU当物理验收。coordinator/G1/G2/AME/policy/10000仍未完成，占位/SDK/旧run不变。[本轮证据](log/2026-09-19-m1-collision-scene-binding-implementation.md)。下方query完成为历史阶段。
+
+- T306当前：用户已批准“按规格实施”。隔离A1/B1/B2a＋B2b1非阻塞query协议完成，代码f85c7ea，主代理1338full（145.24s/0skip）、SPEC→QUALITY PASS。17408请求CPU协议27.19→2.34s，未接真实SDK/启GPU。现继续薄USD/SDK stage/path/settings/source绑定、geometry失效监控与8-env初始化无额外physics-step诊断；source bounds不能假充PhysX cooked包络。coordinator/sync/replay/G1/G2/AME/learned/10000仍未完成。见[实施记录](log/2026-09-19-m1-collision-query-batch-implementation.md)。下方BLOCKED/待书面审阅为已解除的历史。
+
+- T306当前2026-09-19 11:05：目标BLOCKED，等待具体规格e25e805的用户审阅；方向同意已保留，自动续行不是书面审阅。三轮同条件核验及相关安全审计已完成，停止重复审计。GPU7仅原占位351307，无本任务训练；未改代码或验收目标。确认规格后计划/TDD继续。[等待记录](log/2026-09-19-m1-written-spec-review-blocked.md)。
+
+- T306资源核验2026-09-19 11:02：raw scanner为22801rays/env；全ray xyz单步1024已267.199MiB，超旧NPZ未压256MiB上限，旧verifier非流式。新增.6h.6a.1a.2b证据容量子项；不要求密集全ray编码、不删证据/改精度。根盘仅约3.51GiB，后续本任务大输出需/data预检。原规格仍待书面审阅；未改控制/开仿真，占位保留。见[证据容量](log/2026-09-19-m1-encounter-evidence-capacity.md)。
+
+- T306最新2026-09-19：用户同意修正版A，已写具体规格e25e805并通过自审/两项只读边界复审，待书面审阅后计划/TDD。语义为每次遇障，不永久锁同物体；新增owner交接、frame/identity、G2真实再遇障依赖。未改代码/开仿真，GPU7占位351307保留。旧A/B阻塞解除；10000/learned仍未验收。[规格](../docs/superpowers/specs/2026-09-19-m1-encounter-lifecycle-design.md)、[审阅记录](log/2026-09-19-m1-encounter-design-review.md)。
+
+- T306最新23:36：持续目标 BLOCKED，等待 phase 重入方案 A/B 的用户选择；同一待选条件已跨三轮，安全只读审计已完成。未启动新仿真/训练，GPU7仅占位351307，未改代码/阈值/SDK。完整10000及learned跨越/绕行目标保留但未完成，收到选择后续行。[阻塞核验与恢复条件](log/2026-09-18-m1-design-choice-blocked.md)。
+
+- T306最新23:32：CPU复算定位首次跨越链：FAR失败者的world抬升目标本身偏低（IK回放差<7e-7），RAR横向越界包含root/yaw影响；质量关联不等于单因。记录完整，未改源码/阈值/随机化，未启动新仿真。phase重入方案A/B仍待用户确认；GPU7原占位351307保留。见[几何审计](log/2026-09-18-m1-scale-first-cross-geometry.md)。10000更新及learned跨越/绕行仍未验收。
+
+- T306最新23:07：baseline18完整1600/native0/commonPASS；candidate19完成247步后在prepare247因env523重新wave/非零legs触发保护，native1/wrapper2/verifier3，非旧Isaac原生崩溃。未重启；占位已恢复351307/15744MiB。新子项：18初次跨越几何失败、phase11后重入与接管时序冲突；转CPU定位/设计，不删保护、不改阈值。formal646f486不动，10000/learned仍未验收。见[run19](log/2026-09-18-m1-scale-candidate19.md)、[行为分组](log/2026-09-18-m1-scale-baseline-behavior.md)。下列旧进度为历史。
+
+- T306.6h.6a.1 持续执行中：用户要求直至验收；同一冻结候选run14/15/16三次amp/GPU7完整8×1600均strict8/8、native/wrapper/verdict0、零reset。每个重复2700非计时数组与run14逐位一致。正式接入/回归正在执行；新.6a.1a处理1024紧凑布局、唯一origin和全量验收预算，未启动1024/10000。15GiB占位保留。见[repeat15](log/2026-09-18-m1-sync-repeat15.md)、[repeat16](log/2026-09-18-m1-sync-repeat16.md)、[1024审计](log/2026-09-18-m1-1024-readiness-audit.md)。下列单次run14状态为历史。
+
+- T306.6h.6a 隔离实现与单次物理验证PASS：373CPUtests/spec/quality通过；run14 amp/GPU7单进程完整8×1600，native/wrapper/verdict0，strict8/8（基线4/8），0reset/0重启。接管action245..253，原跨障前缀逐位一致；全首回合轮均速差降到.01966..03224<.08。15GB占位一直保留。未推广正式adapter、未扩1024/10000、非learned policy或大绕行完成；待候选接入与严格重复。见[实现与实测](log/2026-09-18-m1-post-cross-sync-implementation.md)、[设计](../docs/superpowers/specs/2026-09-18-m1-post-cross-wheel-sync-design.md)。
+
+- T306.6h.6 隔离A/B完成、候选拒绝：225CPUtests/spec/quality通过；run13 amp/GPU7完整8×1600、native0、strict1/8（基线4/8）。gain0消除七个完整首回合平地尾段的目标振荡，但env1触发参考终止判据、env2/5后轮横向错过跨杆范围。正式adapter未动、不追加仿真、不扩1024/10000；新.6a需解耦轮同步与跨障速度/轨迹。15GB占位一直保留。见[对照证据](log/2026-09-18-m1-wheel-equalizer-ab.md)。下列状态为历史。
+
+- T306.6h.5c.3 接入完成、严格门槛未全过：正式adapter a86cbf5、212CPUtests通过；run12 amp/GPU7单进程完整8×1600、native0、无重启。8/8完成FAR/RAR窄横杆跨越与落地，4/8仅轮均速差>.08失败。新.6定位到外层轮速反馈饱和交替，等待单变量隔离A/B确认；未启动1024/10000。用户坚持GPU7，已允许必要时停本人15GB占位并在无计算任务后恢复，本次未动。见[严格首测与诊断](log/2026-09-18-m1-reference-strict-run12.md)。下列状态为历史。
+
+- T306.6h.5c.2 STARTUP VERIFIED：amp/GPU7隔离run11完整8×32，native/wrapper均0、startup_passed=true、无重启。212CPUtests与规格/质量审查通过；相比run10新增配置仅replicate_physics=False，场景/初始状态及28个非计时采样字段完全相同。正式入口/SDK/参考/15GB占位不变；未验证1600/1024/10000。新.5c.3待接入与严格行为门槛。见[普通复制A/B](log/2026-09-18-m1-normal-clone-ab.md)。
+
+- T306.6h.5c.1 定位完成：隔离run10完整8×32后native134；53562注册/294调用、零溢出，唯一未返回回调确认为`_physx`中replicator attach返回列表的静态析构。22诊断CPUtests/170副本tests及两轮审查通过。未改SDK/正式入口/占位。新.5c.2拟在隔离副本以replicate_physics=False做8×32对照，等待选择；未启动长训。见[原生责任库证据](log/2026-09-18-m1-physx-exit-owner-capture.md)。
+
+- T306.6h.5c ROUTE A APPROVED：用户允许SDK退出范围调查，并选择先隔离定位native回调注册者。只读审计22关键文件均匹配RECORD；09栈定位libc ef_cxa回调，但注册库仍未知。设计6addb50已记录，未实施新诊断/修复，未启动训练。撤回仅指无效cache-off候选，不是模型/训练进度回退。既往120/1000轮正常结束不等于10000已保证；当前故障在8×32全部完成后关闭阶段，不应当成中途截止的同一根因。见[调查与边界](log/2026-09-18-m1-native-exit-owner-audit.md)。
+
+- T306.6h.5c WAITING DESIGN/SCOPE：三处入口生命周期修补均未得到正常退出。缓存关闭确实生效，但8×32完整执行后native134，原生栈为Py_Exit(0)→C退出回调→list_dealloc→失效threadstate。本轮候选归档并撤回；停止追加局部补丁，需讨论SDK关闭生命周期范围，未改amp/SDK/驱动/占位。1600/1024/10000仍未启动。见[失败与原生证据](log/2026-09-18-m1-reference-stat-cache-gate.md)。
+
+- T306.6h.5a：隔离gdb已安装，5项CPU退出语义测试通过。8×32诊断06完整采样后native139，原生栈定位PhysX tensor对象随Python残留frame析构；正在补充frame文件/函数信息，不改amp/Isaac/驱动/占位进程。未启动1600/1024。见[原生诊断](log/2026-09-18-m1-reference-gdb-capture.md)。
+
+- 2026-09-18 T306.6h.5：amp/GPU7的8×32均完整采样，但正常退出时发生native139，fataltrace定位到解释器GC。两处生命周期风险修补/164CPUtests通过仍未消除原生故障。T306.6h.5a等待用户批准独立gdb获取C/C++栈；保留15GB占位、全部现场，不安装依赖、不启动1600/1024/10000。横杆实测露出45mm。见[首测](log/2026-09-18-m1-reference-gpu7-smoke.md)、[有效栈](log/2026-09-18-m1-reference-fatal-diagnostics.md)、[最新验证](log/2026-09-18-m1-reference-launcher-cleanup.md)。
+
+- 2026-09-18 14:42 T306.6h 用户改选GPU7，随后明确“保留占位进程，暂不启动”。保留本人sleep.py PID2789351，未启动Isaac、未改设备绑定；后续先适配GPU7再8env→1024env。见[GPU7暂停决定](log/2026-09-18-m1-reference-gpu7-hold.md)。
+
+- 2026-09-18 14:22 T306.6h：独立参考验证入口已提交f5842d4，150项CPU回归/spec/quality均通过；还未启动Isaac。新T306.6h.4：GPU4被其他用户liuxx占用21710MiB、100%利用率，需先协调资源，未终止对方任务。8-env/1024-env均未验收。见[实现证据](log/2026-09-18-m1-reference-runtime.md)、[资源阻碍](log/2026-09-18-m1-reference-gpu-resource-blocker.md)。
+
+- T306.6h execution update: independentmetrics now77focused/112unionCPUtestsPASS, bothreviewsapproved;80-step×8envCPUparity matches reference clearance flags. Runtimeadapter inprogress; noIsaacsimulationyet. Originalbar sourceembedding15mm isnewT306.6h.3 physicalaudit, mustmeasureactualabovegroundheight before60mmclaims. See[metrics](log/2026-09-18-m1-reference-metrics.md).
+
+- 2026-09-18 T306.6h IMPLEMENTING：用户已确认独立控制器规格。参考CPU基线88passed；新来源guard35passed且spec/quality审查通过；只读USD检查3layers/1MDL/0unresolved，17刚体/16关节/浮动根/4圆柱轮确认。新增入口尚在实施，未启动8-env仿真。新增全身子步接触诊断，避免四轮sensor的netforce被误当纯横杆力；8×1600三次全通过才准1024。见[预检证据](log/2026-09-18-m1-reference-preflight.md)。
+
+- 2026-09-18 T306.6h：用户同意参考 M1 控制器“先复现小跨越、再适配大绕行”的方向，并指定先8env后1024env。[第一阶段详细设计](../docs/superpowers/specs/2026-09-18-m1-reference-controller-validation-design.md)已取消1-env仿真：8×32启动、三次8×1600严格通过后，才进行1024×32容量检查和1024×1600控制器验证。仅修改设计与记录，尚未启动仿真。参考accepted权重缺失，不冒充已学会越障；入口/资产问题仍待适配。现有AME、10000长训与旧监控均不变，profiling路线保持停止。见[参考调查及规模修订](log/2026-09-18-m1-reference-controller-design.md)。
+
+- 2026-09-18 T306.6g：新轮式奖励fresh1024×120已单进程完整结束，exact0..119、complete+exit0，138checkpoint tensors/35TB tags finite。固定评测flat8/8、small/large0/8，均无碰撞/失败终止；机器人仍在障碍前停止。正式10000未启动。T306.6g.1a的profile采集路线三次实测未产出有效诊断，已停止；拟改显式诊断接口，待确认，监控暂停。见 [pilot](log/2026-09-18-m1-wheel-reward-1024-pilot.md)、[行为汇总](log/2026-09-18-m1-wheelreward-tail-audit.md)、[诊断限制](log/2026-09-18-m1-reward-hook-bootstrap-probe.md)。
+
+- 2026-09-18 T306.6f CLOSED：逐事件记录证明72/4800膝部几何事件发生在自身障碍通过后，scanner读到2.5m间距的相邻环境障碍，而PhysX过滤跨环境碰撞。仅将probe间距改为8m（与已有评测一致），同配置8env×600步实测0.05m四轮通过8/8、前进3.10m、0reset、几何事件72→0、complete+exit0；本轮重新回归97 passed,1 skipped。未放宽膝部碰撞惩罚；source hull保守性不是这72事件的已证根因。见 [事件追踪和隔离对照](log/2026-09-18-m1-probe-neighbor-contamination-fix.md)。
+
+- 历史记录（2026-09-17，非当前待确认状态）：semantic1轮接触修复后的fresh1024×120完整结束（exact0..119，exit0，138 tensors/35 tags finite）。修正版评测平地8/8、小跨越/大绕行0；失败终止漏洞已修。600步固定姿态物理对照：0.05m四轮完整通过8/8，0.10m为0/8，均无reset。此后轮式奖励已确认实施，最新结果见上。见 [当前状态](todo/T306-m1-ame-long-train-stability.md)、[训练对照](log/2026-09-17-m1-semantic1-wheel-120-training.md)、[评测修正](log/2026-09-17-m1-evaluation-terminal-failure.md)、[高度匹配探测](log/2026-09-17-m1-step-height-matched-probe.md)。
+
+- 2026-09-17 T306 当前要求已改为 `amp`、GPU4、1024 env、单进程完成，不再使用自动重启监督器。真实 M1 浮动底座、腿位置/轮速度混合控制、平衡站姿与轮轴无限转动已接入。8-env 平地驱动对照：旧增益前进 0.0025m，新增益 1.6044m，均 300 步；新版本 AME 和 AME-AMP 各完成 2 次更新。1024 x 120 单进程验证已完成；10000 长训及越障/绕障行为尚未验收。见 [T306](todo/T306-m1-ame-long-train-stability.md)、[驱动对照](log/2026-09-17-m1-floating-drive-gate.md)、[1024 验证](log/2026-09-17-m1-floating-1024-stability.md)。
+
+- 历史记录（2026-09-16，非当前任务状态）：当时存在服务器 Vulkan ICD 与默认 renderer multi-GPU 路径问题，并使用恢复监督器。该路线已被单进程验收要求取代，不得将历史model_1100或tmux会话名当作当前训练。详见 [T306 branch page](todo/T306-m1-ame-long-train-stability.md) 和 [历史修复日志](log/2026-09-16-m1-ame-long-train-vulkan-watchdog-fix.md)。
 
 - 2026-09-11 T305 统一策略评测新增 SemLoco：复用默认 adapter，最新 `model_19999.pt` 通过真实 1024 env x 48 transitions smoke，得到 `27 valid_windows` 与 `5224.88 env-steps/s`，详见 [SemLoco integration smoke](log/2026-09-11-policy-benchmark-semloco-integration-smoke.md)。
 
@@ -209,7 +307,7 @@ This page is the fast-start dashboard for agent work. Detailed memory lives in [
 
 ## Active Fronts
 
-- [T306 M1 AME long-train stability](todo/T306-m1-ame-long-train-stability.md): 应用层 launcher/watchdog 修复与真实 1024-env resume smoke 已完成；10000-iteration 长训继续运行，系统 Vulkan ICD 修复需要管理员介入。
+- [T306 M1 AME long-train stability](todo/T306-m1-ame-long-train-stability.md): amp/GPU7 encounter接入；7b6ddd7已构造实际完整局部保守包络，原query负例保持不变。下一步live lease/provider与同一步body-pose投影，再coordinator；保留15GB占位，无训练进程，不使用重启supervisor。新G1/1024/G2及policy跨绕/10000仍未验收。
 
 - [T305 统一策略评测 Benchmark](todo/T305-policy-benchmark.md): 六类模型 harness 和真实接线 smoke 已完成；下一步运行六个正式 checkpoint 的三套 suite 并生成论文统计。
 
@@ -219,6 +317,7 @@ This page is the fast-start dashboard for agent work. Detailed memory lives in [
 
 | Front | State | Why It Matters Now | Next Step |
 | --- | --- | --- | --- |
+| T306 | continuous implementation | 3d97e9b/main1929full；实际136collider局部保守包络回放全覆盖，原rawfailed40不变。 | live owner/17body poses/保守投影→coordinator→新G1/1024/G2；AME/policy跨绕/10000仍未验收。 |
 | T305 | verification | AMP/Distillation/PPO/Teacher/AME/AME-AMP need a reproducible paired simulation benchmark for complex mixed terrain, large-obstacle avoidance, small-obstacle crossing, and valid planner tracking MSE. | six-model harness and AME variants smoke verified; formal paper sweep remains open. |
 | T302q | active | Flat-small run `2026-06-11_18-31-19` has stable locomotion and signal-first clearance is nonzero, but curriculum never opens and the semantic signal is tiny. | Redesign curriculum metrics/gate aggregation before another long run; optionally eval `model_20700.pt` only as behavior sanity. |
 | T302s | active | Fixed command ranges opened terrain curriculum, and controlled crossing eval now has sufficient path-obstacle opportunities. `model_28900.pt` still has `foot_over_count=0` and overpass success `0/15`, so the current training signal is not teaching clean low-small overpass. | Redesign training to provide staged/dense path-aligned crossing signal instead of continuing this run blindly. |
@@ -234,7 +333,7 @@ This page is the fast-start dashboard for agent work. Detailed memory lives in [
 
 | Root | Status | Stage | Branch | Current | Refs |
 | --- | --- | --- | --- | --- | --- |
-| T306 | active | M1 AME long training | `m1_rl` | launcher/续训/watchdog 修复已通过真实 1024-env `3 + 4` iteration smoke；长训与 host Vulkan 修复仍在跟踪 | [branch](todo/T306-m1-ame-long-train-stability.md); [evidence](log/2026-09-16-m1-ame-long-train-vulkan-watchdog-fix.md) |
+| T306 | active | M1 AME long training and obstacle behavior | `m1_rl` + isolated encounter | 3d97e9b局部保守geometry/main1929CPU；live provider/新G1/1024/G2及全目标未验收 | [branch](todo/T306-m1-ame-long-train-stability.md); [latest](log/2026-09-19-m1-conservative-geometry.md) |
 | T305 | verify | unified policy benchmark | `parallelism-amp` | six-model harness and AME/AME-AMP 1024-env smoke passed; formal sweep pending | design [2026-09-03](../docs/superpowers/specs/2026-09-03-policy-benchmark-design-zh.html); latest [2026-09-11](log/2026-09-11-policy-benchmark-ame-integration-smoke.md) |
 | T303 | verify | Parallelism flat foot planner | `Parallelism` | Self-contained 24-frame trot foot planner, 50 candidates per foot, torch single-pass filter/score, RL adapter, and viewer backend route; real viewer smoke remains open. | design [2026-07-27](../docs/superpowers/specs/2026-07-27-parallelism-flat-foot-planner-design.html); latest log [2026-07-27](log/2026-07-27-parallelism-flat-foot-planner-implementation.md) |
 | T302q | active | flat small-obstacle avoidance RL reward | [T302q](todo/T302q-flat-small-avoidance-reward-plan.md) | Local implementation complete; focused regression, pycompile, fresh IsaacLab train smoke, and old-checkpoint resume smoke pass; small-collision eval smoke remains open. | design [2026-06-10](../docs/superpowers/specs/2026-06-10-flat-small-obstacle-avoidance-reward-design.html); latest log [2026-06-10 20:35](log/2026-06-10-2035-t302q-flat-small-local-implementation-and-smoke.md) |
@@ -259,7 +358,15 @@ This page is the fast-start dashboard for agent work. Detailed memory lives in [
 
 ## Open Leaves
 
-- T306.1 host Vulkan repair: 当前 `vkCreateInstance` 对所有 API 版本均返回 `VK_ERROR_INCOMPATIBLE_DRIVER`；应用层 compute-only workaround 已验证，但最终应由管理员修复 NVIDIA graphics/Vulkan 用户态驱动并以 `vulkaninfo` 成功枚举 8 张 GPU 为验收条件。
+- T306.6h.6a.1a（1024扩容）: Task1/2/3、run17startup、baseline18公共门槛完成；candidate19在prepare247保护失败，native1/wrapper2/verifier3，不重跑/推广。[run19](log/2026-09-18-m1-scale-candidate19.md)。
+  - .1 初次跨越几何：18env missing ordered事件（FAR高度6/RAR横向17并集）；源函数CPU回放验证FAR的world目标偏低，RAR需计入root/yaw而非只改腿横移。质量仅关联，动力学隔离因果仍缺证据；跨后同步不能补救。[几何复算](log/2026-09-18-m1-scale-first-cross-geometry.md)。
+  - .2 phase完成后重入：用户已批准具体规格实施，A1几何基础f8ce0af已829full/双审查PASS，继续.2c完整provider/状态机/交接接入；不能只reset解锁或将rootmask套legs。子项.2a方向/轮侧/多物体接触/真实路线与G2物理再遇障，不能由CPU或G1替代。[实施记录](log/2026-09-19-m1-encounter-geometry-implementation.md)。
+    - .2c.1 已完成：live owner及同一步17body-pose向外投影9dc0dc7/8e60686，真实8×32/native0、4352colliderstep独立回放；原rawfailed40保留，不改clearance。[投影证据](log/2026-09-19-m1-pose-projection.md)。
+    - .2c.2 当前：registry394ea67/core d27e26c均双审、2317全回归；.2c.2a CPU核心CLOSED，.2c.2b仍OPEN为reference/sync动作交接和新证据接线，随后才新G1/G2验收。[当前实现](log/2026-09-20-m1-encounter-registry-coordinator.md)。
+  - 22:46资源风险缓解但未查明来源：本次完成CPU fixture完整归档/data、旧路径保留链接，仅移除校验重复副本，root约14.29GiB。run18同PID1408步；未来新产物用/data，baseline/源码不搬，保留所有原验收/容量门槛。[存储核验](log/2026-09-18-m1-scale-fixture-storage.md)。
+- T306.6g.1a（暂停，阻塞T306.6g.1）: profile采集路线停止，显式奖励诊断方案未实施；当前优先T306.6h独立参考验证。正式10000未开始，T306.6f串扰已关闭。见[T306](todo/T306-m1-ame-long-train-stability.md)。
+
+- T306.1 host Vulkan repair: 历史host ICD曾返回 `VK_ERROR_INCOMPATIBLE_DRIVER`；该历史故障不能直接当作当前launcher故障。主机级驱动仍需独立管理员验收；本轮仅复核测试/日志，未改系统驱动。
 
 - T305.3 formal paper evaluation: run paired conditions for all six weights and generate confidence intervals and paired statistics; [branch page](todo/T305-policy-benchmark.md), [latest smoke](log/2026-09-11-policy-benchmark-ame-integration-smoke.md).
 
@@ -319,6 +426,12 @@ This page is the fast-start dashboard for agent work. Detailed memory lives in [
 - [T200-semantic-static-course-viewer.md](todo/T200-semantic-static-course-viewer.md)
 
 ## Recent Logs
+
+| 2026-09-19 | M1 conservative local geometry | 3d97e9b；focused222/main1929CPU；实际136collider回放 | 全3664vertices/32nativeCylinder覆盖、原rawfailed40保持；live provider待接 | [T306.6h.6a.1a.2c.1](todo/T306-m1-ame-long-train-stability.md) | [verification](log/2026-09-19-m1-conservative-geometry.md) |
+
+| 2026-09-18 | M1 post-cross sync design | 源码/reset边界审计＋run12离线gate | 接管action245..253；仅设计，无新仿真/实现 | [T306.6h.6a](todo/T306-m1-ame-long-train-stability.md) | [audit](log/2026-09-18-m1-post-cross-sync-design-audit.md) |
+
+| 2026-09-18 | M1 wheel equalizer A/B | 225CPUtests; oneamp/GPU7 8×1600 | native0/completedtrue，strict1/8；gain0候选拒绝，无推广/重启 | [T306.6h.6a](todo/T306-m1-ame-long-train-stability.md) | [verification](log/2026-09-18-m1-wheel-equalizer-ab.md) |
 
 | 2026-09-16 | M1 AME long-train Vulkan/watchdog fix | root cause + launcher + supervisor + real resume smoke | focused `29 passed`; launcher `3` updates exit `0`; supervisor `4` updates reaches `model_1037.pt` and exits `0`; host Vulkan ICD remains broken | [T306](todo/T306-m1-ame-long-train-stability.md) | [verification](log/2026-09-16-m1-ame-long-train-vulkan-watchdog-fix.md) |
 
@@ -430,3 +543,5 @@ This page is the fast-start dashboard for agent work. Detailed memory lives in [
 - Keep this page as a dashboard, not a changelog.
 - Put detailed background in branch pages and evidence in logs.
 - Old unfinished T302h/T302i/T302j leaves are closed as routes and preserved as context, not deleted.
+
+- 2026-09-24: crossing-state hardening added: require pre-front clearance and exclude collision frames from success rate; focused tests pass. Full episode physical validation remains open.

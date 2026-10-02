@@ -283,12 +283,12 @@ M1_CFG = replace(
     ParallelismCfg(),
     flat_root_clearance_m=M1_ROOT_Z_M,
     root_motion_scale=0.60,
-    # M1's hip/knee envelope is wider than Go2's.  Keep the Go2 avoidance
+    # M1's hip/knee envelope is wider than the legacy geometry. Keep the
     # rule, but give the M1 root enough lateral authority to clear a box.
     vy_limit=1.5,
     large_obstacle_lateral_speed_max_mps=1.5,
     # Match the terrain-relative root offset used by the M1 asset.  The root
-    # is sampled at the centerline, as in Go2; taking the maximum over the
+    # is sampled at the centerline; taking the maximum over the
     # whole body footprint makes a descending stair lift the root from a rear
     # step and can move the front legs outside their IK workspace.
     terrain_following_root_clearance_m=0.34,
@@ -302,7 +302,7 @@ M1_CFG = replace(
     swing_terrain_query_radius_m=M1_WHEEL_HORIZONTAL_ENVELOPE_M,
     foot_contact_offset_m=M1_WHEEL_RADIUS_M,
     # The M1 touchdown is validated against its wheel/body geometry below;
-    # the inherited Go2 semantic expansion otherwise removes valid nearby landings.
+    # a generic semantic expansion otherwise removes valid nearby landings.
     semantic_touchdown_margin_m=0.0,
     collision_margin_m=0.003,
     box_surface_points=26,
@@ -313,6 +313,10 @@ M1_CFG = replace(
     contact_tolerant_support_shape_names=tuple(
         f"{prefix}_wheel" for prefix in ("FBL", "FAR", "RBL", "RAR")
     ),
+    # Small obstacles are intended wheel supports: physics still supplies the
+    # contact impulse, while the geometry reward continues to reject all
+    # non-wheel contacts and every wheel contact with semantic class 2.
+    contact_tolerant_support_semantic_ids=(1,),
     swing_start_tolerant_collision_shape_names=tuple(
         name
         for prefix in ("FBL", "FAR", "RBL", "RAR")

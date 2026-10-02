@@ -568,9 +568,21 @@ def infer_current_small_semantic_contact(
     root = getattr(env, "unwrapped", env)
     body_ids = getattr(root, "_semantic_body_part_clearance_body_ids", None)
     if body_ids is None:
-        foot_ids, _ = robot.find_bodies(".*_foot")
-        calf_ids, _ = robot.find_bodies(".*_calf")
-        thigh_ids, _ = robot.find_bodies(".*_thigh")
+        # Go2 uses lower-case ``*_foot/calf/thigh`` names.  M1 uses
+        # ``*_FOOT_LINK``/``*_KNEE_LINK``/``*_HIP_LINK``; keep the same
+        # semantic-contact curriculum usable for both explicit robot backends.
+        def _find_with_aliases(*patterns):
+            last_error = None
+            for pattern in patterns:
+                try:
+                    return robot.find_bodies(pattern)[0]
+                except (KeyError, ValueError) as exc:
+                    last_error = exc
+            raise last_error
+
+        foot_ids = _find_with_aliases(".*_foot", ".*_FOOT_LINK")
+        calf_ids = _find_with_aliases(".*_calf", ".*_KNEE_LINK")
+        thigh_ids = _find_with_aliases(".*_thigh", ".*_HIP_LINK")
         body_ids = {"foot": foot_ids, "calf": calf_ids, "thigh": thigh_ids}
         root._semantic_body_part_clearance_body_ids = body_ids
     device = torch.as_tensor(robot.data.body_pos_w).device

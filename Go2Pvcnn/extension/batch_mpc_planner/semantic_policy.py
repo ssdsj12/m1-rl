@@ -29,6 +29,10 @@ class SemanticObstaclePolicy:
     obstacle_forward: Tensor
     obstacle_lateral: Tensor
     has_obstacle: Tensor
+    # Height above the local root-ground plane.  Semantic rigid-course
+    # obstacles are not encoded in the terrain height map, so this may come
+    # from the task's configured class height.
+    obstacle_height: Tensor | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +53,29 @@ class ParametricTrajectoryNominal:
     terminal_yaw: Tensor
     terminal_rel_xy: Tensor
     shape_diagnostics: NominalCommandShapeDiagnostics
+
+
+def crossing_feasibility(
+    obstacle_height_m: Tensor,
+    root_rpy: Tensor,
+    *,
+    max_height_m: float = 0.18,
+    max_tilt_rad: float = 0.30,
+) -> Tensor:
+    """Return whether a low obstacle is crossable without losing posture.
+
+    This is a feasibility gate for the MPC mode, not a distance trigger. The
+    planner may start the swing whenever its horizon predicts a crossing, but
+    it must switch to avoidance when height or current roll/pitch is unsafe.
+    """
+    height = torch.as_tensor(obstacle_height_m)
+    rpy = torch.as_tensor(root_rpy, dtype=height.dtype, device=height.device)
+    if rpy.ndim != 2 or rpy.shape[-1] < 2:
+        raise ValueError("root_rpy must have shape [B,3]")
+    finite = torch.isfinite(height) & torch.isfinite(rpy[..., :2]).all(dim=-1)
+    upright = torch.abs(rpy[..., 0]) <= float(max_tilt_rad)
+    upright = upright & (torch.abs(rpy[..., 1]) <= float(max_tilt_rad))
+    return finite & (height <= float(max_height_m)) & upright
 
 
 def _padded_command(command: Tensor, *, batch: int, dtype: torch.dtype, device: torch.device) -> Tensor:
@@ -101,7 +128,7 @@ def classify_semantic_obstacle_mode(
     obstacle_lateral = torch.zeros((batch,), dtype=dtype, device=device)
     has_obstacle = torch.zeros((batch,), dtype=torch.bool, device=device)
     if terrain.semantic_map is None:
-        return SemanticObstaclePolicy(mode, obstacle_xy, obstacle_forward, obstacle_lateral, has_obstacle)
+        return SemanticObstaclePolicy(mode, obstacle_xy, obstacle_forward, obstacle_lateral, has_obstacle, torch.zeros_like(mode, dtype=dtype))
 
     height = torch.as_tensor(terrain.height_map, dtype=dtype, device=device)
     if height.ndim == 2:
@@ -114,7 +141,7 @@ def classify_semantic_obstacle_mode(
     if int(semantic.shape[0]) == 1 and batch > 1:
         semantic = semantic.expand(batch, -1, -1)
     if int(height.shape[0]) != batch or int(semantic.shape[0]) != batch:
-        return SemanticObstaclePolicy(mode, obstacle_xy, obstacle_forward, obstacle_lateral, has_obstacle)
+        return SemanticObstaclePolicy(mode, obstacle_xy, obstacle_forward, obstacle_lateral, has_obstacle, torch.zeros_like(mode, dtype=dtype))
 
     losses = cfg.losses
     grid_xy = _terrain_grid_world_xy(terrain, dtype=dtype, device=device)
@@ -169,23 +196,55 @@ def classify_semantic_obstacle_mode(
     obstacle_lateral = lateral.gather(1, index[:, None]).squeeze(-1)
     is_low = low_small.gather(1, index[:, None]).squeeze(-1)
     is_high_or_large = torch.logical_or(high_small, large).gather(1, index[:, None]).squeeze(-1)
+    obstacle_height = nearby_z.gather(1, index[:, None]).squeeze(-1) - root_ground
+    # The semantic course spawns obstacles as rigid objects after the terrain
+    # height map is built.  Its semantic cell therefore has the ground height
+    # rather than the box/cylinder top.  Use the configured class height as a
+    # lower bound while preserving measured height for terrain-backed callers.
+    selected_small = is_low
+    selected_large = torch.logical_not(selected_small)
+    configured_small = getattr(cfg.runtime, "semantic_small_obstacle_height_m", None)
+    configured_large = getattr(cfg.runtime, "semantic_large_obstacle_height_m", None)
+    if configured_small is not None:
+        obstacle_height = torch.where(
+            selected_small,
+            torch.maximum(obstacle_height, torch.full_like(obstacle_height, float(configured_small))),
+            obstacle_height,
+        )
+    if configured_large is not None:
+        obstacle_height = torch.where(
+            selected_large,
+            torch.maximum(obstacle_height, torch.full_like(obstacle_height, float(configured_large))),
+            obstacle_height,
+        )
+    crossing_ok = crossing_feasibility(
+        obstacle_height,
+        torch.as_tensor(state.root_rpy, dtype=dtype, device=device),
+        max_height_m=float(losses.low_small_crossing.max_crossing_height_m),
+        max_tilt_rad=float(losses.low_small_crossing.max_crossing_tilt_rad),
+    )
+    # A low obstacle that is not currently crossable is treated as avoidable;
+    # this lets the MPC horizon choose a safe side route instead of scraping it.
+    avoid_low = torch.logical_and(is_low, torch.logical_not(crossing_ok))
+    is_high_or_large = torch.logical_or(is_high_or_large, avoid_low)
     mixed = torch.logical_or(torch.abs(cmd[:, 1]) > 1.0e-4, torch.abs(cmd[:, 2]) > 1.0e-4)
     mode = torch.where(
         torch.logical_and(has_obstacle, is_high_or_large),
         torch.full_like(mode, int(SemanticObstacleMode.HIGH_OR_LARGE_AVOID)),
         mode,
     )
+    crossable_low = torch.logical_and(is_low, crossing_ok)
     mode = torch.where(
-        torch.logical_and(has_obstacle, torch.logical_and(is_low, mixed)),
+        torch.logical_and(has_obstacle, torch.logical_and(crossable_low, mixed)),
         torch.full_like(mode, int(SemanticObstacleMode.LOW_SMALL_MIXED)),
         mode,
     )
     mode = torch.where(
-        torch.logical_and(has_obstacle, torch.logical_and(is_low, torch.logical_not(mixed))),
+        torch.logical_and(has_obstacle, torch.logical_and(crossable_low, torch.logical_not(mixed))),
         torch.full_like(mode, int(SemanticObstacleMode.LOW_SMALL_FORWARD)),
         mode,
     )
-    return SemanticObstaclePolicy(mode, obstacle_xy, obstacle_forward, obstacle_lateral, has_obstacle)
+    return SemanticObstaclePolicy(mode, obstacle_xy, obstacle_forward, obstacle_lateral, has_obstacle, obstacle_height)
 
 
 def shape_nominal_command_for_semantic_obstacles(
@@ -322,5 +381,6 @@ __all__ = [
     "SemanticObstaclePolicy",
     "build_parametric_nominal",
     "classify_semantic_obstacle_mode",
+    "crossing_feasibility",
     "shape_nominal_command_for_semantic_obstacles",
 ]

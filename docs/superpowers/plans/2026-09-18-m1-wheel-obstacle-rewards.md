@@ -20,14 +20,14 @@
 
 ## Tasks / ledger
 
-- [ ] Tensor RED: add `tests/test_m1_obstacle_rewards.py`; test progress forward/backward/lateral/zero, yaw covariance, stop/spin/lift gates, rigid-body heave/pitch cancellation, small/large/mixed semantics, invalid/NaN, boundary, height cap, four-wheel mean, named body reorder. Expected missing public `wheel_obstacle_reward_terms` failure.
-- [ ] Tensor GREEN: implement `wheel_obstacle_reward_terms(command_xy_b, root_pos_w, root_quat_w, root_lin_vel_w, root_ang_vel_w, wheel_pos_w, wheel_lin_vel_w, terrain)` and environment wrappers `m1_small_obstacle_progress`/`m1_small_obstacle_climb` in the new module. Return one tensor per environment for each term; no persistent hidden state.
-- [ ] Upstream validity RED/GREEN (independent agent): explicit true mask must not admit NaN/Inf ray hits or elevation. Change only conversion validity conjunction and focused tests in `tracking/mdp/policy_geometry_rewards.py` and its test file.
-- [ ] Config RED/GREEN: AST test proves both new bindings/weights and both airtime fields disabled, collision binding/weight and terminations unchanged. Add optional fixed forward command to diagnostic probe for signal calibration, without changing default probe trajectory.
-- [ ] Review and focused regression: independent review for formula/frame/named-state/config safety, then run the full M1/AME/collision union. Verify py_compile and touched-file diff checks; preserve unrelated existing CRLF changes.
-- [ ] Real8env gates: one Isaac process at a time; bounded physical small-contact probe with explicit0.5m/s command; finite per-term metrics, new progress present, no unintended contacts. Fresh8env×2 AME update smoke requires completion marker+exit0 and correct dimensions.
-- [ ] Fresh1024env×120 learning pilot: use `run_m1_validation.sh` once, seed42/std0.2, save interval20, no CHECKPOINT. Audit exact0..119, saved bindings, finite model/optimizer/TB, single PID/completion+exit0. Evaluate final policy on fixed flat/small/large sequentially; do not equate finite metrics with learned behavior.
-- [ ] Sync dashboard/T306/logs/human/AI and monitoring with actual process/log paths and remaining gates. Do not claim10000 complete.
+- [x] Tensor RED: add `tests/test_m1_obstacle_rewards.py`; test progress forward/backward/lateral/zero, yaw covariance, stop/spin/lift gates, rigid-body heave/pitch cancellation, small/large/mixed semantics, invalid/NaN, boundary, height cap, four-wheel mean, named body reorder. Observed25 missing-module failures before implementation.
+- [x] Tensor GREEN: implement `wheel_obstacle_reward_terms(command_xy_b, root_pos_w, root_quat_w, root_lin_vel_w, root_ang_vel_w, wheel_pos_w, wheel_lin_vel_w, terrain)` and environment wrappers `m1_small_obstacle_progress`/`m1_small_obstacle_climb` in the new module. Return one tensor per environment for each term; no persistent hidden state. Final26 tensor tests pass.
+- [x] Upstream validity RED/GREEN (independent agent): explicit true mask must not admit NaN/Inf ray hits or elevation. Change only conversion validity conjunction and focused tests in `tracking/mdp/policy_geometry_rewards.py` and its test file. RED2 failures;GREEN full file10pass.
+- [x] Config RED/GREEN: AST test proves both new bindings/weights and both airtime fields disabled, collision binding/weight and terminations unchanged. Add optional fixed forward command to diagnostic probe for signal calibration, without changing default probe trajectory. RED2fail thenGREEN.
+- [x] Review and focused regression: independent spec and quality reviews PASS; final full M1/AME/collision union127passed1skipped. Py_compile and touched-file diff checks pass; unrelated existing CRLF changes preserved.
+- [x] Real8env gates: one Isaac process at a time; physical0.05m probe8×600 completes+exit0,all-wheel8/8,0reset/geometry,progress/climb nonzero. Fresh8env×2 AME completes+exit0 and correct dimensions;all138ckpt tensors/35TB tags finite.
+- [x] Fresh1024env×120 learning pilot: exact0..119,single start,complete+exit0,model119/next_iter120,138tensors/35scalar tags finite,savedbindingscorrect. Final fixed8×500flat/small/large allcomplete+exit0;flat8/8,small/large0/8 withzero collision/failure. This task is complete as an experiment; behavior gate isfailed,not fullM1goal completion.
+- [x] Sync dashboard/T306/logs/human/AI and monitoring withactualoutcomes. NewT306.6g.1 isboundedgate/exposure diagnosis,notblindparametersearch. Formal10000 remainsunstarted andunverified.
 
 ## Commands
 

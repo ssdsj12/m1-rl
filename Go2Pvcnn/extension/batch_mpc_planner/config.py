@@ -10,6 +10,7 @@ from .participation import MpcReferenceParticipationCfg, MpcTerrainDifficultyPai
 
 @dataclass
 class MpcRuntimeCfg:
+    robot_name: str = "go2"
     horizon_steps: int = 16
     dt: float = 0.02
     optimize_steps: int = 24
@@ -40,6 +41,14 @@ class MpcRuntimeCfg:
     profile_4096_required: bool = True
     step_freq: float = 2.0
     duty_factor: float = 0.5
+    # M1 planner foot state is the wheel-link centre.  Add the wheel radius
+    # whenever terrain is converted to a target for that state.
+    foot_contact_offset_m: float = 0.0
+    # Semantic rigid obstacles are not part of IsaacLab's terrain height map.
+    # When a course provides only semantic labels, these optional class
+    # heights keep the planner from treating a physical box as flat ground.
+    semantic_small_obstacle_height_m: float | None = None
+    semantic_large_obstacle_height_m: float | None = None
     leg_phase_offsets: tuple[float, float, float, float] = (0.0, 0.5, 0.5, 0.0)
     touchdown_event_cap: int = 2
     nominal_stride_scale: float = 0.5
@@ -189,6 +198,9 @@ class MpcObstacleRiskCfg(MpcLossTermCfg):
 @dataclass
 class MpcLowSmallCrossingLossCfg(MpcLossTermCfg):
     high_small_relative_height_m: float = 0.30
+    # Crossing is selected by predicted feasibility, not a fixed trigger range.
+    max_crossing_height_m: float = 0.18
+    max_crossing_tilt_rad: float = 0.30
     corridor_width_m: float = 0.28
     forward_distance_m: float = 1.0
     pass_margin_m: float = 0.06
@@ -497,6 +509,12 @@ def planner_cfg_from_task_cfg(task_cfg) -> MpcPlannerCfg:
     runtime.touchdown_event_cap = _copy_if_has(task_cfg, "mpc_touchdown_event_cap", int, runtime.touchdown_event_cap)
     runtime.nominal_stride_scale = _copy_if_has(task_cfg, "mpc_nominal_stride_scale", float, runtime.nominal_stride_scale)
     runtime.nominal_swing_height_m = _copy_if_has(task_cfg, "mpc_nominal_swing_height_m", float, runtime.nominal_swing_height_m)
+    runtime.semantic_small_obstacle_height_m = _copy_if_has(
+        task_cfg, "mpc_semantic_small_obstacle_height_m", float, runtime.semantic_small_obstacle_height_m
+    )
+    runtime.semantic_large_obstacle_height_m = _copy_if_has(
+        task_cfg, "mpc_semantic_large_obstacle_height_m", float, runtime.semantic_large_obstacle_height_m
+    )
     runtime.nominal_yaw_stride_scale = _copy_if_has(task_cfg, "mpc_nominal_yaw_stride_scale", float, runtime.nominal_yaw_stride_scale)
     runtime.swing_window_min_width = _copy_if_has(task_cfg, "mpc_swing_window_min_width", float, runtime.swing_window_min_width)
     runtime.swing_window_max_width = _copy_if_has(task_cfg, "mpc_swing_window_max_width", float, runtime.swing_window_max_width)

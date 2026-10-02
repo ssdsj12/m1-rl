@@ -39,7 +39,7 @@ def main():
         cfg.events.push_robot = None
         cfg.events.reset_base.params["pose_range"] = {"x": (0., 0.), "y": (0., 0.), "yaw": (0., 0.)}
         cfg.events.reset_robot_joints.params["velocity_range"] = (0., 0.)
-        cfg.commands.base_velocity.ranges.lin_vel_x = (.5, .5)
+        cfg.commands.base_velocity.ranges.lin_vel_x = (.35, .35)
         cfg.commands.base_velocity.ranges.lin_vel_y = (0., 0.)
         cfg.commands.base_velocity.ranges.ang_vel_z = (0., 0.)
         cfg.commands.base_velocity.rel_standing_envs = 0.
@@ -56,18 +56,45 @@ def main():
         semantic_ids = {paths[0]: 0}
         if scenario != "flat":
             height = (args.obstacle_threshold if args.obstacle_threshold is not None else .10) if scenario == "small" else .80
-            length = .20 if scenario == "small" else .60
-            cfg.scene.eval_obstacle = RigidObjectCfg(
-                prim_path="{ENV_REGEX_NS}/EvalObstacle",
-                spawn=sim_utils.CuboidCfg(size=(length, 1.2, height),
+            if scenario == "small":
+                # Match the M1 training course: six small obstacles on the
+                # commanded forward centerline.  The previous three-object
+                # zig-zag evaluator rewarded a large lateral detour and
+                # could not distinguish stepping over the course from going
+                # around it.
+                small_height = max(0.10, height)
+                spawn = sim_utils.CuboidCfg(
+                    size=(0.10, 0.10, small_height),
                     rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-                    collision_props=sim_utils.CollisionPropertiesCfg()),
-                init_state=RigidObjectCfg.InitialStateCfg(pos=(1.5, 0., height / 2)),
-            )
-            for i in range(args.num_envs):
-                path = f"/World/envs/env_{i}/EvalObstacle"
-                paths.append(path)
-                semantic_ids[path] = 1 if scenario == "small" else 2
+                    collision_props=sim_utils.CollisionPropertiesCfg(),
+                )
+                objects = tuple(
+                    (f"EvalObstacle{i}", spawn, (1.20 + 0.80 * i, 0.0, small_height / 2))
+                    for i in range(6)
+                )
+                for name, spawn, pos in objects:
+                    cfg.scene.__setattr__(name, RigidObjectCfg(
+                        prim_path="{ENV_REGEX_NS}/" + name,
+                        spawn=spawn,
+                        init_state=RigidObjectCfg.InitialStateCfg(pos=pos),
+                    ))
+                for i in range(args.num_envs):
+                    for name, _, _ in objects:
+                        path = f"/World/envs/env_{i}/{name}"
+                        paths.append(path)
+                        semantic_ids[path] = 1
+            else:
+                cfg.scene.eval_obstacle = RigidObjectCfg(
+                    prim_path="{ENV_REGEX_NS}/EvalObstacle",
+                    spawn=sim_utils.CuboidCfg(size=(.60, 1.2, height),
+                        rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+                        collision_props=sim_utils.CollisionPropertiesCfg()),
+                    init_state=RigidObjectCfg.InitialStateCfg(pos=(1.5, 0., height / 2)),
+                )
+                for i in range(args.num_envs):
+                    path = f"/World/envs/env_{i}/EvalObstacle"
+                    paths.append(path)
+                    semantic_ids[path] = 2
         cfg.scene.semantic_height_scanner.mesh_prim_paths = paths
         cfg.scene.semantic_height_scanner.mesh_semantic_ids = semantic_ids
         env = ManagerBasedRLEnv(cfg=cfg)

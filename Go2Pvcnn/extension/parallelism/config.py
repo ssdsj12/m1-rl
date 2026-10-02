@@ -87,6 +87,7 @@ class ParallelismCfg:
     contact_tolerant_collision_shape_names: tuple[str, ...] = ("calf_lower_cylinder", "foot_sphere")
     contact_tolerant_collision_point_indices: tuple[tuple[str, tuple[int, ...]], ...] = ()
     contact_tolerant_support_shape_names: tuple[str, ...] = ()
+    contact_tolerant_support_semantic_ids: tuple[int, ...] = ()
     swing_start_tolerant_collision_shape_names: tuple[str, ...] = ()
     swing_collision_start_ignore_frames: int = 0
 

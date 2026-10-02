@@ -29,6 +29,7 @@ from isaaclab.utils.math import convert_quat, quat_apply, quat_apply_yaw
 from isaaclab.utils.warp import convert_to_warp_mesh, raycast_mesh
 
 from go2_pvcnn.sensor.semantic_raycaster.semantic_ray_caster_data import SemanticGridRayCasterData
+from extension.mesh_triangulation import triangulate_convex_faces
 
 if TYPE_CHECKING:
     from go2_pvcnn.sensor.semantic_raycaster.semantic_ray_caster_cfg import SemanticGridRayCasterCfg
@@ -116,7 +117,7 @@ def _mesh_prim_to_world_trimesh(prim: Usd.Prim) -> tuple[np.ndarray, np.ndarray]
     points = np.asarray(mesh.GetPointsAttr().Get(), dtype=np.float64)
     transform_T = _world_transform_matrix_T(mesh)
     points = points @ transform_T[:3, :3].T + transform_T[:3, 3]
-    indices = np.asarray(mesh.GetFaceVertexIndicesAttr().Get(), dtype=np.int32).reshape(-1, 3)
+    indices = triangulate_convex_faces(mesh.GetFaceVertexCountsAttr().Get(), mesh.GetFaceVertexIndicesAttr().Get())
     return points.astype(np.float32), indices
 
 

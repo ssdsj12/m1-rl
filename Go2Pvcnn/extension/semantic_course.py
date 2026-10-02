@@ -30,7 +30,9 @@ SHARED_NATIVE_SHAPE_POOL: tuple[ShapeKind, ...] = ("sphere", "cuboid", "cylinder
 SHAPE_AXIS_Z = "Z"
 SHAPE_EPSILON = 1.0e-6
 
-SMALL_OBSTACLE_DIAMETER = 0.12
+# Generic course default retained for non-M1/Go2 callers.  M1 explicitly
+# overrides its small obstacle height to 0.10 m in m1_ame_env_cfg.py.
+SMALL_OBSTACLE_DIAMETER = 0.10
 SMALL_OBSTACLE_HEIGHT = 0.16
 LARGE_OBSTACLE_DIAMETER = 0.45
 LARGE_OBSTACLE_HEIGHT = 0.55
@@ -267,6 +269,8 @@ def layout_cfg_for_row(
         tile_margin_m=float(tile_margin),
         center_safety_half_extent_m=float(center_safety),
         center_safety_radius_m=base_layout_cfg.center_safety_radius_m,
+        fixed_small_obstacle_local_xy=base_layout_cfg.fixed_small_obstacle_local_xy,
+        fixed_large_obstacle_local_xy=base_layout_cfg.fixed_large_obstacle_local_xy,
         min_spacing_clearance_m=float(min_spacing),
         max_layout_attempts=int(base_layout_cfg.max_layout_attempts),
     )
@@ -619,7 +623,22 @@ def _stage_slots(
             fallback_used = selected_xy is None
             if fallback_used:
                 candidates = _fallback_candidates(tile_size=tile_size, layout_cfg=layout_cfg, radius=radius)
-                selected_xy = candidates[(len(placed) + slot_index) % len(candidates)]
+                # Fallbacks must obey the same safety/spacing contract as
+                # random candidates; never silently place overlapping blocks.
+                for candidate in candidates:
+                    if _outside_center_safety(candidate, layout_cfg) and _has_spacing(
+                        candidate,
+                        radius=radius,
+                        placed=placed,
+                        layout_cfg=layout_cfg,
+                    ):
+                        selected_xy = candidate
+                        fallback_used = True
+                        break
+                if selected_xy is None:
+                    raise RuntimeError(
+                        "semantic obstacle layout exhausted all candidates while preserving safety/spacing"
+                    )
             placed.append((selected_xy, radius))
             slots.append(_LayoutSlot(semantic_class, slot_index, selected_xy, fallback_used))
     return sorted(slots, key=lambda slot: (0 if slot.semantic_class == "small" else 1, slot.slot_index))

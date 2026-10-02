@@ -1,8 +1,143 @@
+| 2026-09-29 | M1 10 cm crossing contract and Go2-to-M1 runtime audit | Per-wheel clearance fix, single-leg teacher, collision semantics, layout fallback, 0.30 m stable arc | 65 focused tests + 1 planner test passed; PhysX gate not yet claimed; no training started | [contract fix](2026-09-29-m1-10cm-crossing-contract-fix.md) |
+| 2026-09-28 | M1 active chain conversion and 10 cm obstacle profile | M1 terrain override, explicit M1 collision reward, spacing/reset safety, focused tests | 3 obstacle-profile tests passed; focused M1 suite has stale reward-value failures; PhysX trajectory gate remains | [conversion log](2026-09-28-m1-go2-to-m1-10cm-obstacles.md) |
+- [2026-10-01 M1 approach-gate audit](2026-10-01-m1-approach-gate-audit.md): actual wrapper CPU replay reproduces premature leg output; no physical acceptance or new training.
+
+# 2026-09-23 M1 online teacher mount and lifecycle
+- [2026-09-23 M1 teacher mount and lifecycle](2026-09-23-m1-online-teacher-mount-and-lifecycle.md): manager mount, M1 joint/foot adaptation, adaptive mode gate, one-iteration checkpoint smoke, and placeholder lifecycle wrapper.
+
+- [2026-10-01 stance encoding and auto-reset](2026-10-01-m1-reset-stance-evidence.md): RED/GREEN 45 tests, failed physical trials, current bounded reset probe; no crossing acceptance.
+
 # Test Log Index
 
 This page indexes verification evidence. Keep it short enough to scan.
 
 ## Recent Logs
+
+| 2026-09-20 | 静态registry/encounter CPU core | registry394ea67/core d27e26c均SPEC→QUALITY通过，main2317full252.31s/0skip/exit0、最终184focused | identity/有序完成/离开/再接近/连续多对象；1024单ray CPU12.51→0.36s、暴力oracle一致 | 未接pre-helper/sync/raw replay，非Kit/G1/G2/PPO/10000 | [T306.6h.6a.1a.2c.2](../todo/T306-m1-ame-long-train-stability.md) | [registry/coordinator](2026-09-20-m1-encounter-registry-coordinator.md) |
+
+| 2026-09-19 | G0-B2全身向外pose投影接线 | 9dc0dc7；main2128full237.61s/0skip/exit0，SPEC→QUALITY PASS；测试oracle修复64PASS | 唯一amp/GPU7完整8×32/native0，4352colliderstep精确回放，28旧字段及rawpose逐位不变 | 非CLEAR/G1/PPO/10000；下一registry/coordinator | [T306.6h.6a.1a.2c.2](../todo/T306-m1-ame-long-train-stability.md) | [pose projection](2026-09-19-m1-pose-projection.md) |
+
+| 2026-09-19 | G0-B2 live owner/raw pose接线和实测 | 47167e8；main2026full226.43s/0skip/exit0；SPEC→QUALITY PASS | 唯一amp/GPU7 8×32完整/native0，23raw守卫、32×8×17姿态、先close lease后env；28旧非计时字段逐位一致 | 原rawfailed40保留，下一向外pose投影，非CLEAR/G1/PPO/10000 | [T306.6h.6a.1a.2c.1a](../todo/T306-m1-ame-long-train-stability.md) | [live provider](2026-09-19-m1-live-provider.md) |
+
+| 2026-09-19 | G0-B2保守局部collision geometry | 3d97e9b；focused222/main1929full178.99s/0skip/exit0；SPEC→QUALITY复审通过 | 136真实collider/3664vertices/32nativeCylinder/source+float32极值全覆盖；原rawfailed40和JSON SHA不变 | 仅局部表示，下一live owner/17body poses/保守投影，非G1/10000 | [T306.6h.6a.1a.2c.1](../todo/T306-m1-ame-long-train-stability.md) | [conservative geometry](2026-09-19-m1-conservative-geometry.md) |
+
+| 2026-09-19 | G0-B2实际cooked读取/负例 | b0d4270/code c02bde0，amp/GPU7/PID3824745，104hulls/3664vertices/32native | 40边界向内1float32 ULP；624/624中心半宽重建复现，23raw/136query守卫有效 | 诊断failed/0budgetsteps/native1/wrapper2、正常关闭无重启；.2c.1保守边界继续 | [T306.6h.6a.1a.2c.1](../todo/T306-m1-ame-long-train-stability.md) | [live cooked](2026-09-19-m1-live-cooked-evidence.md) |
+
+| 2026-09-19 | G0-B2 live cooked证据接线 | 06f3526六文件+c02bde0数值P2修复，focused220passed | main1785full/178.11s/0skip，SPEC→QUALITY PASS；独立verifier17自测 | 代码门槛非geometry/G1/10000验收；实际现场单列 | [T306.6h.6a.1a.2c](../todo/T306-m1-ame-long-train-stability.md) | [cooked implementation](2026-09-19-m1-live-cooked-evidence-implementation.md) |
+
+| 2026-09-19 | G0-B2b2c实际query初始化 | b16168b/amp/GPU7/PID3669456，唯一8×32完整、native/wrapper0 | 136queries、23组raw guards字节相同、0额外physics、128sensor/32prepare/IK/0reset；root扩容恢复 | 初始化通过非geometry/G1；继续live cooked交叉证据，不重跑基础审计 | [T306.6h.6a.1a.2c](../todo/T306-m1-ame-long-train-stability.md) | [live query](2026-09-19-m1-collision-query-live.md) |
+
+| 2026-09-19 | G0-B2b2c CPU完成/现场BLOCKED | 92278b7；main1687full/169.98s/0skip；SPEC→QUALITY PASS | 同一资源权限阻碍连续3轮，root533224KiB，b16168b clean/GPU7仅占位 | 等仅pip缓存迁移授权或根盘恢复；真实query/Kit/GPU未启，不替代G1 | [T306.6h.6a.1a.2c](../todo/T306-m1-ame-long-train-stability.md) | [query initialization](2026-09-19-m1-collision-query-initialization.md) |
+
+| 2026-09-19 | G0-B2b2b source watch/query lease | code8a3746f；实际USD callback lifetime/finalize锁存/constructor retry-owner修复 | main1565full152.72s/0skip，实际Carb＋8内存M1 probe PASS，SPEC→QUALITY PASS | 仅CPU/source-bound，非livequery/G1；继续8-env初始化现场诊断 | [T306.6h.6a.1a.2c](../todo/T306-m1-ame-long-train-stability.md) | [scene lease](2026-09-19-m1-collision-scene-lease-implementation.md) |
+
+| 2026-09-19 | G0-B2b2a真实scene snapshot＋path scope | c608945；P1借用ID SIGSEGV与P2相消反射均RED→GREEN | 114focused＋main1452full146.49s/0skip，SPEC→QUALITY PASS；两次8内存实例136collider真实路径probe通过 | 仅静态绑定/串行scope，不是livequery或GPU；继续watch/lease | [T306.6h.6a.1a.2c](../todo/T306-m1-ame-long-train-stability.md) | [scene binding](2026-09-19-m1-collision-scene-binding-implementation.md) |
+
+| 2026-09-19 | G0-B2b1非阻塞query协议 | f85c7ea；全身份/真实finished/时钟/线程/weakref/JSON | 318focused＋main1338full145.24s/0skip，SPEC→QUALITY PASS；17408请求27.19→2.34s | 协议完成非真实PhysX/训练；继续薄绑定、watcher与初始化现场诊断 | [T306.6h.6a.1a.2c](../todo/T306-m1-ame-long-train-stability.md) | [query implementation](2026-09-19-m1-collision-query-batch-implementation.md) |
+
+| 2026-09-19 | G0-B2a碰撞盒逐body变换 | c12e0af；完整8角点/全body命名映射/1024批量3342336bytes | 107focused＋main1020full140.58s/0skip，SPEC→QUALITY PASS；USD/Gf数学maxerror0 | 数学核，不是actualquery/物理包络或训练验收；继续B2b | [T306.6h.6a.1a.2c](../todo/T306-m1-ame-long-train-stability.md) | [support transforms](2026-09-19-m1-collision-supports-implementation.md) |
+
+| 2026-09-19 | PhysX query合同只读审计 | 已装106.5.7 pyi/graph/tests/demo＋官方说明 | query bounds公开契约可作为来源；stage/path/完整回调/transform仍须现场核验 | 未运行query/Kit；不要求native内部指针证明，不回退source bbox | [T306.6h.6a.1a.2c](../todo/T306-m1-ame-long-train-stability.md) | [query contract](2026-09-19-m1-collision-query-contract.md) |
+
+| 2026-09-19 | G0-B1碰撞清单实施 | 0196f6f；enabled/loaded/raw-order修复先RED后GREEN | main913full140.94s/0skip，实际17body17collider资产/来源PASS，SPEC→QUALITY PASS | 只USD输入，不是cooked包络/CLEAR或物理验收；继续B2 | [T306.6h.6a.1a.2c](../todo/T306-m1-ame-long-train-stability.md) | [inventory implementation](2026-09-19-m1-collision-inventory-implementation.md) |
+
+| 2026-09-19 | Encounter碰撞输入核验 | amp pxr CPU＋主代理actual USD count/binding断言 | robot root17colliders=13proxy convexHull mesh+4cylinder；4,544,118 authored points | 非cooked一致性/物理通过；后续provider必须完整逐body且有界 | [T306.6h.6a.1a.2c](../todo/T306-m1-ame-long-train-stability.md) | [collision inputs](2026-09-19-m1-encounter-collision-inputs.md) |
+
+| 2026-09-19 | M1批准后隔离实施 | A1=1cb83bc/f8ce0af；mixedIntegral审查问题TDD修复 | main323focused＋829full140.27s/0skip；SPEC→QUALITY PASS；旧506保留 | A1基础完成，未接runtime/启动GPU；继续完整G0-B/C/D/E及物理/学习门槛 | [T306.6h.6a.1a.2c](../todo/T306-m1-ame-long-train-stability.md) | [implementation](2026-09-19-m1-encounter-geometry-implementation.md) |
+
+| 2026-09-19 11:05 | M1书面规格审阅阻塞核验 | 三轮同条件未获具体规格回复；fresh SSH/HEAD/GPU/task-process检查 | 目标BLOCKED，GPU7仅原占位，无训练运行 | 无代码/合同改变，完整目标保留；确认e25e805后计划/TDD | [T306.6h.6a.1a.2](../todo/T306-m1-ame-long-train-stability.md) | [review wait](2026-09-19-m1-written-spec-review-blocked.md) |
+
+| 2026-09-19 11:02 | M1 encounter证据容量 | 实配CPU复算22801rays/env、CUDA未初始化；主代理ZIP首末/总量复核 | 全ray xyz假设单步1024为267.199MiB，超旧256MiB；旧replay非有界；root仅3.51GiB | 新.2b记录/schema资源前置；未改代码/运行仿真/清理文件 | [T306.6h.6a.1a.2b](../todo/T306-m1-ame-long-train-stability.md) | [capacity audit](2026-09-19-m1-encounter-evidence-capacity.md) |
+
+| 2026-09-19 | M1 每次遇障修正版A规格 | 用户同意方向；主代理源码复核、自审、两项独立边界复审PASS | 设计e25e805单文件；identity/frame/owner交接与G1/G2完整门槛 | 待书面审阅后计划/TDD；未写控制代码/开仿真 | [T306.6h.6a.1a.2](../todo/T306-m1-ame-long-train-stability.md) | [design review](2026-09-19-m1-encounter-design-review.md) |
+
+| 2026-09-18 23:36 | M1 设计选择阻塞审计 | 三连续目标轮待选；fresh SSH进程/GPU7核验 | 目标 BLOCKED 等用户 A/B；只有原占位，无训练运行 | 保留完整验收目标/全部证据，未标完成或重启候选 | [T306.6h.6a.1a.2](../todo/T306-m1-ame-long-train-stability.md) | [blocked audit](2026-09-18-m1-design-choice-blocked.md) |
+
+| 2026-09-18 23:32 | Baseline18首次跨越几何 | main初始条件/运动学分解，FAR9×14与RAR4案例原源函数CPU回放 | IK误差分别<7e-7/<3e-7，CUDA未初始化；FAR world目标偏低，RAR含root/yaw项 | 行为未修复；mass关联非因果，设计A/B待选，未启动GPU | [T306.6h.6a.1a.1](../todo/T306-m1-ame-long-train-stability.md) | [first-cross geometry](2026-09-18-m1-scale-first-cross-geometry.md) |
+
+| 2026-09-18 | 1024紧凑布局Task1 | SDK真实RED→修复；main431CPU77.79s，SPEC/qualityPASS | 32×32唯一映射与逐步guard，task1_accepted冻结 | Task2进行中；无1024GPU/10000 | [T306.6h.6a.1a](../todo/T306-m1-ame-long-train-stability.md) | [layout implementation](2026-09-18-m1-scale-layout-implementation.md) |
+| 2026-09-18 | 1024显式模式Task2 | RED→445CPU78.13s；main14focused2.47s；SPEC/qualityPASS | 同一identity/reference无bridge，真实livecontract；CPU完整1600循环 | task2_accepted冻结，Task3开始；无物理通过声明 | [T306.6h.6a.1a](../todo/T306-m1-ame-long-train-stability.md) | [mode implementation](2026-09-18-m1-scale-modes-implementation.md) |
+| 2026-09-18 | 1024verifier实际schema审计 | 只读真实run14 JSON/NPZ headers与当前源码 | startup/strict分离；wrapper3仍需全部common guards；terrain构造前1≠live1024 | Task3实施参考，不是1024验收 | [T306.6h.6a.1a](../todo/T306-m1-ame-long-train-stability.md) | [schema audit](2026-09-18-m1-scale-verifier-schema.md) |
+| 2026-09-18 | 1024预算verifier Task3 | full506CPU146.22s；main新旧verdict102passed78.81s；SPEC/qualityPASS | 真实1024×1600合成50chunks回放、P2schema修复、task3_accepted冻结 | Task4容量实测前置完成；非物理/10000验收 | [T306.6h.6a.1a](../todo/T306-m1-ame-long-train-stability.md) | [verifier implementation](2026-09-18-m1-scale-verdict-implementation.md) |
+| 2026-09-18 22:02 | 1024×32 run17容量 | 全1024完整、128sensorupdates、正常close/native/wrapper/verifier0 | startup accepted；GPU峰值11148MiB，wall4:38.75 | 非strict/10000；允许run18基线 | [T306.6h.6a.1a](../todo/T306-m1-ame-long-train-stability.md) | [startup17](2026-09-18-m1-scale-startup17.md) |
+| 2026-09-18 22:09 | 1024×1600 run18 baseline | 单进程完整1600/native0/正常close，独立commonPASS，wall41:32.16 | 原行为615/1024及53回合终止保留，wrapper3来自负例；peak11338MiB | 可配对candidate；非strict全过/训练成功 | [T306.6h.6a.1a](../todo/T306-m1-ame-long-train-stability.md) | [baseline18](2026-09-18-m1-scale-baseline18.md) |
+| 2026-09-18 22:46 | Scale CPU fixture存储核验 | 2816文件hash一致、22links实际解析、全部metadata一致除88目录size | 完整归档/data、保留旧路径，只移除重复副本；root约14.29GiB | 未动真实run/模型/其他任务；未知根盘增长仍需监测 | [T306.6h.6a.1a](../todo/T306-m1-ame-long-train-stability.md) | [fixture storage](2026-09-18-m1-scale-fixture-storage.md) |
+| 2026-09-18 22:53 | 1024×1600 candidate19 | 247完整步后prepare247env523wave/legs重入保护失败，native1/wrapper2/verifier3 | 正常清理、完整保留负例，无重启；占位351307恢复 | REJECTED；新phase时序子问题，非旧Isaac原生崩溃 | [T306.6h.6a.1a.2](../todo/T306-m1-ame-long-train-stability.md) | [candidate19](2026-09-18-m1-scale-candidate19.md) |
+| 2026-09-18 23:07 | Baseline18行为负例分组 | 409失败=18首次跨越缺失+21无5连稳定+31资格后tilt+339仅轮均速差 | main freshNumPy/几何复核；985潜在有资格、39永不资格 | 不删失败env、不把baseline资格当candidate成功；独立几何/重入子项 | [T306.6h.6a.1a](../todo/T306-m1-ame-long-train-stability.md) | [baseline behavior](2026-09-18-m1-scale-baseline-behavior.md) |
+| 2026-09-18 | Candidate19重入源码根因 | rawgate使phase11→-1→0，priorready5与freshpreparewave冲突 | main源码/NPZ+独立审计闭合，非timer/旧native崩溃 | A完成锁存/B延迟接管待用户选择，未改代码/阈值，GPU占位恢复 | [T306.6h.6a.1a.2](../todo/T306-m1-ame-long-train-stability.md) | [wave reentry diagnosis](2026-09-18-m1-scale-wave-reentry-diagnosis.md) |
+
+| 2026-09-18 | AME生命周期后续只读审计 | 实际source/co_filename、normalclose owners/计数 | AMEfresh计数正确；真实源码m1_rl，CPU无CUDA | 完成审计/释放/mixedterrain仍待接入；AMPresume差异单列 | [T306.6i](../todo/T306-m1-ame-long-train-stability.md) | [lifecycle audit](2026-09-18-m1-ame-lifecycle-readiness-audit.md) |
+
+| 2026-09-18 | 同步候选正式原样接入 | 8files hash/cmp一致；RED120fail41error→373pass75.02s | 其余8files不变；SPEC/quality通过 | 正式646f486，仅reference模块 | [T306.6h.6a.1](../todo/T306-m1-ame-long-train-stability.md) | [promotion](2026-09-18-m1-sync-promotion-verification.md) |
+| 2026-09-18 | 主代理接入复核 | wrongrepo-cwd11fail362pass；correctcwd373pass74.37s | absoluteCLIfromroot0；仅测试入口minor | independentreviewsPASS，only8filescommit646f486 | [T306.6h.6a.1](../todo/T306-m1-ame-long-train-stability.md) | [recheck](2026-09-18-m1-sync-promotion-recheck.md) |
+
+| 2026-09-18 | 同步候选第二次严格重复run15 | frozen amp/GPU7 8×1600 | strict8/8、native/wrapper/verdict0、0reset | 与run14的2700非计时数组逐位一致 | [T306.6h.6a.1](../todo/T306-m1-ame-long-train-stability.md) | [repeat15](2026-09-18-m1-sync-repeat15.md) |
+| 2026-09-18 | 同步候选第三次严格重复run16 | frozen amp/GPU7 8×1600 | strict8/8、native/wrapper/verdict0、0reset | 同候选三次全部通过，正式接入待回归/审查 | [T306.6h.6a.1](../todo/T306-m1-ame-long-train-stability.md) | [repeat16](2026-09-18-m1-sync-repeat16.md) |
+| 2026-09-18 | 1024就绪性只读审计 | 源码/NPZ预算/float32几何 | 长条768/1024超2e-5m；需unique32×32 | 原始证据约3.47GiB、contact N²；未物理扩容 | [T306.6h.6a.1a](../todo/T306-m1-ame-long-train-stability.md) | [scale audit](2026-09-18-m1-1024-readiness-audit.md) |
+
+| 2026-09-18 | 跨障后轮同步隔离实现与run14 | 373CPUtests/spec/quality；唯一ampGPU7 8×1600 | native/wrapper/verdict0，strict8/8，0reset/重启 | 前缀逐位一致，均速差.01966..03224；未推广/扩1024/10000 | [T306.6h.6a](../todo/T306-m1-ame-long-train-stability.md) | [implementation+physical](2026-09-18-m1-post-cross-sync-implementation.md) |
+
+| 2026-09-18 | 跨障后平地轮同步设计审计 | 源码/逐envreset/原始NPZ离线gate | 首接管action245..253，前缀均速差贡献≤.0208474 | 范围获同意，具体设计待审；无新实现/仿真 | [T306.6h.6a](../todo/T306-m1-ame-long-train-stability.md) | [design audit](2026-09-18-m1-post-cross-sync-design-audit.md) |
+
+| 2026-09-18 | 轮均衡gain3→0隔离A/B | 225CPUtests/spec/quality;one8×1600 | native0/completedtrue,strict1/8vs4/8,wrapper3 | 平地目标振荡消失但跨杆退化；首回合统计/场景parity通过；候选不推广 | [T306.6h.6a](../todo/T306-m1-ame-long-train-stability.md) | [A/B result](2026-09-18-m1-wheel-equalizer-ab.md) |
+
+| 2026-09-18 | 正式接入与严格首测run12 | a86cbf5,212CPUtests;8×1600 | native0/completedtrue,strict4/8,wrapper3 | 8/8FAR/RAR跨越；轮均速差失败，定位饱和交替；未扩1024/10000 | [T306.6h.6](../todo/T306-m1-ame-long-train-stability.md) | [strict+audit](2026-09-18-m1-reference-strict-run12.md) |
+
+| 2026-09-18 | 普通复制隔离A/B | 212CPUtests；run11完整8×32 | native/wrapper0，startup_passed=true | 28非计时采样字段与run10完全相同；无重启；正式入口未接入 | [T306.6h.5c.3](../todo/T306-m1-ame-long-train-stability.md) | [A/B](2026-09-18-m1-normal-clone-ab.md) |
+
+| 2026-09-18 | PhysX native exit-owner capture | 22CPUdiagnostic+170adapter;real8×32run10 | native134,callbackowneridentified | replicatorattachstaticpylist;noSDK/productionchange;proposednormalcloningA/B | [T306.6h.5c.2](../todo/T306-m1-ame-long-train-stability.md) | [capture](2026-09-18-m1-physx-exit-owner-capture.md) |
+
+| 2026-09-18 | SDK integrity/native exit-owner audit | 22 RECORD matches; libc disassembly; official API audit | owner still unknown; route A approved | no newIsaacrun/SDKchange; distinguish post-completioncrash fromprematuretrainingstop | [T306.6h.5c.1](../todo/T306-m1-ame-long-train-stability.md) | [audit](2026-09-18-m1-native-exit-owner-audit.md) |
+
+| 2026-09-18 | Kit path-stat cache lifetime gate | RED9/GREEN58/union170; real08+GDB09 | rejected: native134 afterfull32+close | actualcacheoffverified; C exit callback dealloc with NULLthreadstate; candidatearchived/reverted;SDKscope discussionrequired | [T306.6h.5c](../todo/T306-m1-ame-long-train-stability.md) | [cache gate](2026-09-18-m1-reference-stat-cache-gate.md) |
+
+| 2026-09-18 | Native retained-frame diagnosis | 6CPUtests;8×32GDB07;cacheweakref probe | OSError/importlib/einsum/controller frames identified | candidatecachemechanism supported; native139 notfixed | [T306.6h.5a](../todo/T306-m1-ame-long-train-stability.md) | [frame diagnosis](2026-09-18-m1-reference-gdb-frames.md) |
+
+| 2026-09-18 | Isolated GDB native capture | 5CPUtests; 8×32 diagnostic06 | native139; PhysX tensor destruction from retainedPythonframes | ownernotyetidentified; noamp/Isaac/driver/reservationchange | [T306.6h.5a](../todo/T306-m1-ame-long-train-stability.md) | [native capture](2026-09-18-m1-reference-gdb-capture.md) |
+
+| 2026-09-18 | AppLauncher owner cleanup | RED4→GREEN52; union164; real8×32attempt05 | cleanupCPUverified; GC native139 persists | supportedunsubscribe/ownedSIGTERMrestore; awaitingisolateddebuggerpermission; no1024 | [T306.6h.5a](../todo/T306-m1-ame-long-train-stability.md) | [launcher cleanup](2026-09-18-m1-reference-launcher-cleanup.md) |
+
+| 2026-09-18 | Post-launch fatal diagnostics | RED5→GREEN49; union161; real8×32attempt04 | diagnosticpassed; native139duringGC | validfaulthandlertrace afterAPP_CLOSED; noPythonframe; no1024 | [T306.6h.5](../todo/T306-m1-ame-long-train-stability.md) | [fatal diagnostics](2026-09-18-m1-reference-fatal-diagnostics.md) |
+
+| 2026-09-18 | Reference native-owner cleanup | RED6→GREEN45; union157; real8×32attempt03 | lifecycle CPU pass; native139 persists | consumableowner dict+gc beforeappclose; not sufficientnativefix | [T306.6h.5](../todo/T306-m1-ame-long-train-stability.md) | [cleanup](2026-09-18-m1-reference-owner-cleanup.md) |
+
+| 2026-09-18 | M1 reference GPU7 first startup | amp8×32;151CPUtests | startup rejected: native139 afterclose | all8 fullsamples;128substeps;45mmactualbar;reservationpreserved | [T306.6h.5](../todo/T306-m1-ame-long-train-stability.md) | [first run](2026-09-18-m1-reference-gpu7-smoke.md) |
+
+| 2026-09-18 | M1 reference shutdown reproduction | same8×32 +PYTHONFAULTHANDLER | native139 reproduced; no readable stack | complete samples; post-plugin-unload owner lifetime risk under test; no1024 | [T306.6h.5](../todo/T306-m1-ame-long-train-stability.md) | [faulttrace](2026-09-18-m1-reference-gpu7-faulttrace.md) |
+
+| 2026-09-18 | M1 reference GPU7 selection | GPU/process/script readonlycheck | userexplicitlyholdslaunch | preservesleep.pyPID2789351;noIsaac/nobindingedit | [T306.6h.4](../todo/T306-m1-ame-long-train-stability.md) | [hold](2026-09-18-m1-reference-gpu7-hold.md) |
+
+| 2026-09-18 | M1 reference prelaunch GPU4 | freshGPU/processownershipread | externalresourceblockedbeforeIsaac | liuxx job21710MiB/100%;nointerference;no8or1024run | [T306.6h.4](../todo/T306-m1-ame-long-train-stability.md) | [resource](2026-09-18-m1-reference-gpu-resource-blocker.md) |
+
+| 2026-09-18 | M1 reference runtime adapter | source-bound recorder/contact/exit contracts | 150CPUtests/spec/qualityPASS;f5842d4 | noIsaacyet;GPU4resourceblocked;8before1024 | [T306.6h.2](../todo/T306-m1-ame-long-train-stability.md) | [runtime](2026-09-18-m1-reference-runtime.md) |
+
+| 2026-09-18 | M1 reference first-episode metrics | NumPy RED/GREEN + reference-helper parity | 77focused/112union pass; bothreviewsapprove | orderedwheelclearance;firstepisodefailure;sourceheightformula;noIsaacexecution | [T306.6h.2](../todo/T306-m1-ame-long-train-stability.md) | [metrics](2026-09-18-m1-reference-metrics.md) |
+
+| 2026-09-18 | M1 reference provenance and USD preflight | reference88CPU + new35CPU; USD composition | preflight pass, no simulation yet | source-equivalent overlay;17bodies/16joints;0unresolved;physicalcriteria notverified | [T306.6h](../todo/T306-m1-ame-long-train-stability.md) | [preflight](2026-09-18-m1-reference-preflight.md) |
+
+| 2026-09-18 | M1 reference controller investigation and scale amendment | reference source/entrypoints/assets; design only | user requires8env then1024env; no Isaac execution | no1-envsim; three8×1600 strict passes before1024 capacity/1600-step validation; accepted weights absent; USD/wrapper risks unresolved | [T306.6h](../todo/T306-m1-ame-long-train-stability.md) | [design evidence](2026-09-18-m1-reference-controller-design.md) |
+
+| 2026-09-18 | M1 conditional reward trace and bootstrap probe | one-off Python profiling;2×500step+1stepprobe;CPUregressions | profilingroutefailed/stopped | 50CPUpass;ownhookpresentbutnoexposureJSON;evalscomplete;productionunchanged | [T306.6g.1a](../todo/T306-m1-ame-long-train-stability.md) | [attempts](2026-09-18-m1-wheelreward-exposure-trace.md),[bootstrapprobe](2026-09-18-m1-reward-hook-bootstrap-probe.md) |
+
+| 2026-09-18 | M1 wheel reward pilot completion and behavior | exact120/finite artifacts; sequential8×500flat/small/large; last20TBcomparison | runtimepass;obstaclebehaviorred | flat8/8;small/large0/8;0collision/failure;stdandorientationrisk | [T306.6g.1](../todo/T306-m1-ame-long-train-stability.md) | [pilot](2026-09-18-m1-wheel-reward-1024-pilot.md),[flat](2026-09-18-m1-wheelreward-flat120.md),[small](2026-09-18-m1-wheelreward-small120.md),[large](2026-09-18-m1-wheelreward-large120.md),[tailaudit](2026-09-18-m1-wheelreward-tail-audit.md) |
+
+| 2026-09-18 | M1 approved wheel reward implementation | tensor/config RED-GREEN; finite scanner validity; two reviews;8envphysics/PPO |127 passed1 skipped;8envgates pass;pilot nowcomplete |0.05mcross8/8,0reset/collision,newsignalsnonzero;138ckpttensors/35TBtagsfinite | [T306.6g](../todo/T306-m1-ame-long-train-stability.md) | [implementation](2026-09-18-m1-wheel-reward-implementation.md),[probe](2026-09-18-m1-wheel-reward-physical-probe.md),[smoke](2026-09-18-m1-wheel-reward-smoke.md),[pilot](2026-09-18-m1-wheel-reward-1024-pilot.md) |
+
+| 2026-09-18 | M1 probe neighbor-obstacle contamination fix | event samples/FK/PhysX/source-hull LP; isolated8env×600 physical A/B; regression rerun | probe isolation pass; learned obstacle behavior remains red | spacing2.5→8m;0.05m crossing8/8;3.10m;0resets;geometry72→0;97 passed1 skipped | [T306.6f](../todo/T306-m1-ame-long-train-stability.md) | [event trace and fix](2026-09-18-m1-probe-neighbor-contamination-fix.md) |
+
+| 2026-09-18 | M1 knee proxy and contact measurement source audit | CPU USD/source hull vs production samples; installed sensor/threshold trace | geometry mismatch and measurement limitations confirmed; runtime causation unproven | proxy volume+35.98%,26/26 samples outside hull,max34.8mm;3-frame history vs4 substeps;reward threshold1N | [T306.6f](../todo/T306-m1-ame-long-train-stability.md) | [audit](2026-09-18-m1-knee-proxy-source-audit.md) |
+
+| 2026-09-17 | M1 semantic1 pilot completion, evaluation hardening and matched step diagnostic | exact120/finite audit, three evaluations, failure-termination RED/GREEN,0.10m physical probe | process pass; obstacle behavior red | flat8/8,small/large0;91 passed1 skipped;0.10m all-wheel crossing0/8 without resets | [T306](../todo/T306-m1-ame-long-train-stability.md) | [training](2026-09-17-m1-semantic1-wheel-120-training.md), [flat](2026-09-17-m1-sem1wheel-flat120.md), [small](2026-09-17-m1-sem1wheel-small120.md), [large](2026-09-17-m1-sem1wheel-large120.md), [metric fix](2026-09-17-m1-evaluation-terminal-failure.md), [physical probe](2026-09-17-m1-step-height-matched-probe.md) |
+
+| 2026-09-17 | M1 semantic1 support-wheel collision correction | tensor RED/GREEN, collision/planner regression, real8x300 contact probe | code+physical pass; behavior training next |146 passed,1 skipped;1.2245m;wheel z0.1461m;0 resets/geometry collision;airtime0 | [T306](../todo/T306-m1-ame-long-train-stability.md) | [audit/probe](2026-09-17-m1-obstacle-stop-reward-audit.md), [training A/B](2026-09-17-m1-semantic1-wheel-120-training.md) |
+
+| 2026-09-17 | M1 1000-update behavior and obstacle-stop audit | exact single process, final checkpoint/TB, flat/small/large, reward source | process pass; behavior fail; targeted reward verification next | exact0..999;bad_orientation0.8826;flat1.0;small/large0;semantic1 wheel contact conflict identified | [T306](../todo/T306-m1-ame-long-train-stability.md) | [1000gate](2026-09-17-m1-noise02-1000-learning-gate.md), [reward audit](2026-09-17-m1-obstacle-stop-reward-audit.md) |
+
+| 2026-09-17 | M1 low-noise pilot complete and learned behavior | 1024x120, finite audit, sequential flat/small/large | flat improved; obstacle gate failed;1000-update validation running | episode955.19,bad_orientation0.0364;flat8/8 and5.06m;small/large0 success | [T306](../todo/T306-m1-ame-long-train-stability.md) | [training](2026-09-17-m1-noise02-1024-training.md), [flat](2026-09-17-m1-noise02-flat120.md), [small](2026-09-17-m1-noise02-small120.md), [large](2026-09-17-m1-noise02-large120.md), [1000gate](2026-09-17-m1-noise02-1000-learning-gate.md) |
+
+| 2026-09-17 | M1 120-update completion and exploration A/B | single-process completion, final policy evaluation, noisy physical drive | process gate passed; learned behavior failed; new A/B running | 120/120, all138 checkpoint tensors and35 scalar tags finite; crossing/avoidance0; std0.2 drive1.7042m with0 resets | [T306](../todo/T306-m1-ame-long-train-stability.md) | [stability](2026-09-17-m1-floating-1024-stability.md), [flat](2026-09-17-m1-std1-flat120.md), [small](2026-09-17-m1-std1-small120.md), [large](2026-09-17-m1-std1-large120.md), [noise probe](2026-09-17-m1-noise02-drive-probe.md), [new A/B](2026-09-17-m1-noise02-1024-training.md) |
+
+| 2026-09-17 | M1 floating-base reward/control validation | 8-env physical drive, AME/AMP, behavior baseline, 1024 gate | short gates pass; long/behavior open | 1.6044m flat rolling, AME/AMP 2 updates each; 1024 x 120 running | [T306](../todo/T306-m1-ame-long-train-stability.md) | [physics](2026-09-17-m1-floating-drive-gate.md), [regression](2026-09-17-m1-floating-regression.md), [1024](2026-09-17-m1-floating-1024-stability.md) |
 
 | 2026-09-16 | M1 AME long-train Vulkan/watchdog fix | renderer multi-GPU A/B, exact resume, atomic checkpoint, supervisor v2 | application-level pass; host Vulkan repair open | AME baseline `30 passed`; fake supervisor `11 passed`; real 1024-env exact smoke `model_1040 -> model_1043`; formal first attempt reached validated `model_1100` without restart | [T306](../todo/T306-m1-ame-long-train-stability.md) | [evidence](2026-09-16-m1-ame-long-train-vulkan-watchdog-fix.md) |
 

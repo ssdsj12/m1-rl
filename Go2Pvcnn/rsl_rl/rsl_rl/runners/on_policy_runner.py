@@ -10,18 +10,40 @@ import torch
 
 
 def m1_teacher_ratio(iteration: int, total_iterations: int,
-                     start: float = 0.30,
-                     warmup_end: float = 0.30,
-                     decay_end: float = 0.80) -> float:
-    """Scheduled M1 MPC teacher mixing ratio for PPO rollouts."""
+                     start: float = 1.0,
+                     end: float = 0.0,
+                     warmup_end: float = 0.0,
+                     decay_end: float = 1.0) -> float:
+    """Return the bounded, resume-relative MPC control share."""
     if total_iterations <= 0:
-        return 0.0
+        return float(end)
+    start = min(max(float(start), 0.0), 1.0)
+    end = min(max(float(end), 0.0), 1.0)
+    warmup_end = min(max(float(warmup_end), 0.0), 1.0)
+    decay_end = min(max(float(decay_end), warmup_end), 1.0)
     progress = min(max(float(iteration) / float(total_iterations), 0.0), 1.0)
     if progress <= warmup_end:
-        return float(start)
+        return start
     if progress >= decay_end:
-        return 0.0
-    return float(start * (decay_end - progress) / (decay_end - warmup_end))
+        return end
+    alpha = (progress - warmup_end) / max(decay_end - warmup_end, 1.0e-6)
+    return start + (end - start) * alpha
+
+
+def m1_teacher_ratio_schedule_from_env() -> tuple[float, float, float, float]:
+    """Return one shared MPC control-share schedule for rollout and logging.
+
+    The previous implementation used 0.50->0.05 while sampling actions but
+    logged a separate 1.0->0.0 schedule, making the TensorBoard ratio appear
+    higher than the actual teacher-control probability.  Keeping the schedule
+    in one helper makes the metric describe the policy that was actually run.
+    """
+    return (
+        float(os.environ.get("M1_MPC_TEACHER_RATIO_START", "0.50")),
+        float(os.environ.get("M1_MPC_TEACHER_RATIO_END", "0.05")),
+        float(os.environ.get("M1_MPC_TEACHER_WARMUP_PCT", "0.0")),
+        float(os.environ.get("M1_MPC_TEACHER_DECAY_END_PCT", "1.0")),
+    )
 
 
 def m1_obstacle_metrics(ep_infos):
@@ -244,6 +266,10 @@ class OnPolicyRunner:
                     schedule_start_iteration=start_iter,
                 )
             start = time.time()  # 记录数据收集开始时间
+            m1_teacher_valid_count = 0
+            m1_teacher_applied_count = 0
+            m1_teacher_saturated_count = 0
+            m1_teacher_total_count = 0
             
             # ========================================
             # 阶段1: Rollout（数据收集）
@@ -263,13 +289,116 @@ class OnPolicyRunner:
                         if callable(get_teacher):
                             teacher_action, teacher_valid = get_teacher()
                             if teacher_action is not None:
-                                ratio_start = float(os.environ.get("M1_MPC_TEACHER_RATIO_START", "0.30"))
+                                teacher_start, teacher_end, teacher_warmup, teacher_decay = m1_teacher_ratio_schedule_from_env()
                                 ratio = m1_teacher_ratio(
-                                    it - start_iter, num_learning_iterations, start=ratio_start
+                                    it - start_iter,
+                                    num_learning_iterations,
+                                    # A full teacher takeover at iteration 0 can
+                                    # inject a discontinuous joint target into a
+                                    # stable checkpoint.  Keep the teacher
+                                    # available for every detected obstacle, but
+                                    # stage its control share so PPO retains a
+                                    # stabilising vote during adaptation.
+                                    start=teacher_start,
+                                    end=teacher_end,
+                                    warmup_end=teacher_warmup,
+                                    decay_end=teacher_decay,
                                 )
                                 teacher_valid = teacher_valid.to(device=actions.device, dtype=torch.bool)
+                                teacher_action = teacher_action.to(actions.device)
+                                teacher_action_finite = torch.isfinite(teacher_action).all(dim=-1)
+                                teacher_action = torch.nan_to_num(
+                                    teacher_action,
+                                    nan=0.0,
+                                    posinf=1.0,
+                                    neginf=-1.0,
+                                ).clamp(-1.0, 1.0)
+                                teacher_valid = teacher_valid & teacher_action_finite
                                 use_teacher = teacher_valid & (torch.rand(actions.shape[0], device=actions.device) < ratio)
-                                actions = torch.where(use_teacher.unsqueeze(-1), teacher_action.to(actions.device), actions)
+                                # Mark teacher-controlled transitions so the
+                                # PPO actor loss does not treat off-policy
+                                # teacher actions as samples from the student.
+                                # The value target still retains these rows.
+                                self.alg.transition.ppo_active = (~use_teacher).to(
+                                    dtype=actions.dtype
+                                )
+                                m1_teacher_valid_count += int(teacher_valid.sum().item())
+                                m1_teacher_applied_count += int(use_teacher.sum().item())
+                                m1_teacher_saturated_count = int(m1_teacher_saturated_count + (use_teacher & (teacher_action.abs().amax(dim=-1) >= 0.999)).sum().item())
+                                m1_teacher_total_count += int(actions.shape[0])
+                                # Teacher references contain zero wheel targets
+                                # by design.  Replacing all 16 action channels
+                                # therefore made the robot stop and slide into
+                                # the obstacle.  Inject only the 12 articulated
+                                # leg channels and keep the student's 4 wheel
+                                # velocity commands.
+                                leg_mask = torch.ones(actions.shape[-1], dtype=torch.bool, device=actions.device)
+                                leg_mask[3::4] = False
+                                blend = min(max(float(os.environ.get("M1_MPC_TEACHER_BLEND", "0.50")), 0.0), 1.0)
+                                leg_teacher = actions + blend * (teacher_action - actions)
+                                teacher_blended = torch.where(
+                                    leg_mask.unsqueeze(0), leg_teacher, actions,
+                                )
+                                # A valid crossing plan must also reach the
+                                # obstacle.  Early-stage M1 policies were
+                                # trained mostly at near-zero velocity, so
+                                # leaving wheels entirely to PPO made the
+                                # teacher valid but physically stationary.
+                                # Drive only teacher-controlled rows with the
+                                # commanded forward speed; lateral/yaw wheels
+                                # remain policy-controlled for stability.
+                                if os.environ.get("M1_TEACHER_FORWARD_WHEELS", "1") == "1":
+                                    command = self.env.unwrapped.command_manager.get_command("base_velocity")
+                                    wheel_command = command[:, 0].to(actions.device).clamp(-1.0, 1.0)
+                                    # Slow the approach while a semantic small
+                                    # obstacle is in the corridor.  A full
+                                    # command-speed push makes the first leg
+                                    # reach the box before the serial swing has
+                                    # completed, which is exactly the scrape /
+                                    # tip failure seen in the GPU7 probe.
+                                    if os.environ.get("M1_TEACHER_SLOW_APPROACH", "1") == "1":
+                                        get_presence = getattr(self.env, "get_obstacle_presence", None)
+                                        if callable(get_presence):
+                                            small_candidate, _ = get_presence()
+                                            approach_speed = float(os.environ.get("M1_TEACHER_APPROACH_SPEED", "0.12"))
+                                            wheel_command = torch.where(
+                                                small_candidate.to(device=actions.device, dtype=torch.bool),
+                                                wheel_command.clamp(min=-approach_speed, max=approach_speed),
+                                                wheel_command,
+                                            )
+                                    teacher_blended[:, ~leg_mask] = wheel_command[:, None]
+                                actions = torch.where(use_teacher.unsqueeze(-1), teacher_blended, actions)
+
+                                # Keep an imitation target for only the rows
+                                # actually controlled by the teacher.  Wheels
+                                # remain policy-controlled, so use the policy
+                                # mean for those four columns instead of a
+                                # moving sampled-wheel target.
+                                teacher_target = teacher_blended.detach().clone()
+                                policy_mean = self.alg.actor_critic.action_mean.detach()
+                                wheel_mask = ~leg_mask
+                                # Keep imitation targets identical to the
+                                # executed action.  When forward-wheel teacher
+                                # control is enabled, copying policy_mean here
+                                # silently trained PPO against zero wheel speed
+                                # while the environment received command speed.
+                                teacher_target[:, wheel_mask] = teacher_blended[:, wheel_mask]
+                                self.alg.transition.privileged_actions = teacher_target
+                                self.alg.transition.imitation_weight = use_teacher.to(
+                                    dtype=actions.dtype
+                                )
+                                self.alg.transition.plan_valid = teacher_valid.to(
+                                    dtype=actions.dtype
+                                )
+
+                                # Store the action actually sent to the
+                                # environment.  Otherwise PPO records the
+                                # pre-teacher policy action and learns from a
+                                # different transition than the one executed.
+                                self.alg.transition.actions = actions.detach()
+                                self.alg.transition.actions_log_prob = (
+                                    self.alg.actor_critic.get_actions_log_prob(actions).detach()
+                                )
                     
                     # 执行动作，获取下一步观测、奖励、结束标志和额外信息
                     obs, rewards, dones, infos = self.env.step(actions)
@@ -426,19 +555,35 @@ class OnPolicyRunner:
         self.writer.add_scalar("Loss/surrogate", locs["mean_surrogate_loss"], locs["it"])
         self.writer.add_scalar("Loss/learning_rate", self.alg.learning_rate, locs["it"])
         self.writer.add_scalar("Policy/mean_noise_std", mean_std.item(), locs["it"])
+        teacher_start, teacher_end, teacher_warmup, teacher_decay = m1_teacher_ratio_schedule_from_env()
         teacher_ratio = m1_teacher_ratio(
             locs["it"] - locs.get("start_iter", 0),
             locs["num_learning_iterations"],
-            start=float(os.environ.get("M1_MPC_TEACHER_RATIO_START", "0.30")),
+            start=teacher_start,
+            end=teacher_end,
+            warmup_end=teacher_warmup,
+            decay_end=teacher_decay,
         )
         self.writer.add_scalar("Policy/m1_teacher_ratio", teacher_ratio, locs["it"])
+        total = max(int(locs.get("m1_teacher_total_count", 0)), 1)
+        self.writer.add_scalar("Policy/m1_teacher_valid_fraction", float(locs.get("m1_teacher_valid_count", 0)) / total, locs["it"])
+        self.writer.add_scalar("Policy/m1_teacher_applied_fraction", float(locs.get("m1_teacher_applied_count", 0)) / total, locs["it"])
+        self.writer.add_scalar("Policy/m1_teacher_saturated_fraction", float(locs.get("m1_teacher_saturated_count", 0)) / total, locs["it"])
+        teacher_valid_fraction = float(locs.get("m1_teacher_valid_count", 0)) / total
+        teacher_applied_fraction = float(locs.get("m1_teacher_applied_count", 0)) / total
+        teacher_saturated_fraction = float(locs.get("m1_teacher_saturated_count", 0)) / total
+        ep_string += f"{'M1 teacher valid/applied/saturated:':>{pad}} {teacher_valid_fraction:.3f}/{teacher_applied_fraction:.3f}/{teacher_saturated_fraction:.3f}\n"
         crossing_snapshot = getattr(self.env, "crossing_metrics_snapshot", lambda: {})()
         for name, value in crossing_snapshot.items():
             self.writer.add_scalar(f"Metrics/{name}", value, locs["it"])
-        obstacle_progress, obstacle_climb, crossing_proxy = m1_obstacle_metrics(locs["ep_infos"])
+        obstacle_progress, obstacle_climb, _legacy_proxy = m1_obstacle_metrics(locs["ep_infos"])
         self.writer.add_scalar("Metrics/small_obstacle_progress_mean", obstacle_progress, locs["it"])
         self.writer.add_scalar("Metrics/small_obstacle_climb_mean", obstacle_climb, locs["it"])
-        self.writer.add_scalar("Metrics/crossing_success_rate_proxy", crossing_proxy, locs["it"])
+        # Use the wrapper's episode accumulator: success means candidate
+        # disappearance after 5 cm clearance and a collision-free episode.
+        # The former progress-and-reward proxy counted any tiny positive lift.
+        crossing_success = float(crossing_snapshot.get("crossing_success_rate", float("nan")))
+        self.writer.add_scalar("Metrics/crossing_success_rate", crossing_success, locs["it"])
         if locs.get("loss_dict") is not None:
             metric_prefix = "AMP" if self.training_type == "amp" else "Distillation"
             for key, value in locs["loss_dict"].items():
@@ -483,7 +628,7 @@ class OnPolicyRunner:
         log_string += ep_string
         log_string += (
             f"{'M1 MPC teacher ratio:':>{pad}} {teacher_ratio:.3f}\n"
-            f"{'Crossing success proxy:':>{pad}} {crossing_proxy:.3f}\n"
+            f"{'Crossing success rate:':>{pad}} {crossing_success:.3f}\n"
         )
         log_string += (
             f"""{'-' * width}\n"""

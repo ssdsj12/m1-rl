@@ -10,6 +10,12 @@ VULKAN_PROBE="${VULKAN_PROBE:-${REPO_ROOT}/Go2Pvcnn/scripts/probe_isaac_vulkan.p
 cd "${REPO_ROOT}"
 
 export PATH="${ISAAC_ENV}/bin:${PATH}"
+export PYTHONUNBUFFERED=1
+export DISPLAY="${DISPLAY:-:7}"
+export M1_MPC_TEACHER_RATIO_START="${M1_MPC_TEACHER_RATIO_START:-1.0}"
+export M1_MPC_TEACHER_RATIO_END="${M1_MPC_TEACHER_RATIO_END:-0.0}"
+export M1_MPC_TEACHER_WARMUP_PCT="${M1_MPC_TEACHER_WARMUP_PCT:-0.10}"
+export M1_MPC_TEACHER_DECAY_END_PCT="${M1_MPC_TEACHER_DECAY_END_PCT:-0.80}"
 export PYTHONPATH="${REPO_ROOT}/Go2Pvcnn:${REPO_ROOT}/Go2Pvcnn/rsl_rl:/home/hexinkun/IsaacLab45/source/isaaclab:/home/hexinkun/IsaacLab45/source/isaaclab_rl:/home/hexinkun/IsaacLab45/source/isaaclab_tasks:/home/hexinkun/IsaacLab45/source/isaaclab_assets:${ISAAC_ENV}/lib/python3.10/site-packages"
 export OMNI_KIT_ACCEPT_EULA="${OMNI_KIT_ACCEPT_EULA:-Y}"
 export VK_DRIVER_FILES="${VULKAN_ICD_MANIFEST}"
@@ -26,7 +32,7 @@ if [[ "${SKIP_VULKAN_PREFLIGHT:-0}" != "1" ]]; then
     --expect-device-count 8
 fi
 printf 'TRAIN_PROCESS_START pid=%s python=%s device=%s\n' \
-  "$$" "${PYTHON_BIN}" "${DEVICE:-cuda:4}"
+  "$$" "${PYTHON_BIN}" "${DEVICE:-cuda:7}"
 
 # Isaac Sim initializes Vulkan even in headless mode.  The project ICD above
 # selects NVIDIA's EGL entry point, while disabling renderer multi-GPU keeps
@@ -39,10 +45,10 @@ if [[ "${DISABLE_RENDERER_MULTI_GPU}" == "1" ]]; then
 fi
 
 args=(
-  Go2Pvcnn/scripts/train_m1_cross_large_complex_ame.py
+  "${TRAIN_ENTRYPOINT:-Go2Pvcnn/scripts/train_m1_cross_large_complex_ame.py}"
   --num_envs "${NUM_ENVS:-1024}"
   --max_iterations "${MAX_ITERATIONS:-10000}"
-  --device "${DEVICE:-cuda:4}"
+  --device "${DEVICE:-cuda:7}"
   --headless
 )
 

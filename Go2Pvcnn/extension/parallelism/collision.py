@@ -181,10 +181,12 @@ def _official_group_collision(
         points_w[..., :2].reshape(batch, leg_count * candidate_count * group_count * point_count, 2),
     )
     terrain_h = query.height.reshape(batch, leg_count, candidate_count, group_count, point_count)
+    terrain_semantic = query.semantic.reshape(batch, leg_count, candidate_count, group_count, point_count)
     terrain_valid = query.valid.reshape(batch, leg_count, candidate_count, group_count, point_count)
     terrain_hit = terrain_h >= (points_w[..., 2] - float(cfg.collision_margin_m))
     tolerant_names = set(cfg.contact_tolerant_collision_shape_names)
     support_names = set(getattr(cfg, "contact_tolerant_support_shape_names", ()))
+    support_semantic_ids = tuple(getattr(cfg, "contact_tolerant_support_semantic_ids", ()))
     terrain_checked = torch.tensor(
         tuple(spec.name not in tolerant_names for spec in group_specs),
         dtype=torch.bool,
@@ -205,10 +207,28 @@ def _official_group_collision(
             support_contact = support_point & terrain_valid[..., group_idx, :] & (
                 point_z <= terrain_h[..., group_idx, :] + float(cfg.collision_margin_m)
             )
+            # Support tolerance applies to actual ground (semantic 0) and the
+            # explicitly allowed small-obstacle support IDs only.  In
+            # particular, semantic 2 (large obstacle) tops remain collisions.
+            if support_semantic_ids:
+                semantic_ids = torch.tensor(
+                    support_semantic_ids,
+                    dtype=terrain_semantic.dtype,
+                    device=terrain_semantic.device,
+                )
+                allowed_support_semantic = (
+                    terrain_semantic[..., group_idx, :] == 0
+                ) | (
+                    terrain_semantic[..., group_idx, :, None] == semantic_ids
+                ).any(dim=-1)
+                support_contact = support_contact & allowed_support_semantic
             terrain_hit[..., group_idx, :] = terrain_hit[..., group_idx, :] & ~support_contact
     terrain_hit = terrain_hit & terrain_checked
     valid_point = point_mask.view(1, 1, 1, group_count, point_count)
-    point_hit = valid_point & ((~terrain_valid) | terrain_hit)
+    # Unknown/invalid scanner cells are not evidence of a collision.  They
+    # are conservatively ignored here; explicit out-of-range handling belongs
+    # to the scanner validity/termination path.
+    point_hit = valid_point & terrain_valid & terrain_hit
     return point_hit.any(dim=-1)
 
 

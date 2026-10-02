@@ -25,7 +25,10 @@ from tracking.mdp.rewards import (
     reference_root_pos_reward,
     reference_root_rot_reward,
 )
-from tracking.mdp.policy_geometry_rewards import policy_geometry_collision_penalty
+from tracking.mdp.policy_geometry_rewards import (
+    m1_policy_geometry_collision_penalty,
+    policy_geometry_collision_penalty,
+)
 from tracking.mdp.terminations import (
     parallelism_consecutive_standstill,
     parallelism_ref_foot_z_too_far,
@@ -50,6 +53,7 @@ __all__ = [
     "terrain_imitation_context_from_metadata",
     "active_swing_foot_on_small_obstacle_reward",
     "parallelism_geometry_collision_penalty",
+    "m1_policy_geometry_collision_penalty",
     "policy_geometry_collision_penalty",
     "parallelism_obstacle_episode_metrics",
     "reset_parallelism_obstacle_stats",

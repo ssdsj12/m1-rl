@@ -10,7 +10,7 @@ def test_cross_large_complex_config_declares_mixed_terrain_and_counts() -> None:
     assert "parallelism_tracking_cross_large_complex" in source
     assert "flat_dense_small_obstacles" in source
     assert "SemanticObstacleCount(small=0, large=2)" in source
-    assert "SemanticObstacleCount(small=40, large=0)" in source
+    assert "SemanticObstacleCount(small=6, large=0)" in source
     assert "SemanticObstacleCount(small=5, large=2)" in source
     assert "proportion=0.1" in source
     assert "proportion=0.2" in source

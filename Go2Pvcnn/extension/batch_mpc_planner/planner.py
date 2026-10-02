@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace as dataclass_replace
 import torch
 import torch.nn.functional as F
 from torch import Tensor
@@ -12,7 +13,7 @@ from .kinematics import fk_feet_from_joint_angles, fk_leg_points_from_joint_angl
 from .losses.gait_coupling import swing_direction_loss
 from .losses.kinematics import joint_limit_loss_from_root_foot
 from .losses.terrain_clearance import finite_horizon_touchdown_phase, sample_time
-from .parametric import command_frame_axes, decode_parametric_trajectory, init_parametric_variables
+from .parametric import _support_plane_roll_pitch, command_frame_axes, decode_parametric_trajectory, init_parametric_variables
 from .parametric_losses import (
     FkCollisionMargins,
     parametric_fk_body_leg_collision_loss,
@@ -23,7 +24,9 @@ from .parametric_losses import (
 )
 from .profiling import MpcProfile, maybe_print_mpc_profile, should_profile_mpc
 from .semantic_geometry import LowSmallCircles, low_small_component_circles
-from .semantic_policy import build_parametric_nominal
+from .semantic_policy import (
+    SemanticObstacleMode, build_parametric_nominal, classify_semantic_obstacle_mode,
+)
 from .terrain import height_at, semantic_at
 from .types import MPC_HARD_REASON_COUNT, MpcPlannerResult, MpcPlannerStatus, MpcPlannerTerrain, MpcRobotState
 
@@ -322,7 +325,7 @@ def _nearest_low_small_obstacle(
     speed: Tensor,
     *,
     corridor_width_m: float = 0.24,
-    forward_distance_m: float = 1.2,
+    forward_distance_m: float = 1.8,
     small_id: int = 1,
 ) -> tuple[Tensor, Tensor]:
     batch = int(root_pos.shape[0])
@@ -688,12 +691,12 @@ def _parametric_result_from_state(
     root_rpy = decoded.root_rpy.detach()
     target_foot_pos = decoded.target_foot_pos.detach()
     batch = int(root_pos.shape[0])
-    joint_seq = solve_joint_angles_from_trajectory(root_pos, root_rpy, target_foot_pos)
+    joint_seq = solve_joint_angles_from_trajectory(root_pos, root_rpy, target_foot_pos, robot_name=cfg.runtime.robot_name)
     if horizon > 0:
         state_joints = torch.as_tensor(state.joint_angles, dtype=joint_seq.dtype, device=joint_seq.device)
         joint_seq = joint_seq.clone()
         joint_seq[:, 0, :] = state_joints
-    foot_pos = fk_feet_from_joint_angles(root_pos, root_rpy, joint_seq)
+    foot_pos = fk_feet_from_joint_angles(root_pos, root_rpy, joint_seq, robot_name=cfg.runtime.robot_name)
     if horizon > 0:
         state_foot = torch.as_tensor(state.foot_pos, dtype=foot_pos.dtype, device=foot_pos.device)
         foot_pos = foot_pos.clone()
@@ -864,6 +867,151 @@ def _project_parametric_high_large_root_corridor(
     return out
 
 
+def _m1_semantic_touchdown_offset(obstacle_forward: float, obstacle_depth: float, pass_margin: float) -> float:
+    """Return distance from obstacle center to post-obstacle touchdown.
+
+    ``obstacle_forward`` is the root-to-obstacle projection.  The touchdown
+    point is already built from ``obstacle_xy`` below, so adding this value a
+    second time would double the approach distance and make the leg land far
+    beyond the obstacle.
+    """
+    offset = float(obstacle_depth) + float(pass_margin)
+    if torch.is_tensor(obstacle_forward):
+        return torch.full_like(obstacle_forward, offset)
+    return offset
+
+
+def _enforce_m1_semantic_single_leg_crossing(
+    terrain: MpcPlannerTerrain,
+    state: MpcRobotState,
+    command: Tensor,
+    decoded,
+    cfg: MpcPlannerCfg,
+):
+    """Replace the generic diagonal gait with a stable one-leg crossing pass.
+
+    The generic Go2 nominal uses diagonal swing pairs. M1's wheel envelope is
+    different: for a low semantic obstacle the planner must lift one wheel,
+    clear the obstacle, touch down, and only then advance the next wheel.
+    """
+    if str(cfg.runtime.robot_name).lower() != "m1":
+        return decoded
+    root0 = torch.as_tensor(state.root_pos)
+    rpy0 = torch.as_tensor(state.root_rpy, dtype=root0.dtype, device=root0.device)
+    foot0 = torch.as_tensor(state.foot_pos, dtype=root0.dtype, device=root0.device)
+    batch, horizon, legs, _ = decoded.target_foot_pos.shape
+    if legs != 4 or horizon < 4:
+        return decoded
+    policy = classify_semantic_obstacle_mode(terrain, state, command, cfg)
+    crossable = torch.logical_and(
+        policy.has_obstacle,
+        torch.logical_or(
+            policy.mode == int(SemanticObstacleMode.LOW_SMALL_FORWARD),
+            policy.mode == int(SemanticObstacleMode.LOW_SMALL_MIXED),
+        ),
+    )
+    if not bool(crossable.any().item()):
+        return decoded
+
+    cmd = torch.as_tensor(command, dtype=root0.dtype, device=root0.device)
+    if int(cmd.shape[-1]) < 3:
+        cmd = torch.cat((cmd, torch.zeros((batch, 3 - int(cmd.shape[-1])), dtype=cmd.dtype, device=cmd.device)), dim=-1)
+    yaw = rpy0[:, 2]
+    heading, left, _ = command_frame_axes(cmd[:, :3], yaw, linear_eps=1.0e-6)
+    obstacle_depth = float(cfg.losses.low_small_crossing.obstacle_depth_m)
+    pass_margin = float(cfg.losses.low_small_crossing.pass_margin_m)
+    pass_along = _m1_semantic_touchdown_offset(
+        policy.obstacle_forward, obstacle_depth, pass_margin,
+    )
+    foot_rel = foot0[..., :2] - policy.obstacle_xy[:, None, :]
+    foot_lateral = (foot_rel * left[:, None, :]).sum(dim=-1)
+    touchdown_xy = (
+        policy.obstacle_xy[:, None, :]
+        + heading[:, None, :] * pass_along[:, None, None]
+        + left[:, None, :] * foot_lateral[..., None]
+    )
+    touchdown_z = height_at(terrain, touchdown_xy).to(dtype=root0.dtype, device=root0.device)
+    foot_offset = float(cfg.runtime.foot_contact_offset_m)
+    touchdown = torch.cat((touchdown_xy, (touchdown_z + foot_offset).unsqueeze(-1)), dim=-1)
+
+    phase = torch.linspace(0.0, 4.0, horizon, dtype=root0.dtype, device=root0.device).view(1, horizon, 1)
+    # Keep the support polygon balanced while crossing one wheel at a time:
+    # front-left -> rear-right -> front-right -> rear-left.  The previous
+    # numeric order lifted both front wheels consecutively, which produced a
+    # large pitch/roll transient before the next support wheel was ready.
+    serial_leg_start = root0.new_tensor((0.0, 2.0, 3.0, 1.0)).view(1, 1, legs)
+    leg_ids = serial_leg_start
+    leg_phase = (phase - leg_ids).clamp(0.0, 1.0)
+    active_swing = (leg_phase > 1.0e-4) & (leg_phase < 1.0 - 1.0e-4)
+    # Hold the selected wheel in place for an explicit pre-lift phase before
+    # translating it through the obstacle.  Moving horizontally while the
+    # wheel is still near ground was the source of calf/box contacts in PhysX.
+    pre_lift_fraction = 0.30
+    lift_phase = (leg_phase / pre_lift_fraction).clamp(0.0, 1.0)
+    lift_phase = lift_phase * lift_phase * (3.0 - 2.0 * lift_phase)
+    travel_phase = ((leg_phase - pre_lift_fraction) / (1.0 - pre_lift_fraction)).clamp(0.0, 1.0)
+    target_xy = foot0[:, None, :, :2] + (touchdown[:, None, :, :2] - foot0[:, None, :, :2]) * travel_phase.unsqueeze(-1)
+    terrain_z = height_at(terrain, target_xy.reshape(batch, horizon * legs, 2)).reshape(batch, horizon, legs)
+    swing_height = max(float(cfg.runtime.nominal_swing_height_m), 0.12)
+    base_target_z = terrain_z + foot_offset + 0.025
+    # ``height_at`` interprets a 2-D query as one batch with N points.  The
+    # M1 policy carries one obstacle point per environment, so retain the
+    # explicit ``[B,1,2]`` batch axis and flatten the singleton point axis.
+    obstacle_ground_z = height_at(
+        terrain, policy.obstacle_xy[:, None, :],
+    ).reshape(batch).to(dtype=root0.dtype, device=root0.device)
+    obstacle_height = policy.obstacle_height
+    if obstacle_height is None:
+        obstacle_height = torch.zeros((batch,), dtype=root0.dtype, device=root0.device)
+    else:
+        obstacle_height = torch.as_tensor(obstacle_height, dtype=root0.dtype, device=root0.device).reshape(batch)
+    # Semantic rigid obstacles are absent from the terrain height map; use the
+    # policy's class height above the local ground so the wheel target clears
+    # the actual physical top rather than only the flat map.
+    obstacle_top_z = obstacle_ground_z + obstacle_height
+    # Keep a 6.5 cm wheel-bottom margin over a 10 cm top in the
+    # teacher reference.  PhysX tracking loses a few millimetres during the
+    # one-leg swing; this margin prevents a visual scrape from being labelled
+    # as a successful crossing without using the unstable 0.32 m arc.
+    obstacle_clear_z = obstacle_top_z[:, None, None] + foot_offset + 0.065
+    # Descend only after the wheel has traversed the obstacle footprint.  The
+    # final touchdown remains terrain-aware, so the robot does not land on an
+    # artificially elevated target after the obstacle.
+    descend_phase = ((travel_phase - 0.70) / 0.30).clamp(0.0, 1.0)
+    descend_phase = descend_phase * descend_phase * (3.0 - 2.0 * descend_phase)
+    clear_target_z = torch.lerp(obstacle_clear_z.expand_as(base_target_z), base_target_z, descend_phase)
+    lift_z = foot0[:, None, :, 2] + lift_phase * (clear_target_z - foot0[:, None, :, 2])
+    arc = 4.0 * travel_phase * (1.0 - travel_phase) * swing_height
+    target_z = lift_z + arc
+    target_z = torch.where(leg_phase > 1.0e-4, target_z, foot0[:, None, :, 2])
+    target_foot = torch.cat((target_xy, target_z.unsqueeze(-1)), dim=-1)
+    contact_prob = 1.0 - active_swing.to(dtype=root0.dtype)
+    swing_prob = active_swing.to(dtype=root0.dtype)
+    contact_prob = torch.where(crossable[:, None, None], contact_prob, decoded.contact_prob)
+    swing_prob = torch.where(crossable[:, None, None], swing_prob, decoded.swing_prob)
+    target_foot = torch.where(crossable[:, None, None, None], target_foot, decoded.target_foot_pos)
+    touchdown = torch.where(crossable[:, None, None], touchdown, decoded.touchdown_w)
+    centers = torch.tensor((0.125, 0.375, 0.625, 0.875), dtype=root0.dtype, device=root0.device).view(1, legs).expand(batch, -1)
+    widths = torch.full((batch, legs), 0.25, dtype=root0.dtype, device=root0.device)
+    swing_center = torch.where(crossable[:, None], centers, decoded.swing_center)
+    swing_width = torch.where(crossable[:, None], widths, decoded.swing_width)
+    support_rp = _support_plane_roll_pitch(decoded.root_pos, decoded.root_rpy[..., 2], target_foot, contact_prob)
+    ramp = torch.linspace(0.0, 1.0, horizon, dtype=root0.dtype, device=root0.device).pow(2).view(1, horizon, 1)
+    root_rpy = decoded.root_rpy.clone()
+    root_rpy[..., :2] = torch.lerp(rpy0[:, None, :2], support_rp, ramp)
+    root_rpy = torch.where(crossable[:, None, None], root_rpy, decoded.root_rpy)
+    return dataclass_replace(
+        decoded,
+        target_foot_pos=target_foot,
+        touchdown_w=touchdown,
+        swing_center=swing_center,
+        swing_width=swing_width,
+        contact_prob=contact_prob,
+        swing_prob=swing_prob,
+        root_rpy=root_rpy,
+    )
+
+
 def _optimize_parametric_variables(
     terrain: MpcPlannerTerrain,
     state: MpcRobotState,
@@ -890,7 +1038,13 @@ def _optimize_parametric_variables(
         max_components=int(cfg.losses.touchdown_keepout.low_small_circle_max_components),
         device=torch.as_tensor(state.root_pos).device,
     )
-    decoded = decode_parametric_trajectory(state, terrain, nominal, variables, horizon=horizon)
+    foot_contact_offset_m = float(cfg.runtime.foot_contact_offset_m)
+    decoded = decode_parametric_trajectory(
+        state, terrain, nominal, variables, horizon=horizon,
+        foot_contact_offset_m=foot_contact_offset_m,
+        nominal_swing_height_m=float(cfg.runtime.nominal_swing_height_m),
+    )
+    decoded = _enforce_m1_semantic_single_leg_crossing(terrain, state, command, decoded, cfg)
     loss_t0 = profile.now() if profile is not None else 0.0
     losses = _parametric_sampled_frame_losses(
         terrain,
@@ -915,7 +1069,12 @@ def _optimize_parametric_variables(
     for _ in range(steps):
         iter_t0 = profile.now() if profile is not None else 0.0
         optimizer.zero_grad(set_to_none=True)
-        decoded = decode_parametric_trajectory(state, terrain, nominal, variables, horizon=horizon)
+        decoded = decode_parametric_trajectory(
+            state, terrain, nominal, variables, horizon=horizon,
+            foot_contact_offset_m=foot_contact_offset_m,
+            nominal_swing_height_m=float(cfg.runtime.nominal_swing_height_m),
+        )
+        decoded = _enforce_m1_semantic_single_leg_crossing(terrain, state, command, decoded, cfg)
         loss_t0 = profile.now() if profile is not None else 0.0
         losses = _parametric_sampled_frame_losses(
             terrain,
@@ -938,7 +1097,12 @@ def _optimize_parametric_variables(
         optimizer.step()
         if profile is not None:
             profile.add_stage("opt.iter_total", (profile.now() - iter_t0) * 1000.0)
-    decoded = decode_parametric_trajectory(state, terrain, nominal, variables, horizon=horizon)
+    decoded = decode_parametric_trajectory(
+        state, terrain, nominal, variables, horizon=horizon,
+        foot_contact_offset_m=foot_contact_offset_m,
+        nominal_swing_height_m=float(cfg.runtime.nominal_swing_height_m),
+    )
+    decoded = _enforce_m1_semantic_single_leg_crossing(terrain, state, command, decoded, cfg)
     loss_t0 = profile.now() if profile is not None else 0.0
     losses = _parametric_sampled_frame_losses(
         terrain,
@@ -977,12 +1141,16 @@ def _parametric_sampled_frame_losses(
     dtype = root_pos.dtype
     device = root_pos.device
     term_t0 = profile.now() if profile is not None else 0.0
-    fk_joint = solve_joint_angles_from_trajectory(root_pos, decoded.root_rpy, target_foot_pos)
+    fk_joint = solve_joint_angles_from_trajectory(
+        root_pos, decoded.root_rpy, target_foot_pos, robot_name=cfg.runtime.robot_name
+    )
     if horizon > 0:
         state_joints = torch.as_tensor(state.joint_angles, dtype=dtype, device=device)
         fk_joint = fk_joint.clone()
         fk_joint[:, 0, :] = state_joints
-    fk_foot = fk_feet_from_joint_angles(root_pos, decoded.root_rpy, fk_joint)
+    fk_foot = fk_feet_from_joint_angles(
+        root_pos, decoded.root_rpy, fk_joint, robot_name=cfg.runtime.robot_name
+    )
     if horizon > 0:
         state_foot = torch.as_tensor(state.foot_pos, dtype=dtype, device=device)
         fk_foot = fk_foot.clone()
@@ -991,7 +1159,8 @@ def _parametric_sampled_frame_losses(
         profile.add_loss("term.fk_base", (profile.now() - term_t0) * 1000.0)
     term_t0 = profile.now() if profile is not None else 0.0
     terrain_z = height_at(terrain, foot_pos[..., :2].reshape(batch, horizon * 4, 2)).reshape(batch, horizon, 4).to(dtype=dtype, device=device)
-    clearance_deficit = torch.relu(terrain_z + 0.015 - foot_pos[..., 2])
+    foot_contact_offset_m = float(cfg.runtime.foot_contact_offset_m)
+    clearance_deficit = torch.relu(terrain_z + foot_contact_offset_m + 0.015 - foot_pos[..., 2])
     terrain_clearance = clearance_deficit.square().mean(dim=(1, 2))
     semantic = semantic_at(terrain, foot_pos[..., :2].reshape(batch, horizon * 4, 2)).reshape(batch, horizon, 4).to(device=device)
     semantic_contact = (semantic != 0).to(dtype=dtype).mul(decoded.contact_prob.to(dtype=dtype)).mean(dim=(1, 2))
@@ -1027,6 +1196,7 @@ def _parametric_sampled_frame_losses(
             target_foot_pos,
             decoded.swing_prob,
             margin_m=float(cfg.losses.swing_foot_clearance.swing_foot_clearance_margin_m),
+            foot_contact_offset_m=foot_contact_offset_m,
         )
     else:
         swing_foot_clearance = torch.zeros((batch,), dtype=dtype, device=device)
@@ -1065,6 +1235,7 @@ def _parametric_sampled_frame_losses(
             decoded.root_rpy,
             fk_joint,
             shank_sample_count=int(cfg.losses.fk_body_leg_collision.shank_sample_count),
+            robot_name=cfg.runtime.robot_name,
         )
         fk_body_leg_collision = float(cfg.losses.fk_body_leg_collision.weight) * parametric_fk_body_leg_collision_loss(
             terrain,
@@ -1096,6 +1267,7 @@ def _parametric_sampled_frame_losses(
             decoded.root_rpy,
             target_foot_pos,
             joint_limit_margin_rad=float(cfg.losses.kinematics.joint_limit_margin_rad),
+            robot_name=cfg.runtime.robot_name,
         )
     else:
         joint_limit = torch.zeros((batch,), dtype=dtype, device=device)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train the isolated AME-XYZ-Semantic baseline on the Go2 mixed task."""
+"""Train the isolated AME-XYZ-Semantic baseline on the M1 mixed task."""
 
 from __future__ import annotations
 
@@ -79,6 +79,12 @@ def main() -> int:
         raise ValueError("--num_envs and --max_iterations must be positive")
     if args.resume and not args.checkpoint:
         raise ValueError("--resume requires --checkpoint")
+    if args.checkpoint and not args.resume:
+        raise ValueError("--checkpoint requires --resume; refusing to silently train from scratch")
+
+    if str(args.device).startswith("cuda"):
+        import torch
+        torch.cuda.set_device(int(str(args.device).split(":")[-1]))
 
     from isaaclab.app import AppLauncher
 
@@ -155,11 +161,25 @@ def main() -> int:
             checkpoint = Path(args.checkpoint).expanduser().resolve()
             if not checkpoint.is_file():
                 raise FileNotFoundError(f"AME checkpoint not found: {checkpoint}")
-            runner.load(str(checkpoint), keep_std=args.keep_std)
+            # Optimizer moments from the old Go2/flat task are not valid after
+            # changing the M1 geometry and reward terms.  Reset them by
+            # default for a resumed adaptation; set M1_LOAD_OPTIMIZER=1 only
+            # when continuing an identical configuration.
+            load_optimizer = os.environ.get("M1_LOAD_OPTIMIZER", "0") == "1"
+            runner.load(str(checkpoint), load_optimizer=load_optimizer, keep_std=args.keep_std)
             print(f"[AME] resumed checkpoint={checkpoint}", flush=True)
 
         print("Starting Training - m1_cross_large_complex_ame", flush=True)
-        runner.learn(num_learning_iterations=args.max_iterations, init_at_random_ep_len=True)
+        # A resumed locomotion checkpoint already contains a settled gait.
+        # Randomising the episode phase immediately after changing the M1
+        # obstacle layout creates a large off-distribution impulse and can
+        # destroy posture before PPO has adapted. Fresh runs retain the old
+        # random-start exploration; resume runs begin from a full reset.
+        runner.learn(
+            num_learning_iterations=args.max_iterations,
+            init_at_random_ep_len=(not args.resume)
+            and os.environ.get("M1_DISABLE_RANDOM_EP_LEN", "0") != "1",
+        )
         print("Training Complete - m1_cross_large_complex_ame", flush=True)
         return 0
     except BaseException:

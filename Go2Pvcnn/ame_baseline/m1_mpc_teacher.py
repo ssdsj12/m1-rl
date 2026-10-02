@@ -136,13 +136,23 @@ def reference_to_m1_action(
                     leg_sequence = [0, 1, 2, 3]
                 sequence = torch.as_tensor(leg_sequence, device=target.device, dtype=torch.long)
                 forced_leg = sequence.index_select(0, phase_slot.remainder(int(sequence.numel())))
+                leg_override = reference.get("serial_leg_override")
+                if leg_override is not None:
+                    leg_override = torch.as_tensor(leg_override, device=target.device, dtype=torch.long).reshape(-1)
+                    if int(leg_override.numel()) == int(target.shape[0]):
+                        forced_leg = leg_override.clamp(0, 3)
                 collision_leg_mask = reference.get("collision_leg_mask")
                 if collision_leg_mask is not None:
                     collision_leg_mask = torch.as_tensor(collision_leg_mask, device=target.device, dtype=torch.bool)
                     if tuple(collision_leg_mask.shape) == (int(target.shape[0]), 4):
                         hit_any = collision_leg_mask.any(dim=1)
                         first_hit = collision_leg_mask.to(torch.long).argmax(dim=1)
-                        forced_leg = torch.where(hit_any, first_hit, forced_leg)
+                        # A wrapper-provided phase-stable override may have
+                        # selected a threatened rear leg at the handoff. If
+                        # it is absent, retain the legacy one-step collision
+                        # fallback for compatibility with unit tests.
+                        if leg_override is None:
+                            forced_leg = torch.where(hit_any, first_hit, forced_leg)
                 swing = torch.nn.functional.one_hot(
                     forced_leg, num_classes=4
                 ).to(torch.bool)
