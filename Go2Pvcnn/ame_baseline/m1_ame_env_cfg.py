@@ -32,16 +32,17 @@ from .m1_ame_contract import (
 # forward centerline, so every episode presents a sequential one-leg crossing
 # pass. Large blocks stay forward but offset from that centerline for avoidance.
 M1_FIXED_SMALL_OBSTACLE_LOCAL_XY = (
-    # 0.56 m pitch is the smallest spacing that preserves the configured
+    # 0.55 m pitch is the smallest spacing that preserves the configured
     # 0.45 m free corridor around 10 cm blocks (0.05 + 0.05 + 0.45).
     # It is effectively the requested 0.55 m serial crossing layout while
     # avoiding a floating-point boundary rejection in the course builder.
     # The reset root starts at the tile center and the front wheel is about
-    # 0.33 m ahead.  Start at 0.70 m so the first block is 0.37 m in front of
-    # the wheel while remaining inside the 1.5 m scanner; keep a 0.56 m pitch
-    # for six separated crossing attempts.
-    (0.70, 0.0), (1.26, 0.0), (1.82, 0.0),
-    (2.38, 0.0), (2.94, 0.0), (3.50, 0.0),
+    # 0.33 m ahead.  Start at 0.55 m so the first block is 0.22 m in front of
+    # the wheel and safely inside the 1.5 m scanner.  Alternate the
+    # obstacle across the left/right foot tracks so each serial teacher phase
+    # has one target leg; never require both front or both rear legs together.
+    (0.55, 0.20), (1.10, -0.20), (1.65, 0.20),
+    (2.20, -0.20), (2.75, 0.20), (3.30, -0.20),
 )
 M1_FIXED_LARGE_OBSTACLE_LOCAL_XY = ((1.5, -1.0), (3.2, 1.0))
 

@@ -26,10 +26,11 @@ def test_actual_m1_fixed_course_preserves_spacing():
     large = constants['M1_FIXED_LARGE_OBSTACLE_LOCAL_XY']
     assert len(small) == 6
     # The first block is intentionally inside the 1.5 m semantic scanner so
-    # the teacher can pre-lift; the six-block course then continues at 0.56 m
-    # spacing along +X.
-    assert all(0.70 <= x <= 3.50 and y == 0 for x, y in small)
-    assert small[0][0] == 0.70
+    # the teacher can pre-lift; the six-block course then continues at 0.55 m
+    # spacing along +X with alternating left/right foot-track targets.
+    assert all(0.55 <= x <= 3.30 for x, _ in small)
+    assert [y for _, y in small] == [0.20, -0.20, 0.20, -0.20, 0.20, -0.20]
+    assert small[0][0] == 0.55
     curriculum = SemanticObstacleCurriculumCfg(
         plane_counts=(SemanticObstacleCount(small=6, large=2),),
         non_plane_counts=(SemanticObstacleCount(small=6, large=2),),
