@@ -50,3 +50,16 @@ def test_candidate_rate_uses_all_finished_episodes():
     m.update(candidate=candidate, large_candidate=off, crossing_complete=off,
              done=done, terminated=off, collision=off, large_avoided=off)
     assert m.snapshot()["semantic_candidate_rate"] == 0.5
+
+
+def test_strict_success_is_separate_from_crossing_proxy():
+    m = CrossingEpisodeAccumulator(1, "cpu")
+    on = torch.tensor([True])
+    off = torch.tensor([False])
+    m.update(candidate=on, large_candidate=off, crossing_complete=on,
+             strict_crossing_complete=off, done=on, terminated=off,
+             collision=off, large_avoided=off)
+    out = m.snapshot()
+    assert out["crossing_episodes"] == 1
+    assert out["strict_crossing_episodes"] == 0
+    assert out["strict_crossing_success_rate"] == 0.0

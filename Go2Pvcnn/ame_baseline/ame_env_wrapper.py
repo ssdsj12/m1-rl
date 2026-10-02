@@ -70,6 +70,7 @@ class AmeRslRlEnvWrapper(VecEnv):
         self._small_candidate_seen = torch.zeros_like(self._small_candidate_prev)
         self._small_candidate_lift_seen = torch.zeros_like(self._small_candidate_prev)
         self._small_candidate_clearance_seen = torch.zeros_like(self._small_candidate_prev)
+        self._m1_crossing_pending = torch.zeros_like(self._small_candidate_prev)
         self._large_candidate_seen = torch.zeros_like(self._small_candidate_prev)
         # Keep the M1 MPC swing alive after a semantic scan cell briefly
         # disappears under a moving wheel.  The old instantaneous gate
@@ -530,6 +531,7 @@ class AmeRslRlEnvWrapper(VecEnv):
         self._small_candidate_seen.zero_()
         self._small_candidate_lift_seen.zero_()
         self._small_candidate_clearance_seen.zero_()
+        self._m1_crossing_pending.zero_()
         self._large_candidate_seen.zero_()
         return self._format_observations(obs_dict)
 
@@ -653,10 +655,36 @@ class AmeRslRlEnvWrapper(VecEnv):
         names = list(self.unwrapped.reward_manager.active_terms)
         if "parallelism_geometry_collision" in names:
             collision |= self.unwrapped.reward_manager._step_reward[:, names.index("parallelism_geometry_collision")] != 0
+        # A proxy crossing is latched when the obstacle leaves the scan.  A
+        # strict crossing is emitted only after the wheel has obtained the
+        # 5 cm top clearance and all four measured support bodies have
+        # re-established contact under a bounded attitude.
+        strict_touchdown = torch.zeros_like(done)
+        try:
+            contact_sensor = self.unwrapped.scene["contact_forces"]
+            from .m1_ame_rewards import M1_SUPPORT_BODY_NAMES
+            from extension.parallelism.rl_adapter import resolve_named_indices
+            contact_ids = list(resolve_named_indices(tuple(contact_sensor.body_names), M1_SUPPORT_BODY_NAMES))
+            support_contact = contact_sensor.data.net_forces_w[:, contact_ids].norm(dim=-1) > 10.0
+            quat = self.unwrapped.scene["robot"].data.root_quat_w
+            qw, qx, qy, qz = quat.unbind(-1)
+            roll = torch.atan2(2.0 * (qw * qx + qy * qz), 1.0 - 2.0 * (qx.square() + qy.square()))
+            pitch = torch.asin((2.0 * (qw * qy - qz * qx)).clamp(-1.0, 1.0))
+            tilt = torch.stack((roll.abs(), pitch.abs()), dim=-1).amax(dim=-1)
+            strict_touchdown = support_contact.all(dim=-1) & torch.isfinite(tilt) & (
+                tilt <= float(os.environ.get("M1_STRICT_MAX_TILT_RAD", "0.30"))
+            )
+        except Exception:
+            strict_touchdown = torch.zeros_like(done)
+        self._m1_crossing_pending |= crossing_complete & ~collision
+        strict_crossing_complete = (
+            self._m1_crossing_pending & ~small_candidate & clearance_seen_now & strict_touchdown
+        )
         self.crossing_metrics.update(
             candidate=small_candidate,
             large_candidate=large_candidate,
             crossing_complete=crossing_complete,
+            strict_crossing_complete=strict_crossing_complete,
             done=done,
             terminated=term,
             collision=collision,
@@ -666,6 +694,7 @@ class AmeRslRlEnvWrapper(VecEnv):
         self._small_candidate_seen |= small_candidate
         self._small_candidate_lift_seen |= lift_seen_now & self._small_candidate_seen
         self._small_candidate_clearance_seen |= clearance_seen_now & self._small_candidate_seen
+        self._m1_crossing_pending &= ~strict_crossing_complete & ~collision & ~done
         self._large_candidate_seen |= large_candidate
         self._m1_obstacle_clear_steps = torch.where(
             small_candidate,
@@ -706,6 +735,7 @@ class AmeRslRlEnvWrapper(VecEnv):
         self._small_candidate_seen = torch.where(done, torch.zeros_like(self._small_candidate_seen), self._small_candidate_seen)
         self._small_candidate_lift_seen = torch.where(done, torch.zeros_like(self._small_candidate_lift_seen), self._small_candidate_lift_seen)
         self._small_candidate_clearance_seen = torch.where(done, torch.zeros_like(self._small_candidate_clearance_seen), self._small_candidate_clearance_seen)
+        self._m1_crossing_pending &= ~done
         self._large_candidate_seen = torch.where(done, torch.zeros_like(self._large_candidate_seen), self._large_candidate_seen)
         # Isaac auto-resets completed rows inside env.step(); wrapper.reset()
         # is not called for those episodes. Re-arm only completed rows so the

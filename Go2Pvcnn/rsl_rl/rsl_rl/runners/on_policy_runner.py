@@ -584,6 +584,8 @@ class OnPolicyRunner:
         # The former progress-and-reward proxy counted any tiny positive lift.
         crossing_success = float(crossing_snapshot.get("crossing_success_rate", float("nan")))
         self.writer.add_scalar("Metrics/crossing_success_rate", crossing_success, locs["it"])
+        strict_crossing_success = float(crossing_snapshot.get("strict_crossing_success_rate", float("nan")))
+        self.writer.add_scalar("Metrics/strict_crossing_success_rate", strict_crossing_success, locs["it"])
         if locs.get("loss_dict") is not None:
             metric_prefix = "AMP" if self.training_type == "amp" else "Distillation"
             for key, value in locs["loss_dict"].items():
@@ -629,6 +631,7 @@ class OnPolicyRunner:
         log_string += (
             f"{'M1 MPC teacher ratio:':>{pad}} {teacher_ratio:.3f}\n"
             f"{'Crossing success rate:':>{pad}} {crossing_success:.3f}\n"
+            f"{'Strict crossing success rate:':>{pad}} {strict_crossing_success:.3f}\n"
         )
         log_string += (
             f"""{'-' * width}\n"""
