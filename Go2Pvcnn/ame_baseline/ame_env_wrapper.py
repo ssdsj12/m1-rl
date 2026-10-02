@@ -115,6 +115,9 @@ class AmeRslRlEnvWrapper(VecEnv):
         # low-speed steps. Re-arm only after it has been absent long enough to
         # have physically passed the footprint, not after a short sensor gap.
         self._m1_obstacle_rearm_clear_steps = 48
+        self._m1_teacher_clear_steps = max(
+            24, int(os.environ.get("M1_TEACHER_CLEAR_STEPS", "128"))
+        )
         # Optional read-only diagnostics for short smoke runs.  This is kept
         # off during normal training so it cannot perturb PPO timing.
         self._m1_presence_debug = os.environ.get("M1_PRESENCE_DEBUG", "0") == "1"
@@ -183,6 +186,21 @@ class AmeRslRlEnvWrapper(VecEnv):
         reference = dict(reference)
         reference["serial_phase_index"] = self._m1_teacher_age.clone()
         robot = self.unwrapped.scene["robot"]
+        # Planner contact_state is a future schedule, not measured contact.
+        # Feed the live wheel contact forces to the teacher for stance holds
+        # and serial-leg selection; a 10 N threshold filters sensor noise.
+        try:
+            from .m1_ame_rewards import M1_SUPPORT_BODY_NAMES
+            contact_sensor = self.unwrapped.scene["contact_forces"]
+            contact_ids = list(resolve_named_indices(
+                tuple(contact_sensor.body_names), M1_SUPPORT_BODY_NAMES,
+            ))
+            actual_contact_state = (
+                contact_sensor.data.net_forces_w[:, contact_ids].norm(dim=-1) > 10.0
+            )
+            reference["actual_contact_state"] = actual_contact_state.detach()
+        except Exception:
+            actual_contact_state = None
         from extension.convention import extract_roll_pitch_batch, extract_yaw_batch
         root_rpy = torch.zeros((self.num_envs, 3), device=robot.data.root_pos_w.device, dtype=robot.data.root_pos_w.dtype)
         root_rpy[:, 0], root_rpy[:, 1] = extract_roll_pitch_batch(robot.data.root_quat_w)
@@ -273,12 +291,12 @@ class AmeRslRlEnvWrapper(VecEnv):
         serial_phase = torch.div(self._m1_teacher_age, phase_block, rounding_mode="floor")
         phase_changed = serial_phase != self._m1_teacher_selected_phase
         if phase_changed.any():
-            sequence_text = os.environ.get("M1_TEACHER_LEG_SEQUENCE", "0,1,2,3")
+            sequence_text = os.environ.get("M1_TEACHER_LEG_SEQUENCE", "0,3,2,1")
             try:
                 leg_sequence = [int(item.strip()) for item in sequence_text.split(",") if item.strip()]
-                leg_sequence = [item for item in leg_sequence if 0 <= item < 4] or [0, 1, 2, 3]
+                leg_sequence = [item for item in leg_sequence if 0 <= item < 4] or [0, 3, 2, 1]
             except ValueError:
-                leg_sequence = [0, 1, 2, 3]
+                leg_sequence = [0, 3, 2, 1]
             sequence = torch.as_tensor(leg_sequence, device=self.device, dtype=torch.long)
             default_leg = sequence.index_select(0, serial_phase.remainder(int(sequence.numel())))
             mask = torch.as_tensor(reference.get("collision_leg_mask"), device=self.device, dtype=torch.bool)
@@ -292,7 +310,13 @@ class AmeRslRlEnvWrapper(VecEnv):
                 default_hit = mask.gather(1, default_leg[:, None]).squeeze(1)
                 first_hit = mask.to(torch.long).argmax(dim=1)
                 prefer_scheduled = os.environ.get("M1_TEACHER_PREFER_SCHEDULED", "1") not in {"0", "false", "False"}
-                if prefer_scheduled:
+                strict_sequence = os.environ.get("M1_TEACHER_STRICT_SEQUENCE", "1") not in {"0", "false", "False"}
+                if strict_sequence:
+                    # The authored course alternates one target lane at a
+                    # time. Never let a stale scanner hit reorder the gait
+                    # and repeatedly lift the first leg.
+                    selected = default_leg
+                elif prefer_scheduled:
                     selected = torch.where(default_hit, default_leg, torch.where(hit, first_hit, default_leg))
                 else:
                     selected = torch.where(hit, first_hit, default_leg)
@@ -322,9 +346,30 @@ class AmeRslRlEnvWrapper(VecEnv):
         # previous phase and would simply preserve that error.
         if self._m1_teacher_hold_pose is None or self._m1_teacher_hold_pose.shape != current_pos.shape:
             self._m1_teacher_hold_pose = default_pos.detach().clone()
-            self._m1_teacher_hold_phase = torch.zeros_like(self._m1_teacher_age)
+            # Force one initialization pass from measured contacts.  Starting
+            # at phase 0 skipped that pass and snapped all stance legs back to
+            # the authored default pose on the first crossing frame.
+            self._m1_teacher_hold_phase = torch.full_like(self._m1_teacher_age, -1)
         phase_block = max(1, int(os.environ.get("M1_TEACHER_PHASE_BLOCK", "8")))
         phase_slot = torch.div(self._m1_teacher_age, phase_block, rounding_mode="floor")
+        if actual_contact_state is not None:
+            # Track only feet that are physically carrying load.  A small
+            # blend keeps the three stance targets aligned with body heave
+            # and roll, while a lifted foot (force <= 10 N) remains frozen and
+            # cannot be accidentally re-captured as a second swing leg.
+            hold_legs = self._m1_teacher_hold_pose.reshape(-1, 4, 4)
+            current_legs = current_pos.reshape(-1, 4, 4)
+            phase_changed = phase_slot != self._m1_teacher_hold_phase
+            blend = float(os.environ.get("M1_TEACHER_HOLD_CONTACT_BLEND", "0.20"))
+            blend = min(max(blend, 0.0), 1.0)
+            if torch.any(phase_changed):
+                blend = 1.0
+                self._m1_teacher_hold_phase = phase_slot.detach().clone()
+            blended_legs = hold_legs + blend * (current_legs - hold_legs)
+            hold_legs = torch.where(
+                actual_contact_state.unsqueeze(-1), blended_legs, hold_legs,
+            )
+            self._m1_teacher_hold_pose = hold_legs.reshape_as(current_pos).detach()
         from extension.parallelism.m1_kinematics import M1_PLANNER_JOINT_NAMES
         planner_cols = [M1_ASSET_JOINT_NAMES.index(name) for name in M1_PLANNER_JOINT_NAMES]
         reference["hold_joint_angles"] = self._m1_teacher_hold_pose[:, planner_cols].clone()
@@ -376,6 +421,7 @@ class AmeRslRlEnvWrapper(VecEnv):
         small_candidate = small_candidate.to(dtype=torch.bool)
         large_candidate = large_candidate.to(dtype=torch.bool)
         small_trigger = small_trigger.to(dtype=torch.bool)
+        self._m1_debug_large_candidate = large_candidate.clone()
         # Preserve the pre-trigger state before updating the latch.  The
         # episode-start fallback is intentionally allowed to drive the base
         # toward a broad-corridor obstacle, but it must not leak a leg swing
@@ -414,6 +460,7 @@ class AmeRslRlEnvWrapper(VecEnv):
         self._m1_obstacle_event_seen |= small_trigger
         self._m1_teacher_active |= start
         expired = self._m1_teacher_age >= self._m1_teacher_max_steps
+        self._m1_debug_expired = expired.clone()
         self._m1_teacher_active &= ~large_candidate & ~expired
         teacher_active = self._m1_teacher_active
         self._m1_teacher_age = torch.where(
@@ -623,7 +670,7 @@ class AmeRslRlEnvWrapper(VecEnv):
         self._m1_obstacle_clear_steps = torch.where(
             small_candidate,
             torch.zeros_like(self._m1_obstacle_clear_steps),
-            (self._m1_obstacle_clear_steps + 1).clamp_max(64),
+            (self._m1_obstacle_clear_steps + 1).clamp_max(self._m1_teacher_clear_steps),
         )
         self._m1_obstacle_event_seen &= self._m1_obstacle_clear_steps < self._m1_obstacle_rearm_clear_steps
         no_small = self._m1_teacher_active & ~small_candidate & self._small_candidate_seen
@@ -638,7 +685,9 @@ class AmeRslRlEnvWrapper(VecEnv):
         # Keep the bounded phase alive until the obstacle has been absent for
         # the same 12-frame clear window used to re-arm event de-duplication;
         # the independent max-age latch remains the hard safety stop.
-        teacher_phase_done = no_small & (self._m1_obstacle_clear_steps >= 24) & (self._m1_teacher_age >= 48)
+        teacher_phase_done = no_small & (
+            self._m1_obstacle_clear_steps >= self._m1_teacher_clear_steps
+        ) & (self._m1_teacher_age >= 48)
         # A successful crossing (or an episode reset) ends the latched
         # teacher phase. If clearance was not achieved, the age bound in
         # get_mpc_teacher_action is the safety stop and the policy remains in

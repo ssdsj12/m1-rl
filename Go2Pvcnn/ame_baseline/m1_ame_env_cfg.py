@@ -278,7 +278,11 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
             center_safety_half_extent_m=0.45,
             center_safety_radius_m=None,
             fixed_small_obstacle_local_xy=M1_FIXED_SMALL_OBSTACLE_LOCAL_XY,
-            fixed_large_obstacle_local_xy=M1_FIXED_LARGE_OBSTACLE_LOCAL_XY,
+            fixed_large_obstacle_local_xy=(
+                () if os.environ.get("M1_OBSTACLE_STAGE", "full").strip().lower()
+                in {"small", "small_only"}
+                else M1_FIXED_LARGE_OBSTACLE_LOCAL_XY
+            ),
             min_spacing_clearance_m=0.45,
         )
         # More repeated crossing attempts, while leaving a protected reset and
@@ -301,6 +305,11 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
             stage_small, stage_large = 0, 0
         elif obstacle_stage in {"warmup", "two"}:
             stage_small, stage_large = 2, 0
+        elif obstacle_stage in {"small", "small_only"}:
+            # Physical crossing gate: expose the complete six-block serial
+            # course without side large obstacles masking the teacher.  The
+            # full stage restores the two large obstacles for avoidance.
+            stage_small, stage_large = 6, 0
         else:
             stage_small, stage_large = 6, 0
         self.semantic_obstacle_curriculum.terrain_obstacle_count_overrides.update({
@@ -314,8 +323,9 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
         self.semantic_obstacle_curriculum.plane_counts = (
             SemanticObstacleCount(small=stage_small, large=stage_large),
         )
+        non_plane_large = 2 if obstacle_stage == "full" else stage_large
         self.semantic_obstacle_curriculum.non_plane_counts = (
-            SemanticObstacleCount(small=stage_small, large=(2 if obstacle_stage == "full" else stage_large)),
+            SemanticObstacleCount(small=stage_small, large=non_plane_large),
         )
         self.semantic_obstacle_curriculum.center_safety_half_extent_m = (0.45,)
         self.semantic_obstacle_curriculum.min_spacing_clearance_m = (0.45,)

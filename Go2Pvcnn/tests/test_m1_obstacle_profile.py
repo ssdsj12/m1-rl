@@ -97,6 +97,7 @@ def test_m1_teacher_has_runtime_course_obstacle_trigger():
     assert "_m1_fixed_obstacle_proximity_from_foot_xy" in source
     assert "reference[\"collision_leg_mask\"] = collision_mask | proximity_mask | fixed_mask" in source
     assert "M1_FIXED_SMALL_OBSTACLE_LOCAL_XY" in source
+    assert "M1_TEACHER_STRICT_SEQUENCE" in source
 
 
 def test_generic_course_keeps_legacy_small_obstacle_height():

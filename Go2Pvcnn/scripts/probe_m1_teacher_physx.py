@@ -77,6 +77,7 @@ try:
     planner_cols = resolve_named_indices(M1_ASSET_JOINT_NAMES, M1_PLANNER_JOINT_NAMES)
     valid_steps = 0
     max_swing_legs = 0
+    serial_sequence_trace = []
     max_wheel_bottom_m = float("-inf")
     max_tilt_rad = 0.0
     geometry_collision_steps = 0
@@ -85,6 +86,13 @@ try:
     for step in range(int(args.num_steps)):
         leg_groups = torch.zeros((1, 4), dtype=torch.bool, device=cfg.sim.device)
         action, valid = wrapped.get_mpc_teacher_action()
+        selected_leg_tensor = getattr(wrapped, "_m1_teacher_selected_leg", None)
+        if selected_leg_tensor is None:
+            selected_leg = -1
+        else:
+            selected_leg = int(torch.as_tensor(selected_leg_tensor).reshape(-1)[0].item())
+        if selected_leg >= 0 and (not serial_sequence_trace or serial_sequence_trace[-1] != selected_leg):
+            serial_sequence_trace.append(selected_leg)
         reference = env._trajectory_manager.current_reference(frame_offset=1)
         if action is None:
             action = torch.zeros((1, 16), device=cfg.sim.device)
@@ -97,7 +105,7 @@ try:
         # not keep driving the base forward just because this is a probe.
         action[:, 3::4] = torch.where(
             valid.view(-1, 1),
-            torch.full_like(action[:, 3::4], 0.10),
+            torch.full_like(action[:, 3::4], probe_speed),
             torch.zeros_like(action[:, 3::4]),
         )
         if bool(valid.any().item()):
@@ -154,13 +162,28 @@ try:
                     collision_item["collision_shapes_error"] = type(exc).__name__
                 geometry_collision_trace.append(collision_item)
         small, large = wrapped.get_obstacle_presence()
-        if bool(valid.any().item()) or bool(small.any().item()) or step % 80 == 0:
+        # Keep invalid and no-candidate frames too: those are exactly where
+        # a swing can be interrupted or a support foot can lose contact.
+        if True:
+            actual_force = None
+            contact_error = None
+            try:
+                sensor = env.scene['contact_forces']
+                contact_ids = list(resolve_named_indices(tuple(sensor.body_names), M1_SUPPORT_BODY_NAMES))
+                actual_force = sensor.data.net_forces_w[0, contact_ids].detach().cpu().tolist()
+            except Exception as exc:
+                contact_error = f'{type(exc).__name__}: {exc}'
             samples.append({
                 "step": step,
                 "teacher_valid": bool(valid[0].item()),
+                "teacher_active": bool(getattr(wrapped, "_m1_teacher_active", torch.zeros(1, dtype=torch.bool))[0].item()),
+                "teacher_age": int(getattr(wrapped, "_m1_teacher_age", torch.zeros(1, dtype=torch.long))[0].item()),
+                "debug_large_candidate": bool(getattr(wrapped, "_m1_debug_large_candidate", torch.zeros(1, dtype=torch.bool))[0].item()),
+                "debug_expired": bool(getattr(wrapped, "_m1_debug_expired", torch.zeros(1, dtype=torch.bool))[0].item()),
                 "action_max": float(action.abs().max().item()),
                 "leg_action_max": action[:, planner_cols].reshape(1, 4, 3).abs().amax(dim=-1)[0].tolist(),
                 "commanded_leg_count": int(leg_groups.sum().item()) if action is not None else 0,
+                "serial_selected_leg": selected_leg,
                 "phase_index": int(torch.as_tensor(reference.get("phase_index", [0])).reshape(-1)[0].item()),
                 "contact_state": torch.as_tensor(reference.get("contact_state", [[True, True, True, True]])).reshape(-1, 4)[0].tolist(),
                 "small_candidate": bool(small[0].item()),
@@ -169,6 +192,9 @@ try:
                 "root_x_m": float(robot.data.root_pos_w[0, 0].item()),
                 "tilt_rad": float(tilt[0].item()),
                 "wheel_z_m": wheel_z[0].tolist(),
+                "wheel_xyz_w_m": robot.data.body_pos_w[0, wheel_ids].detach().cpu().tolist(),
+                "actual_wheel_net_force_w_n": actual_force,
+                "contact_measurement_error": contact_error,
                 "done": bool(done[0].item()),
             })
         if bool(done.any().item()):
@@ -176,8 +202,13 @@ try:
 
     print("M1_TEACHER_PHYSX_PROBE " + json.dumps({
         "steps": int(args.num_steps),
+        "wheel_radius_m": float(M1_WHEEL_RADIUS_M),
+        "wheel_names": list(M1_SUPPORT_BODY_NAMES),
+        "probe_speed_m_s": probe_speed,
         "teacher_valid_steps": valid_steps,
         "max_commanded_leg_count": max_swing_legs,
+        "serial_sequence_trace": serial_sequence_trace,
+        "physical_single_leg_swing_verified": False,
         "max_wheel_bottom_m": max_wheel_bottom_m,
         "max_tilt_rad": max_tilt_rad,
         "geometry_collision_steps": geometry_collision_steps,

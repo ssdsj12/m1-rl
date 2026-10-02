@@ -1,4 +1,5 @@
 import torch
+from pathlib import Path
 
 
 def test_m1_teacher_stance_action_decodes_to_measured_pose():
@@ -28,3 +29,32 @@ def test_m1_teacher_stance_action_decodes_to_measured_pose():
     assert torch.allclose(
         decoded[0, planner_cols[4]], current[0, planner_cols[4]], atol=1e-5
     )
+
+
+def test_m1_support_compensation_is_applied_after_cartesian_swing_override():
+    source = (Path(__file__).resolve().parents[1] / "ame_baseline" / "m1_mpc_teacher.py").read_text()
+    cartesian = source.index("The Cartesian swing branch can replace")
+    support = source.index('support_comp = float(os.environ.get("M1_TEACHER_SUPPORT_KNEE_COMP_RAD"', cartesian)
+    final_hold = source.index("desired_legs = torch.where(\n                swing.unsqueeze(-1)", support)
+    assert cartesian < support < final_hold
+
+
+def test_m1_teacher_uses_measured_contact_for_stance_handoff():
+    source = (Path(__file__).resolve().parents[1] / "ame_baseline" / "ame_env_wrapper.py").read_text()
+    assert "actual_contact_state" in source
+    assert "contact_forces" in source
+
+
+def test_m1_teacher_initial_hold_waits_for_measured_contacts():
+    source = (Path(__file__).resolve().parents[1] / "ame_baseline" / "ame_env_wrapper.py").read_text()
+    assert "torch.full_like(self._m1_teacher_age, -1)" in source
+    assert "M1_TEACHER_HOLD_CONTACT_BLEND" in source
+
+
+def test_m1_default_serial_sequence_preserves_diagonal_support():
+    for path in (
+        Path(__file__).resolve().parents[1] / "ame_baseline" / "ame_env_wrapper.py",
+        Path(__file__).resolve().parents[1] / "ame_baseline" / "m1_mpc_teacher.py",
+    ):
+        source = path.read_text()
+        assert '"0,3,2,1"' in source

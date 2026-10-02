@@ -75,7 +75,7 @@ def reference_to_m1_action(
     # that planned swing set and hold the other three at their measured pose.
     # We alternate the selected member using the horizon phase so both legs in
     # each pair (and therefore all four legs over a crossing) are exercised.
-    contact_state = reference.get("contact_state")
+    contact_state = reference.get("actual_contact_state", reference.get("contact_state"))
     swing = None
     if current_joint_pos is not None and contact_state is not None:
         contact_state = torch.as_tensor(contact_state, device=target.device, dtype=torch.bool)
@@ -128,12 +128,12 @@ def reference_to_m1_action(
                 # the current foot is still in the air.  For the M1 crossing
                 # contract, keep exactly one deterministic leg for the full
                 # phase block, then hand off to the next leg.
-                sequence_text = os.environ.get("M1_TEACHER_LEG_SEQUENCE", "0,1,2,3")
+                sequence_text = os.environ.get("M1_TEACHER_LEG_SEQUENCE", "0,3,2,1")
                 try:
                     leg_sequence = [int(item.strip()) for item in sequence_text.split(",") if item.strip()]
-                    leg_sequence = [item for item in leg_sequence if 0 <= item < 4] or [0, 1, 2, 3]
+                    leg_sequence = [item for item in leg_sequence if 0 <= item < 4] or [0, 3, 2, 1]
                 except ValueError:
-                    leg_sequence = [0, 1, 2, 3]
+                    leg_sequence = [0, 3, 2, 1]
                 sequence = torch.as_tensor(leg_sequence, device=target.device, dtype=torch.long)
                 forced_leg = sequence.index_select(0, phase_slot.remainder(int(sequence.numel())))
                 leg_override = reference.get("serial_leg_override")
@@ -390,6 +390,23 @@ def reference_to_m1_action(
                 )
                 valid = valid & ((~swing) | ik_valid).all(dim=-1)
                 desired_legs = desired_leg_pose.reshape(-1, len(M1_PLANNER_JOINT_NAMES))
+    # The Cartesian swing branch can replace ``desired_leg_pose`` after the
+    # earlier support-compensation block. Re-apply the single opposite-leg
+    # support target here, immediately before the final measured-stance hold,
+    # so it cannot be discarded by the stance overwrite below.
+    if swing is not None and current_joint_pos is not None:
+        support_comp = float(os.environ.get("M1_TEACHER_SUPPORT_KNEE_COMP_RAD", "0.0"))
+        if support_comp:
+            stance_pose = stance_legs.reshape(-1, 4, 3).clone()
+            nominal_pose = default_legs.reshape(-1, 4, 3)
+            opposite = torch.flip(swing, dims=(1,))
+            stance_pose[..., 2] = torch.where(
+                opposite & ~swing,
+                nominal_pose[..., 2] + support_comp,
+                stance_pose[..., 2],
+            )
+            stance_legs = stance_pose.reshape(-1, len(M1_PLANNER_JOINT_NAMES))
+
     max_delta = float(os.environ.get("M1_TEACHER_MAX_DELTA_RAD", "1.10"))
     desired_legs = default_legs + (desired_legs - default_legs).clamp(-max_delta, max_delta)
     if current_joint_pos is not None:
