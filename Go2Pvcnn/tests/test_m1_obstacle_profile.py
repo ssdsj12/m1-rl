@@ -28,7 +28,7 @@ def test_actual_m1_fixed_course_preserves_spacing():
     # The first block is intentionally inside the 1.5 m semantic scanner so
     # the teacher can pre-lift; the six-block course then continues at 0.56 m
     # spacing along +X.
-    assert all(0.70 <= x <= 3.55 and y == 0 for x, y in small)
+    assert all(0.70 <= x <= 3.50 and y == 0 for x, y in small)
     assert small[0][0] == 0.70
     curriculum = SemanticObstacleCurriculumCfg(
         plane_counts=(SemanticObstacleCount(small=6, large=2),),
@@ -64,7 +64,7 @@ def test_m1_profile_builds_ten_centimetre_obstacles_with_foothold_spacing():
             center_safety_half_extent_m=0.45,
             min_spacing_clearance_m=0.80,
         ),
-        scale_profile_overrides={"small": (0.08, 0.10)},
+        scale_profile_overrides={"small": (0.05, 0.10)},
     )
     assert len(anchors) == 10
     assert all(math.isclose(anchor.target_height, 0.10) for anchor in anchors)
@@ -78,7 +78,7 @@ def test_m1_config_declares_m1_obstacle_profile_and_collision_reward():
     root = Path(__file__).resolve().parents[1]
     source = (root / "ame_baseline" / "m1_ame_env_cfg.py").read_text(encoding="utf-8")
     assert "semantic_course_scale_profile_overrides" in source
-    assert '"small": (0.08, 0.10)' in source
+    assert '"small": (0.05, 0.10)' in source
     assert "m1_obstacle_collision_penalty" in source
     assert "stage_small, stage_large = 6, 0" in source
 

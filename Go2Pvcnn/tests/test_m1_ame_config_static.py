@@ -52,7 +52,7 @@ def test_m1_reward_config_replaces_airtime_with_named_progress_and_climb():
         assert isinstance(fields[name], ast.Constant) and fields[name].value is None
     for name, function, weight in (
         ('small_obstacle_progress', 'm1_obstacle_rewards.m1_small_obstacle_progress', 1.),
-            ('small_obstacle_climb', 'm1_obstacle_rewards.m1_small_obstacle_climb', 0.5),
+                ('small_obstacle_climb', 'm1_obstacle_rewards.m1_small_obstacle_climb', 1.5),
             ('parallelism_geometry_collision', 'm1_obstacle_rewards.m1_obstacle_collision_penalty', -10.),
     ):
         kwargs = {item.arg: item.value for item in fields[name].keywords}
@@ -139,7 +139,7 @@ def test_m1_teacher_latch_spans_a_complete_single_leg_crossing():
     source = (Path(__file__).resolve().parents[1] / "ame_baseline" / "ame_env_wrapper.py").read_text()
     assert "M1_TEACHER_MAX_STEPS" in source
     assert "max(\n            256," in source
-    assert "int(os.environ.get(\"M1_TEACHER_MAX_STEPS\", \"512\"))" in source
+    assert "int(os.environ.get(\"M1_TEACHER_MAX_STEPS\", \"2048\"))" in source
 
 
 def test_m1_small_crossing_has_center_corridor_reward_and_large_escape():

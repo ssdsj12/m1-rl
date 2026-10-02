@@ -36,11 +36,10 @@ M1_FIXED_SMALL_OBSTACLE_LOCAL_XY = (
     # 0.45 m free corridor around 10 cm blocks (0.05 + 0.05 + 0.45).
     # It is effectively the requested 0.55 m serial crossing layout while
     # avoiding a floating-point boundary rejection in the course builder.
-    # Keep the first block inside the 1.5 m semantic scanner footprint while
-    # leaving a body-envelope margin in front of the reset pose.  The prior
-    # 0.55 m anchor put the 10 cm block against the front geometry before a
-    # leg could swing; 0.70 m preserves the pre-lift scan and avoids that
-    # unavoidable initial body collision.
+    # The reset root starts at the tile center and the front wheel is about
+    # 0.33 m ahead.  Start at 0.70 m so the first block is 0.37 m in front of
+    # the wheel while remaining inside the 1.5 m scanner; keep a 0.56 m pitch
+    # for six separated crossing attempts.
     (0.70, 0.0), (1.26, 0.0), (1.82, 0.0),
     (2.38, 0.0), (2.94, 0.0), (3.50, 0.0),
 )
@@ -267,10 +266,10 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
         # M1 uses 10 cm semantic obstacles. The generic Go2 course keeps its
         # historical profile; this override is applied only to the M1 terrain.
         self.scene.terrain.semantic_course_scale_profile_overrides = {
-            # Keep the required 10 cm height, but leave a narrow 8 cm
+            # Keep the required 10 cm height, but leave a narrow 5 cm
             # footprint so the serial wheel lift is not defeated by a side
             # scrape from the M1 knee/calf envelope.
-            "small": (0.08, 0.10),
+            "small": (0.05, 0.10),
             "large": (0.45, 0.55),
         }
         self.scene.terrain.semantic_course_layout_cfg = SemanticCourseLayoutCfg(
@@ -305,8 +304,8 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
             stage_small, stage_large = 6, 0
         self.semantic_obstacle_curriculum.terrain_obstacle_count_overrides.update({
             # Increase repeated 10 cm crossing opportunities while keeping the
-            # protected reset/touchdown corridor and 0.80 m inter-obstacle
-            # clearance below. Large obstacles remain sparse so the policy
+            # protected reset/touchdown corridor and 0.56 m inter-obstacle
+            # pitch below. Large obstacles remain sparse so the policy
             # learns crossing on small blocks instead of unsafe contacts.
             "flat_dense_small_obstacles": SemanticObstacleCount(small=stage_small, large=stage_large),
             "flat": SemanticObstacleCount(small=stage_small, large=stage_large),
