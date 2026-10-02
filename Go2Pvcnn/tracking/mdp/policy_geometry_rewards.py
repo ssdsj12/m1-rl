@@ -344,6 +344,7 @@ def live_m1_obstacle_proximity_by_leg(
     terrain: ParallelismTerrain,
     forward_m: float = 0.24,
     lateral_m: float = 0.09,
+    rear_forward_extra_m: float = 0.12,
 ) -> Tensor:
     """Detect semantic-small terrain in a short corridor ahead of each M1 foot.
 
@@ -374,10 +375,18 @@ def live_m1_obstacle_proximity_by_leg(
         dtype=foot_xy.dtype, device=foot_xy.device,
     )
     sample_y = foot_xy.new_tensor((-float(lateral_m), 0.0, float(lateral_m)))
-    offsets = heading[:, None, None, :] * sample_x[None, None, :, None]
-    offsets = offsets + lateral[:, None, None, :] * sample_y[None, None, None, :]
+    leg_extra = foot_xy.new_tensor((0.0, 0.0, float(rear_forward_extra_m), float(rear_forward_extra_m)))
+    sample_x_leg = (sample_x[None, None, :] + leg_extra[None, :, None]).clamp_max(
+        max(float(forward_m), 0.04) + max(float(rear_forward_extra_m), 0.0)
+    )
+    # Keep the leg and lateral-sample axes explicit.  The previous expression
+    # aligned ``sample_y`` with the xy coordinate axis (2 vs 3), which raised a
+    # broadcasting error and was then hidden by the wrapper's safety fallback.
+    offsets = heading[:, None, None, None, :] * sample_x_leg[:, :, :, None, None]
+    offsets = offsets + lateral[:, None, None, None, :] * sample_y[None, None, None, :, None]
     # [B,4,Sx,Sy,2] -> query batch points.
     query_xy = foot_xy[:, :, None, None, :] + offsets
+    from extension.parallelism.terrain import query_height_semantic_valid
     query = query_height_semantic_valid(
         terrain, query_xy.reshape(query_xy.shape[0], -1, 2),
     )

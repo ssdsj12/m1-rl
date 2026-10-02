@@ -210,8 +210,14 @@ class AmeRslRlEnvWrapper(VecEnv):
             mask = torch.as_tensor(reference.get("collision_leg_mask"), device=self.device, dtype=torch.bool)
             if tuple(mask.shape) == (self.num_envs, 4):
                 hit = mask.any(dim=1)
+                # Preserve the configured serial gait whenever the planned
+                # leg is itself threatened.  Only fall back to another hit
+                # leg when the scheduled leg has no warning; selecting the
+                # first mask bit unconditionally can reorder the gait every
+                # phase and destabilize the body before touchdown.
+                default_hit = mask.gather(1, default_leg[:, None]).squeeze(1)
                 first_hit = mask.to(torch.long).argmax(dim=1)
-                selected = torch.where(hit, first_hit, default_leg)
+                selected = torch.where(default_hit, default_leg, torch.where(hit, first_hit, default_leg))
             else:
                 selected = default_leg
             self._m1_teacher_selected_leg = torch.where(
