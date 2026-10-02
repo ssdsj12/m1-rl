@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace as dataclass_replace
 
 import torch
 from torch import Tensor
@@ -20,6 +21,8 @@ from extension.convention import extract_roll_pitch_batch, extract_yaw_batch
 from extension.parallelism.collision import official_collision_mask
 from extension.parallelism.config import ParallelismCfg
 from extension.parallelism.kinematics import Go2ParallelGeometry, fk_go2
+from extension.parallelism.rl_adapter import select_named_joint_state
+from extension.parallelism.robot_backend import get_robot_backend
 from extension.parallelism.types import ParallelismTerrain
 
 
@@ -107,6 +110,18 @@ def parallelism_terrain_from_scan(
             raise ValueError(
                 f"valid_mask must have shape {(batch, side, side)}, got {tuple(valid.shape)}"
             )
+        valid = valid & torch.isfinite(grid).all(dim=-1)
+
+    if side > 1:
+        col_step = grid[:, 0, 1, :2] - grid[:, 0, 0, :2]
+        row_step = grid[:, 1, 0, :2] - grid[:, 0, 0, :2]
+        # Isaac GridPattern is X-major, while terrain queries index [Y, X].
+        # Detect handedness so both Isaac scans and conventional Y-major grids
+        # preserve obstacle locations, including when the scanner is yawed.
+        transpose = (col_step[:, 0] * row_step[:, 1] - col_step[:, 1] * row_step[:, 0]) < 0
+        grid = torch.where(transpose[:, None, None, None], grid.transpose(1, 2), grid)
+        semantic = torch.where(transpose[:, None, None], semantic.transpose(1, 2), semantic)
+        valid = torch.where(transpose[:, None, None], valid.transpose(1, 2), valid)
 
     origin = torch.zeros(batch, 3, dtype=hits.dtype, device=hits.device)
     origin[:, :2] = grid[:, 0, 0, :2]
@@ -159,6 +174,7 @@ def _terrain_from_scanner(scanner, root_pos_w: Tensor, *, resolution: float) -> 
         if valid_mask is None
         else torch.as_tensor(valid_mask, dtype=torch.bool, device=height.device)
     )
+    valid = valid & torch.isfinite(height)
     half_extent = 0.5 * float(side - 1) * float(resolution)
     origin = torch.zeros(batch, 3, dtype=height.dtype, device=height.device)
     origin[:, 0] = root_pos_w[:, 0] - half_extent
@@ -184,6 +200,7 @@ def _expand_geometry_for_collision(geometry: Go2ParallelGeometry) -> Go2Parallel
 
     return Go2ParallelGeometry(
         hip_pos_w=expand_pose(geometry.hip_pos_w),
+        hip_rot_w=expand_pose(geometry.hip_rot_w),
         foot_pos_w=expand_pose(geometry.foot_pos_w),
         knee_pos_w=expand_pose(geometry.knee_pos_w),
         calf_samples_w=expand_samples(geometry.calf_samples_w),
@@ -246,8 +263,127 @@ def policy_geometry_collision_penalty(
     )
 
 
+def live_m1_policy_geometry_collision_event(
+    root_pos_w: Tensor,
+    root_quat_w: Tensor,
+    joint_pos: Tensor,
+    joint_names: Sequence[str],
+    terrain: ParallelismTerrain,
+) -> Tensor:
+    """Return M1 live-policy collision events using named planner joints."""
+
+    backend = get_robot_backend("m1")
+    root_pos = torch.as_tensor(root_pos_w, dtype=torch.float32)
+    root_quat = torch.as_tensor(root_quat_w, dtype=root_pos.dtype, device=root_pos.device)
+    joint = torch.as_tensor(joint_pos, dtype=root_pos.dtype, device=root_pos.device)
+    planner_joint = select_named_joint_state(
+        joint,
+        source_names=tuple(joint_names),
+        selected_names=backend.planner_joint_names,
+    )
+    roll, pitch = extract_roll_pitch_batch(root_quat)
+    yaw = extract_yaw_batch(root_quat)
+    root_rpy = torch.stack((roll, pitch, yaw), dim=-1)
+    geometry = backend.fk(
+        root_pos,
+        root_rpy,
+        planner_joint,
+        capsule_samples=int(backend.cfg.capsule_samples),
+    )
+    expanded_geometry = _expand_geometry_for_collision(geometry)
+    _, collision_bits = backend.collision_mask(terrain, expanded_geometry, backend.cfg)
+    return collision_bits.reshape(collision_bits.shape[0], -1).any(dim=-1).to(dtype=torch.float32)
+
+
+def live_m1_policy_geometry_collision_by_leg(
+    root_pos_w: Tensor,
+    root_quat_w: Tensor,
+    joint_pos: Tensor,
+    joint_names: Sequence[str],
+    terrain: ParallelismTerrain,
+    margin_m: float = 0.0,
+    lookahead_m: float = 0.0,
+) -> Tensor:
+    """Return semantic-obstacle collision bits reduced to ``[batch, 4]`` legs.
+
+    The online teacher uses this one-step-late safety signal to hand the
+    swing to a support leg that is actually touching an obstacle.  Keeping
+    this separate from the scalar reward avoids hiding which leg caused the
+    event and prevents a fixed timer from repeatedly lifting the wrong foot.
+    """
+    backend = get_robot_backend("m1")
+    root_pos = torch.as_tensor(root_pos_w, dtype=torch.float32)
+    root_quat = torch.as_tensor(root_quat_w, dtype=root_pos.dtype, device=root_pos.device)
+    joint = torch.as_tensor(joint_pos, dtype=root_pos.dtype, device=root_pos.device)
+    # Probe the live geometry a short distance along the measured heading.
+    # This is deliberately separate from ``margin_m``: inflating every
+    # collision shape causes the teacher to react to support-ground contacts,
+    # whereas a forward probe detects the obstacle before the wheel reaches
+    # its leading face and keeps the authored clearance unchanged.
+    if float(lookahead_m) > 0.0:
+        yaw = extract_yaw_batch(root_quat)
+        root_pos = root_pos.clone()
+        root_pos[:, 0] = root_pos[:, 0] + float(lookahead_m) * torch.cos(yaw)
+        root_pos[:, 1] = root_pos[:, 1] + float(lookahead_m) * torch.sin(yaw)
+    planner_joint = select_named_joint_state(joint, source_names=tuple(joint_names), selected_names=backend.planner_joint_names)
+    roll, pitch = extract_roll_pitch_batch(root_quat)
+    yaw = extract_yaw_batch(root_quat)
+    geometry = backend.fk(root_pos, torch.stack((roll, pitch, yaw), dim=-1), planner_joint, capsule_samples=int(backend.cfg.capsule_samples))
+    collision_cfg = backend.cfg if float(margin_m) <= 0.0 else dataclass_replace(
+        backend.cfg, collision_margin_m=float(margin_m),
+    )
+    _, bits = backend.collision_mask(terrain, _expand_geometry_for_collision(geometry), collision_cfg)
+    return bits.any(dim=(2, 3))
+
+
+def m1_policy_geometry_collision_penalty(
+    env,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    scanner_cfg: SceneEntityCfg = SceneEntityCfg("semantic_height_scanner"),
+) -> Tensor:
+    """Return the raw M1 live-policy geometry collision event."""
+
+    robot = env.scene[asset_cfg.name]
+    scanner = env.scene[scanner_cfg.name]
+    default_device = torch.as_tensor(robot.data.root_pos_w).device
+    device = torch.device(getattr(env, "device", default_device))
+    root_pos_w = torch.as_tensor(robot.data.root_pos_w, dtype=torch.float32, device=device)
+    pattern_cfg = getattr(getattr(scanner, "cfg", None), "pattern_cfg", None)
+    resolution = float(getattr(pattern_cfg, "resolution", 0.01))
+    terrain = _terrain_from_scanner(scanner, root_pos_w, resolution=resolution)
+    # This reward is specifically for hitting semantic obstacles.  The live
+    # FK collision checker also detects a leg/body intersecting the ground
+    # heightfield, which is useful for planner safety but makes every normal
+    # stance look like an obstacle collision (and invalidates every episode).
+    # Keep ground contacts available to the planner while masking semantic 0
+    # for this M1 episode metric/reward.
+    obstacle_mask = terrain.semantic_id > 0
+    obstacle_terrain = ParallelismTerrain(
+        height_w=torch.where(
+            obstacle_mask,
+            terrain.height_w,
+            torch.full_like(terrain.height_w, -torch.inf),
+        ),
+        semantic_id=terrain.semantic_id,
+        valid_mask=terrain.valid_mask & obstacle_mask,
+        origin_w=terrain.origin_w,
+        yaw_w=terrain.yaw_w,
+        resolution=terrain.resolution,
+    )
+    return live_m1_policy_geometry_collision_event(
+        root_pos_w=root_pos_w,
+        root_quat_w=robot.data.root_quat_w,
+        joint_pos=robot.data.joint_pos,
+        joint_names=tuple(getattr(robot, "joint_names", ())),
+        terrain=obstacle_terrain,
+    )
+
+
 __all__ = [
+    "live_m1_policy_geometry_collision_by_leg",
+    "live_m1_policy_geometry_collision_event",
     "live_policy_geometry_collision_event",
+    "m1_policy_geometry_collision_penalty",
     "parallelism_terrain_from_scan",
     "policy_geometry_collision_penalty",
 ]
