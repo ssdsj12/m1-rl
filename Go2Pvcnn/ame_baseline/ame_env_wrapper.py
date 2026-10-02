@@ -9,6 +9,48 @@ import torch
 from rsl_rl.env import VecEnv
 
 
+M1_FIXED_SMALL_OBSTACLE_LOCAL_XY = (
+    (0.55, 0.20), (1.10, -0.20), (1.65, 0.20),
+    (2.20, -0.20), (2.75, 0.20), (3.30, -0.20),
+)
+
+
+def _m1_fixed_obstacle_proximity_from_foot_xy(
+    foot_xy: torch.Tensor,
+    root_yaw: torch.Tensor,
+    env_origins_xy: torch.Tensor,
+    *,
+    forward_m: float = 0.30,
+    lateral_m: float = 0.16,
+    obstacle_radius_m: float = 0.08,
+    obstacle_local_xy: tuple[tuple[float, float], ...] = M1_FIXED_SMALL_OBSTACLE_LOCAL_XY,
+) -> torch.Tensor:
+    """Return per-leg proximity to the authored runtime M1 blocks.
+
+    The semantic scanner only labels terrain meshes.  The M1 course blocks
+    are runtime kinematic shapes, so their collision geometry must also be
+    exposed to the teacher.  Obstacles are expressed in the current tile's
+    local frame and are projected into each leg's forward/lateral corridor.
+    """
+    if foot_xy.ndim != 3 or foot_xy.shape[-1] != 2:
+        raise ValueError("foot_xy must have shape [B,4,2]")
+    root_yaw = torch.as_tensor(root_yaw, device=foot_xy.device, dtype=foot_xy.dtype).reshape(-1)
+    env_origins_xy = torch.as_tensor(env_origins_xy, device=foot_xy.device, dtype=foot_xy.dtype)
+    if env_origins_xy.shape != (foot_xy.shape[0], 2):
+        raise ValueError("env_origins_xy must have shape [B,2]")
+    if root_yaw.numel() == 1 and foot_xy.shape[0] > 1:
+        root_yaw = root_yaw.expand(foot_xy.shape[0])
+    local = foot_xy.new_tensor(obstacle_local_xy).view(1, 1, -1, 2)
+    obstacle_xy = env_origins_xy[:, None, None, :] + local
+    rel = obstacle_xy - foot_xy[:, :, None, :]
+    heading = torch.stack((root_yaw.cos(), root_yaw.sin()), dim=-1)[:, None, None, :]
+    lateral = torch.stack((-root_yaw.sin(), root_yaw.cos()), dim=-1)[:, None, None, :]
+    forward = (rel * heading).sum(dim=-1)
+    side = (rel * lateral).sum(dim=-1).abs()
+    return ((forward >= 0.0) & (forward <= float(forward_m)) &
+            (side <= float(lateral_m) + float(obstacle_radius_m))).any(dim=-1)
+
+
 class AmeRslRlEnvWrapper(VecEnv):
     _MAX_ABS_REWARD = 1.0e4
 
@@ -67,6 +109,7 @@ class AmeRslRlEnvWrapper(VecEnv):
         self._m1_initial_teacher_fallback_used = torch.zeros_like(self._small_candidate_prev)
         self._m1_short_trigger_seen = torch.zeros_like(self._small_candidate_prev)
         self._m1_short_trigger_clear_steps = torch.zeros_like(self._small_candidate_prev)
+        self._m1_fixed_small_candidate = torch.zeros_like(self._small_candidate_prev)
         self._m1_obstacle_clear_steps = torch.zeros_like(self._m1_teacher_age)
         # A 10 cm obstacle remains in the forward scanner corridor for many
         # low-speed steps. Re-arm only after it has been absent long enough to
@@ -186,7 +229,38 @@ class AmeRslRlEnvWrapper(VecEnv):
                 forward_m=float(os.environ.get("M1_TEACHER_PROXIMITY_FORWARD_M", "0.24")),
                 lateral_m=float(os.environ.get("M1_TEACHER_PROXIMITY_LATERAL_M", "0.09")),
             )
-            reference["collision_leg_mask"] = collision_mask | proximity_mask
+            # The authored M1 obstacles are runtime kinematic shapes and do
+            # not carry the terrain semantic material used by the scanner.
+            # Add their exact per-leg corridor trigger so the teacher lifts
+            # the alternating target foot before contact.
+            from extension.convention import extract_yaw_batch
+            from extension.parallelism.robot_backend import get_robot_backend
+            from extension.parallelism.rl_adapter import select_named_joint_state
+            backend = get_robot_backend("m1")
+            planner_joint = select_named_joint_state(
+                robot.data.joint_pos,
+                source_names=tuple(robot.joint_names),
+                selected_names=backend.planner_joint_names,
+            )
+            yaw = extract_yaw_batch(robot.data.root_quat_w)
+            roll, pitch = extract_roll_pitch_batch(robot.data.root_quat_w)
+            geometry = backend.fk(
+                robot.data.root_pos_w,
+                torch.stack((roll, pitch, yaw), dim=-1),
+                planner_joint,
+                capsule_samples=1,
+            )
+            env_origins = getattr(self.unwrapped.scene, "env_origins", None)
+            if env_origins is None:
+                env_origins = robot.data.root_pos_w
+            fixed_mask = _m1_fixed_obstacle_proximity_from_foot_xy(
+                geometry.foot_pos_w[..., :2], yaw, env_origins[..., :2],
+                forward_m=float(os.environ.get("M1_FIXED_PROXIMITY_FORWARD_M", "0.30")),
+                lateral_m=float(os.environ.get("M1_FIXED_PROXIMITY_LATERAL_M", "0.16")),
+                obstacle_radius_m=float(os.environ.get("M1_FIXED_OBSTACLE_RADIUS_M", "0.08")),
+            )
+            self._m1_fixed_small_candidate = fixed_mask.any(dim=1)
+            reference["collision_leg_mask"] = collision_mask | proximity_mask | fixed_mask
         except Exception:
             # The teacher remains usable if a diagnostic-only live collision
             # query is unavailable during unit tests or scene startup.
@@ -384,7 +458,8 @@ class AmeRslRlEnvWrapper(VecEnv):
     def get_obstacle_presence(self):
         """Return semantic-small and semantic-large masks for crossing metrics."""
         from .m1_obstacle_rewards import m1_obstacle_presence
-        return m1_obstacle_presence(self.unwrapped)
+        small, large = m1_obstacle_presence(self.unwrapped)
+        return small | self._m1_fixed_small_candidate, large
 
     def crossing_metrics_snapshot(self):
         return self.crossing_metrics.snapshot()
@@ -402,6 +477,7 @@ class AmeRslRlEnvWrapper(VecEnv):
         self._m1_initial_teacher_fallback_used.zero_()
         self._m1_short_trigger_seen.zero_()
         self._m1_short_trigger_clear_steps.zero_()
+        self._m1_fixed_small_candidate.zero_()
         self._m1_obstacle_clear_steps.zero_()
         self._small_candidate_prev.zero_()
         self._small_candidate_seen.zero_()

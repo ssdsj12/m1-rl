@@ -91,6 +91,14 @@ def test_m1_layout_policy_requires_foothold_clearance():
     assert "min_spacing_clearance_m = (0.45,)" in source
 
 
+def test_m1_teacher_has_runtime_course_obstacle_trigger():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "ame_baseline" / "ame_env_wrapper.py").read_text(encoding="utf-8")
+    assert "_m1_fixed_obstacle_proximity_from_foot_xy" in source
+    assert "reference[\"collision_leg_mask\"] = collision_mask | proximity_mask | fixed_mask" in source
+    assert "M1_FIXED_SMALL_OBSTACLE_LOCAL_XY" in source
+
+
 def test_generic_course_keeps_legacy_small_obstacle_height():
     from extension.semantic_course import SMALL_OBSTACLE_HEIGHT
     assert SMALL_OBSTACLE_HEIGHT == 0.16
