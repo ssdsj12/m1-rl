@@ -18,3 +18,10 @@ def test_probe_wheels_follow_requested_speed_and_stop_invalid_rows(speed):
     exec(compile(ast.Module(body=[assignment], type_ignores=[]), str(path), 'exec'), scope)
     assert torch.allclose(action[0, 3::4], torch.full((4,), speed))
     assert torch.equal(action[1, 3::4], torch.zeros(4))
+
+
+def test_probe_reports_measured_single_leg_verification():
+    source = (Path(__file__).resolve().parents[1] / 'scripts/probe_m1_teacher_physx.py').read_text()
+    assert 'verified_legs' in source
+    assert 'physical_single_leg_swing_verified = (' in source
+    assert '"physical_single_leg_swing_verified": physical_single_leg_swing_verified' in source

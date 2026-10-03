@@ -200,6 +200,41 @@ try:
         if bool(done.any().item()):
             wrapped.reset()
 
+    # Verify the physical contract from measured force/geometry samples, not
+    # from the configured leg sequence alone.  Each leg must unload, reach a
+    # wheel-bottom clearance of obstacle-top + 5 cm, and regain contact after
+    # that clearance while the command changes only one leg at a time.
+    verified_legs = []
+    for leg in range(4):
+        leg_samples = [
+            sample for sample in samples
+            if sample["serial_selected_leg"] == leg
+            and sample["teacher_valid"]
+            and sample["commanded_leg_count"] == 1
+        ]
+        unloaded = any(
+            sample["actual_wheel_net_force_w_n"] is not None
+            and sum(value * value for value in sample["actual_wheel_net_force_w_n"][leg]) ** 0.5 <= 10.0
+            for sample in leg_samples
+        )
+        clear_indices = [
+            index for index, sample in enumerate(leg_samples)
+            if sample["wheel_z_m"][leg] - float(M1_WHEEL_RADIUS_M) >= 0.15
+        ]
+        cleared = bool(clear_indices)
+        touchdown = False
+        if clear_indices:
+            for sample in leg_samples[clear_indices[-1] + 1:]:
+                force = sample["actual_wheel_net_force_w_n"]
+                if force is not None:
+                    force_norm = sum(value * value for value in force[leg]) ** 0.5
+                    touchdown |= force_norm > 10.0 and sample["tilt_rad"] <= float(os.environ.get("M1_STRICT_MAX_TILT_RAD", "0.30"))
+        verified_legs.append(unloaded and cleared and touchdown)
+    physical_single_leg_swing_verified = (
+        max_swing_legs <= 1
+        and set(serial_sequence_trace) >= {0, 1, 2, 3}
+        and all(verified_legs)
+    )
     print("M1_TEACHER_PHYSX_PROBE " + json.dumps({
         "steps": int(args.num_steps),
         "wheel_radius_m": float(M1_WHEEL_RADIUS_M),
@@ -208,7 +243,8 @@ try:
         "teacher_valid_steps": valid_steps,
         "max_commanded_leg_count": max_swing_legs,
         "serial_sequence_trace": serial_sequence_trace,
-        "physical_single_leg_swing_verified": False,
+        "physical_single_leg_swing_verified": physical_single_leg_swing_verified,
+        "verified_legs": verified_legs,
         "max_wheel_bottom_m": max_wheel_bottom_m,
         "max_tilt_rad": max_tilt_rad,
         "geometry_collision_steps": geometry_collision_steps,
