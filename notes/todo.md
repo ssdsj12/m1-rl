@@ -1,4 +1,40 @@
-## 2026-10-09 latest: actual lift / WBC handoff diagnosis
+## 2026-10-09 upload snapshot: near-contact helpers
+
+- T306/contact-transition-consistency: retain unloaded near-contact geometry and
+  build material-point gap inequalities at every preview substep. Fresh CPU
+  regression:215 passed. Helpers are not yet wired into live control; physical
+  lift/crossing acceptance remains open. Snapshot requested for GitHub m1-10-9.
+  [Upload verification](log/2026-10-09-m1-current-upload.md).
+
+## 2026-10-09 latest: approaching patch / release semantics
+
+- T306/contact-transition-consistency: raw zero-force FAR wheel point already
+  approaches before impact, but `contacts()` filters it. Old-point separation
+  and new-point approach confirmed; immediate release still infeasible under
+  original slew. Next retain near-contact geometry and validate pre-impact
+  control, not point deletion or rate relaxation.
+  [Native evidence](log/2026-10-09-m1-wbc-patch-transition-history.md).
+- Released-point constraint incorrectly used moving-geometry acceleration;
+  corrected to material-point bias,200WBCtests. Attached live baseline unchanged,
+  no physical release/crossing acceptance or long training.
+  [Regression](log/2026-10-09-m1-wbc-released-material-bias.md).
+
+## 2026-10-09 previous: WBC braking allocation
+
+- T306/execution-physical/braking-allocation:294ms settled handoff verified,
+  but default500tick support failed at498(speed.08015m/s). Exact frozen LP at
+  native294/400/700 proves requested braking outside current torque-slew
+  feasible interval. [Support](log/2026-10-09-m1-wbc-settled-support.md),
+  [LP/task-ramp](log/2026-10-09-m1-wbc-braking-feasibility.md).
+- Opt-in base-first/joint-second diagnostic passes197WBC CPUtests; native
+  speed stays<=.00624m/s but stops on inconsistent contact equations at471.
+  Default/training unchanged. Contact transition diagnosis remains OPEN;
+  failed frame5points/[1,2,1,1] makes full contact+accelbox infeasible via
+  independent LP; retain geometry and implement verified contact mode transition.
+  no physical crossing or training acceptance.
+  [Priority comparison](log/2026-10-09-m1-wbc-base-priority.md).
+
+## 2026-10-09 previous: actual lift / WBC handoff diagnosis
 
 - T306/execution-physical: compliant PREPARE200steps/4s is8/8ready, superseding
   older400step/8s acceptance wording. PD unload0/8; most nominal lift is lost

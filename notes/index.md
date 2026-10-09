@@ -1,5 +1,13 @@
 # TestPvcnnWithIsaacsim Notes Index
 
+当前接触转换证据：[接近中的零受力点被过滤](log/2026-10-09-m1-wbc-patch-transition-history.md)；
+[释放点预测改用材料点加速度](log/2026-10-09-m1-wbc-released-material-bias.md)，200项WBC测试。
+直接释放旧点仍不满足原力矩约束，不能上线或启动长训。
+
+M1 最新执行证据：[WBC 分层制动与接触转换诊断](log/2026-10-09-m1-wbc-base-priority.md)。
+197项WBC测试；显式诊断分层抑制倒向加速，但多点接触转换仍使原约束不可行。
+尚未完成跨越，不启动长训；原默认控制和 GPU7 占位程序未变。
+
 `notes/` 现在按当前仓库的真实工作主线组织，并且明确建立三种关系：
 
 - 总索引关系：`notes/index.md` 是统一入口

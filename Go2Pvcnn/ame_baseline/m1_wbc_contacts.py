@@ -2,6 +2,30 @@
 import numpy as np
 
 
+def contact_inventory(*, points, normals, owners, gaps, normal_forces,
+                      load_threshold=1e-3):
+    """Retain native near-contact geometry independently of measured loading.
+
+    A zero-force point can be approaching the surface. It is not discarded or
+    labelled attached. Only geometrically coincident reports are merged;
+    distinct moment arms survive. The loaded mask is evidence, not a mode.
+    """
+    force = np.asarray(normal_forces, dtype=np.float64)
+    if (force.ndim != 1 or force.shape != (len(points),)
+            or not np.isfinite(force).all() or np.any(force < 0)
+            or not np.isfinite(load_threshold) or load_threshold < 0):
+        raise ValueError('finite nonnegative aligned normal force and threshold required')
+    result = deduplicate_contact_points(points=points, normals=normals,
+        owners=owners, gaps=gaps)
+    force = np.asarray([force[indices].sum() for indices in result['source_indices']],
+                       dtype=np.float64)
+    if not np.isfinite(force).all():
+        raise ValueError('nonfinite merged normal force')
+    result['normal_forces'] = force
+    result['measured_loaded'] = force > load_threshold
+    return result
+
+
 def deduplicate_contact_points(*, points, normals, owners, gaps,
                                position_tolerance=1e-7,
                                normal_tolerance=1e-6,

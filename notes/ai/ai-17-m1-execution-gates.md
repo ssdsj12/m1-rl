@@ -1,5 +1,21 @@
 # M1 execution gates contract
 
+Contact model correction: attached acceleration uses moving-geometry total
+bias; released unilateral nonpenetration uses material-point bias. Both fields
+remain available; `constraint_bias` identifies the one actually used perpoint.
+Released force capacity0, geometry/order retained.200WBCtests, no actual
+released-mode acceptance. Native history identifies filtered zero-force
+approaching points; immediate release still infeasible at original slew.
+[Evidence](../log/2026-10-09-m1-wbc-released-material-bias.md).
+
+Support diagnostic update: `pd_handoff_acceleration_contract(base_priority=True)`
+splits sixbase tracking before16joint damping, preserving every original hard
+bound. Only isolated probe `--base_priority` opts in; default and train unchanged.
+197WBCtests. Native500tick comparison suppresses wrong-way acceleration
+(maxspeed.006235m/s) but stops at471 on contact equation inconsistency.
+Not accepted for UNLOAD/lift/crossing; contact transition remains OPEN.
+[Evidence](../log/2026-10-09-m1-wbc-base-priority.md).
+
 Latest physical evidence: PREPARE deadline restored to200steps/4s,8/8ready;
 PD-onlyUNLOAD0/8. Existing selected-leg world-height correction aborts atstep19,
 0/8complete. Body-pose drift plus joint tracking cancels most commanded rise.

@@ -19,6 +19,8 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--settle_steps", type=int, default=500)
 parser.add_argument("--stable_frames", type=int, default=5)
 parser.add_argument("--hold_steps", type=int, default=500)
+parser.add_argument("--base_priority", action="store_true",
+                    help="diagnostic only: prioritize base tracking over joint damping")
 parser.add_argument("--snapshot_only", action="store_true",
                     help="capture fresh native QP inputs after PD settle; do not apply WBC")
 parser.add_argument("--tangent_velocity_time_constant", type=float, default=0.02,
@@ -353,7 +355,8 @@ try:
         upper=np.minimum(limits, prior_pd + 20.0 * cfg.sim.dt))
     handoff_bounds = qp_effort_interior_bounds(bounds=handoff_hard_bounds, margin=1e-5)
     weight = float(native.get_masses()[0].sum().item() * 9.81)
-    handoff_acceleration_contract = pd_handoff_acceleration_contract()
+    handoff_acceleration_contract = pd_handoff_acceleration_contract(
+        base_priority=args.base_priority)
     if args.snapshot_only:
         rotations=matrix_from_quat(robot.data.body_link_quat_w[0]).detach().cpu().numpy()
         kin=kinematic_bias(kinematic_model,robot.joint_names,robot.body_names,rotations,
@@ -486,7 +489,8 @@ try:
         target_qdd = support_damping_target(
             root_com_velocity=root_com_velocity_before,
             joint_velocity=joint_velocity)
-        tick_acceleration_contract = pd_handoff_acceleration_contract(target_qdd=target_qdd)
+        tick_acceleration_contract = pd_handoff_acceleration_contract(
+            target_qdd=target_qdd, base_priority=args.base_priority)
         solution = solve_wbc(
             mass=snapshot["mass"][0].double().cpu().numpy(),
             bias=snapshot["bias"][0].double().cpu().numpy(),

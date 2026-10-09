@@ -2,6 +2,51 @@
 
 ## Current State
 
+2026-10-09 user-requested current-version upload: child contact-transition-consistency
+now includes contact_inventory (retains zero-force geometry without inventing
+support) and near_contact_gap_constraints (material-point semiimplicit preview
+at every substep, acceleration inequalities only). Fresh215WBC tests pass.
+Not integrated into live control and not physical crossing acceptance. Native
+capture794230 was still running at upload precheck; no result claimed here.
+Source baseline eaa2c30; publication preserves GitHub parent951c6e4, no force push.
+[Verification](../log/2026-10-09-m1-current-upload.md).
+
+2026-10-09 contact-transition-consistency progress: raw history proves FAR
+new point exists while force0 and gap decreases64.79->46.65->28.14um before
+impact. Current strength<=.001filter discards it. Attransition oldvn+8.04mm/s,
+newvn-5.81mm/s; all-attached is invalid. However simply releasing eitherpoint
+is also infeasible with full dynamics/original20Nm/s slew; never applied.
+Next dependency: retain near-contact geometry and verify anticipatory/impact
+mode feasibility, preserving every point's wrench/nonpenetration.
+Child released-material-bias fixed byTDD: transport bias only attached,
+material bias released;200WBCtests pass. All-attached live behavior unchanged.
+No active native job or train; GPU7 placeholder1768831 untouched.
+[Native evidence](../log/2026-10-09-m1-wbc-patch-transition-history.md),
+[model correction](../log/2026-10-09-m1-wbc-released-material-bias.md).
+Current baseline/lastverified before this change:c90bb1d; prior uploaded
+snapshot remains951c6e4. Physical release/lift/roll/landing/crossing still OPEN.
+
+2026-10-09 child execution-physical/handoff-transient/braking-allocation OPEN:
+native clock now verified; stronger294ms settle does not prevent default
+support runaway (500tick probe fails498,speed.080146m/s).
+Full frozen LP atnative294/400/700 confirms current one-step braking target
+infeasible under original20Nm/s slew. Frozen30step base-first ramp reaches
+target whereas equal22DOF objective does not. This motivates diagnostic-only
+base-first priority, not a slew increase or claimed physical rollout.
+New opt-in `--base_priority`, default off,197WBCtests pass. Native candidate
+maxspeed.006235,last.003269m/s, but contact equations fail atfeedback471.
+New child contact-transition-consistency must resolve actual rejected
+multi-contact equations before lift/roll/landing. Do not restart long train.
+Captured native764 failure has5points/[1,2,1,1] perwheel. Contact-only full
+equations plus originalaccelbox independently infeasible; normal-only and
+tangent-only separately feasible. Current all-loaded-points-attached model
+requires a verified patch transition; do not silently delete a point.
+[Settled support](../log/2026-10-09-m1-wbc-settled-support.md),
+[feasible-set audit](../log/2026-10-09-m1-wbc-braking-feasibility.md),
+[priority experiment](../log/2026-10-09-m1-wbc-base-priority.md).
+Latest feature ref223a0ec; candidate codex/m1-contact-crossing uncommitted.
+Uploaded snapshot951c6e4 onGitHub m1-10-9 remains the prior exact223a0ec tree.
+
 2026-10-09 child T306/execution-physical/handoff-transient OPEN: native snapshot
 replay changes next action. Same complete contact model: loosening only torque
 slew offline changes qdd_x+1.326 to-0.190m/s2; zeroing only normal RHS leaves

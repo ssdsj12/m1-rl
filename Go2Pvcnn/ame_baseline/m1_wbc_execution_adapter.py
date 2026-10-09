@@ -39,20 +39,25 @@ _DYNAMICS_RESIDUAL_LIMIT = 0.02
 _NATIVE_EFFORT_READBACK_TOLERANCE_NM = 1e-6
 
 
-def pd_handoff_acceleration_contract(*, target_qdd=None):
+def pd_handoff_acceleration_contract(*, target_qdd=None, base_priority=False):
     """Bound acceleration and ask the QP to realize a validated target.
 
     The limits are a hard safety envelope for the first explicit-WBC tick;
     a hierarchical task asks the QP to realize target_qdd as closely as the
     measured effort-slew and contact constraints permit. Default is zero.
+    The isolated support diagnostic may prioritize the six base coordinates
+    over joint damping; it does not change any hard bound or authorize lift.
     """
     limits = np.r_[np.full(3, 2.0), np.full(3, 8.0), np.full(16, 100.0)]
     target = np.zeros(22) if target_qdd is None else np.asarray(target_qdd, dtype=float)
     if (target.shape != (22,) or not np.isfinite(target).all()
             or np.any(np.abs(target) > limits)):
         raise ValueError('target acceleration must be finite and inside the hard acceleration envelope')
-    return dict(accel_lower=-limits, accel_upper=limits,
-                tasks=((np.eye(22), target.copy(), np.ones(22)),))
+    tasks = ((np.eye(22), target.copy(), np.ones(22)),)
+    if base_priority:
+        tasks = ((np.eye(22)[:6], target[:6].copy(), np.ones(6)),
+                 (np.eye(22)[6:], target[6:].copy(), np.ones(16)))
+    return dict(accel_lower=-limits, accel_upper=limits, tasks=tasks)
 
 
 def _numpy(value, name):

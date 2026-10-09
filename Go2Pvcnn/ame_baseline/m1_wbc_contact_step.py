@@ -4,6 +4,38 @@ from ame_baseline.m1_wbc_modes import contact_mode_constraints
 from ame_baseline.m1_wbc_transport import contact_acceleration_bias
 
 
+def near_contact_gap_constraints(*, jac, normals, material_bias, velocity,
+                                 gap, dt, preview_steps):
+    """Frozen-state, constant-acceleration gap preview for unloaded points.
+
+    Enforces nonnegative semiimplicit gap at EVERY predicted substep. This
+    returns acceleration inequalities only, never support forces or an attached
+    mode. Fresh geometry/dynamics and a new solve are required on each real tick;
+    this local preview is not a certificate for future changing geometry.
+    """
+    jac,normals,material_bias,velocity,gap=[np.asarray(v,dtype=np.float64)
+        for v in (jac,normals,material_bias,velocity,gap)]
+    if (gap.ndim!=1 or jac.shape!=(len(gap),3,22)
+            or any(v.shape!=(len(gap),3) for v in (normals,material_bias,velocity))
+            or any(not np.isfinite(v).all() for v in (jac,normals,material_bias,velocity,gap))
+            or not np.isfinite(dt) or dt<=0 or type(preview_steps) is not int
+            or not 1<=preview_steps<=1000):
+        raise ValueError('finite aligned point state, positive dt and 1..1000 preview steps required')
+    norm=np.linalg.norm(normals,axis=1)
+    if not np.allclose(norm,1.,atol=1e-4,rtol=0):
+        raise ValueError('unit contact normals required')
+    normals=normals/norm[:,None]
+    vn=np.einsum('ki,ki->k',normals,velocity)
+    bn=np.einsum('ki,ki->k',normals,material_bias)
+    times=np.arange(1,preview_steps+1,dtype=np.float64)*dt
+    coefficient=.5*times*(times+dt)
+    lower=np.max(-(gap[None,:]+times[:,None]*vn)/coefficient[:,None]-bn,axis=0)
+    if not np.isfinite(lower).all():
+        raise ValueError('nonfinite gap preview bound')
+    return dict(separation_matrix=np.einsum('ki,kij->kj',normals,jac),
+                separation_lower=lower)
+
+
 def project_contact_rows_to_local_frames(*, jac, frames, rhs):
     """Project world contact acceleration equations into their local bases."""
     jac = np.asarray(jac, dtype=np.float64)
@@ -84,8 +116,9 @@ def rolling_contact_step_constraints(*,jac,frames,com_bias,angular_bias,omega,
     moving over the static terrain, not the velocity of the wheel material
     currently at that point. The transport term is required for rolling wheels;
     caller must supply it from a verified surface/shape model rather than a
-    differenced contact-patch identifier. Released points retain the existing
-    unilateral normal separation constraints.
+    differenced contact-patch identifier. Released points retain unilateral
+    separation constraints for the material point itself, not the migrating
+    geometric support location.
     """
     jac=np.asarray(jac,dtype=np.float64)
     frames=np.asarray(frames,dtype=np.float64)
@@ -94,8 +127,10 @@ def rolling_contact_step_constraints(*,jac,frames,com_bias,angular_bias,omega,
     transported=contact_acceleration_bias(com_bias=com_bias,
         angular_bias=angular_bias,omega=omega,arm=arm,
         material_velocity=material_velocity,geometry_velocity=geometry_velocity)
+    constraint_bias=np.where(attached[:,None],transported['total_bias'],
+                             transported['material_bias'])
     result=contact_step_constraints(jac=jac,frames=frames,
-        bias=transported['total_bias'],velocity=velocity,gap=gap,
+        bias=constraint_bias,velocity=velocity,gap=gap,
         attached=attached,normal_max=normal_max,dt=dt,
         tangent_velocity_time_constant=tangent_velocity_time_constant)
     rhs=np.asarray(result['contact_rhs'],dtype=np.float64)
@@ -105,6 +140,7 @@ def rolling_contact_step_constraints(*,jac,frames,com_bias,angular_bias,omega,
     result['transport_bias']=transported['transport_bias']
     result['material_bias']=transported['material_bias']
     result['total_bias']=transported['total_bias']
+    result['constraint_bias']=constraint_bias
     return result
 
 
