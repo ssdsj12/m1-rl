@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-REPO_ROOT="${REPO_ROOT:-/home/hexinkun/m1_rl}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-${REPO_ROOT}/logs/rsl_rl/m1_cross_large_complex_ame}"
 LOG_DIR="${LOG_DIR:-${REPO_ROOT}/run_logs}"
 STATE_DIR="${STATE_DIR:-${LOG_DIR}/m1_ame_1024_supervisor_state}"
@@ -14,16 +15,19 @@ CHECKPOINT_PYTHON="${CHECKPOINT_PYTHON:-/home/hexinkun/miniconda3/envs/m1/bin/py
 CHECKPOINT_VALIDATOR="${CHECKPOINT_VALIDATOR:-}"
 INITIAL_CHECKPOINT="${INITIAL_CHECKPOINT:-}"
 EXPECTED_AME_SIGNATURE="${EXPECTED_AME_SIGNATURE:-ame_xyz_semantic_v1_c6_s16_mha64_h16}"
-EXPECTED_AME_ACTOR_OBS="${EXPECTED_AME_ACTOR_OBS:-1585}"
-EXPECTED_AME_CRITIC_OBS="${EXPECTED_AME_CRITIC_OBS:-1588}"
+EXPECTED_AME_ACTOR_OBS="${EXPECTED_AME_ACTOR_OBS:-1589}"
+EXPECTED_AME_CRITIC_OBS="${EXPECTED_AME_CRITIC_OBS:-1592}"
 EXPECTED_AME_ACTIONS="${EXPECTED_AME_ACTIONS:-16}"
 TARGET_ITERATIONS="${TARGET_ITERATIONS:-10000}"
 NUM_ENVS="${NUM_ENVS:-1024}"
 DEVICE="${DEVICE:-cuda:4}"
-SAVE_INTERVAL="${SAVE_INTERVAL:-10}"
+SAVE_INTERVAL="${SAVE_INTERVAL:-100}"
 KEEP_STD="${KEEP_STD:-1}"
 STALL_TIMEOUT_SECONDS="${STALL_TIMEOUT_SECONDS:-300}"
 STARTUP_GRACE_SECONDS="${STARTUP_GRACE_SECONDS:-180}"
+# Saving every 100 updates is independent of the per-iteration heartbeat.
+# Fail a live-but-not-saving run separately, with room for slow collections.
+CHECKPOINT_TIMEOUT_SECONDS="${CHECKPOINT_TIMEOUT_SECONDS:-3600}"
 WATCH_INTERVAL_SECONDS="${WATCH_INTERVAL_SECONDS:-15}"
 RESTART_DELAY_SECONDS="${RESTART_DELAY_SECONDS:-10}"
 TERM_GRACE_SECONDS="${TERM_GRACE_SECONDS:-15}"
@@ -234,6 +238,46 @@ discover_attempt_lineage() {
   add_lineage_dir "${run_dir}"
 }
 
+watchdog_observe_progress() {
+  local observed_at="$1" logged_iteration candidate
+  candidate="${current_iteration}"
+  # Runner prints this header after completing the update. Parse only this
+  # attempt's actual iteration records, not mtime, repeated status, or total
+  # target iterations. Retaining the maximum also rejects reordered output.
+  logged_iteration="$(awk '
+    /Learning iteration [0-9]+\/[0-9]+/ {
+      line = $0
+      sub(/^.*Learning iteration /, "", line)
+      sub(/\/.*$/, "", line)
+      if (!seen || line + 0 > highest) highest = line + 0
+      seen = 1
+    }
+    END { if (seen) printf "%.0f\n", highest }
+  ' "${ATTEMPT_LOG}" 2>/dev/null)" || logged_iteration=""
+  if [[ "${logged_iteration}" =~ ^[0-9]+$ ]] && (( logged_iteration > candidate )); then
+    candidate="${logged_iteration}"
+  fi
+  if (( candidate > last_logged_iteration )); then
+    last_logged_iteration="${candidate}"
+    last_progress_at="${observed_at}"
+  fi
+  return 0
+}
+
+watchdog_failure_reason() {
+  local observed_at="$1"
+  (( observed_at - started_at >= STARTUP_GRACE_SECONDS )) || return 1
+  if (( observed_at - last_progress_at >= STALL_TIMEOUT_SECONDS )); then
+    printf 'iteration\n'
+    return 0
+  fi
+  if (( observed_at - last_checkpoint_at >= CHECKPOINT_TIMEOUT_SECONDS )); then
+    printf 'checkpoint\n'
+    return 0
+  fi
+  return 1
+}
+
 process_group_has_live_members() {
   local pgid="$1"
   [[ "${pgid}" =~ ^[0-9]+$ ]] || return 1
@@ -346,6 +390,7 @@ main() {
   local selected checkpoint current_iteration current_next goal remaining
   local started_at last_progress_at last_iteration last_next stalled now
   local new_selected new_checkpoint new_iteration new_next rc attempt_id
+  local last_checkpoint_at last_logged_iteration stall_reason
 
   if ! [[ "${TARGET_ITERATIONS}" =~ ^[1-9][0-9]*$ ]]; then
     printf 'SUPERVISOR_ERROR %s invalid TARGET_ITERATIONS=%s\n' "$(date -Is)" "${TARGET_ITERATIONS}" >&2
@@ -397,6 +442,8 @@ main() {
     fi
     started_at="$(date +%s)"
     last_progress_at="${started_at}"
+    last_checkpoint_at="${started_at}"
+    last_logged_iteration="${current_iteration}"
     last_iteration="${current_iteration}"
     last_next="${current_next}"
     stalled=0
@@ -414,15 +461,15 @@ main() {
           current_next="${new_next}"
           last_iteration="${new_iteration}"
           last_next="${new_next}"
-          last_progress_at="${now}"
+          last_checkpoint_at="${now}"
           persist_current_checkpoint "${checkpoint}"
           log_event "CHECKPOINT_PROGRESS $(date -Is) pid=${TRAIN_PID} iteration=${last_iteration} next_iteration=${last_next} checkpoint=${checkpoint}"
         fi
       fi
 
-      if (( now - started_at >= STARTUP_GRACE_SECONDS )) \
-        && (( now - last_progress_at >= STALL_TIMEOUT_SECONDS )); then
-        log_event "STALL_DETECTED $(date -Is) pid=${TRAIN_PID} pgid=${TRAIN_PGID} last_iteration=${last_iteration} no_checkpoint_progress_seconds=$((now - last_progress_at))"
+      watchdog_observe_progress "${now}"
+      if stall_reason="$(watchdog_failure_reason "${now}")"; then
+        log_event "STALL_DETECTED $(date -Is) pid=${TRAIN_PID} pgid=${TRAIN_PGID} reason=${stall_reason} last_iteration=${last_logged_iteration} last_checkpoint_iteration=${last_iteration} no_iteration_progress_seconds=$((now - last_progress_at)) no_checkpoint_progress_seconds=$((now - last_checkpoint_at))"
         stalled=1
         terminate_training
         break

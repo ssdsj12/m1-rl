@@ -314,6 +314,9 @@ class OnPolicyRunner:
                                     neginf=-1.0,
                                 ).clamp(-1.0, 1.0)
                                 teacher_valid = teacher_valid & teacher_action_finite
+                                teacher_reference_valid = getattr(
+                                    self.env, "_m1_teacher_reference_valid", teacher_valid
+                                ).to(device=actions.device, dtype=torch.bool) & teacher_valid
                                 use_teacher = teacher_valid & (torch.rand(actions.shape[0], device=actions.device) < ratio)
                                 # Mark teacher-controlled transitions so the
                                 # PPO actor loss does not treat off-policy
@@ -322,7 +325,7 @@ class OnPolicyRunner:
                                 self.alg.transition.ppo_active = (~use_teacher).to(
                                     dtype=actions.dtype
                                 )
-                                m1_teacher_valid_count += int(teacher_valid.sum().item())
+                                m1_teacher_valid_count += int(teacher_reference_valid.sum().item())
                                 m1_teacher_applied_count += int(use_teacher.sum().item())
                                 m1_teacher_saturated_count = int(m1_teacher_saturated_count + (use_teacher & (teacher_action.abs().amax(dim=-1) >= 0.999)).sum().item())
                                 m1_teacher_total_count += int(actions.shape[0])
@@ -334,10 +337,15 @@ class OnPolicyRunner:
                                 # velocity commands.
                                 leg_mask = torch.ones(actions.shape[-1], dtype=torch.bool, device=actions.device)
                                 leg_mask[3::4] = False
-                                blend = min(max(float(os.environ.get("M1_MPC_TEACHER_BLEND", "0.50")), 0.0), 1.0)
-                                leg_teacher = actions + blend * (teacher_action - actions)
+                                # The probability ratio chooses control ownership.
+                                # Do not interpolate a certified Cartesian lift
+                                # with an unrelated student joint configuration:
+                                # 50% of the IK angles is not 50% clearance and
+                                # previously turned a 20 cm target into 8.8 cm.
+                                # Legacy M1_MPC_TEACHER_BLEND is intentionally
+                                # not an actuator-space knob anymore.
                                 teacher_blended = torch.where(
-                                    leg_mask.unsqueeze(0), leg_teacher, actions,
+                                    leg_mask.unsqueeze(0), teacher_action, actions,
                                 )
                                 # A valid crossing plan must also reach the
                                 # obstacle.  Early-stage M1 policies were
@@ -348,8 +356,10 @@ class OnPolicyRunner:
                                 # commanded forward speed; lateral/yaw wheels
                                 # remain policy-controlled for stability.
                                 if os.environ.get("M1_TEACHER_FORWARD_WHEELS", "1") == "1":
-                                    command = self.env.unwrapped.command_manager.get_command("base_velocity")
-                                    wheel_command = command[:, 0].to(actions.device).clamp(-1.0, 1.0)
+                                    # Consume the command from the same teacher
+                                    # frame as the leg targets. The wrapper has
+                                    # already advanced its phase by this point.
+                                    wheel_command = teacher_action[:, ~leg_mask].clone()
                                     # Slow the approach while a semantic small
                                     # obstacle is in the corridor.  A full
                                     # command-speed push makes the first leg
@@ -362,11 +372,13 @@ class OnPolicyRunner:
                                             small_candidate, _ = get_presence()
                                             approach_speed = float(os.environ.get("M1_TEACHER_APPROACH_SPEED", "0.12"))
                                             wheel_command = torch.where(
-                                                small_candidate.to(device=actions.device, dtype=torch.bool),
+                                                small_candidate.to(device=actions.device, dtype=torch.bool).unsqueeze(-1),
                                                 wheel_command.clamp(min=-approach_speed, max=approach_speed),
                                                 wheel_command,
                                             )
-                                    teacher_blended[:, ~leg_mask] = wheel_command[:, None]
+                                    # The optional approach cap may reduce speed,
+                                    # but must not reconstruct/accelerate the phase.
+                                    teacher_blended[:, ~leg_mask] = wheel_command
                                 actions = torch.where(use_teacher.unsqueeze(-1), teacher_blended, actions)
 
                                 # Keep an imitation target for only the rows
@@ -384,10 +396,10 @@ class OnPolicyRunner:
                                 # while the environment received command speed.
                                 teacher_target[:, wheel_mask] = teacher_blended[:, wheel_mask]
                                 self.alg.transition.privileged_actions = teacher_target
-                                self.alg.transition.imitation_weight = use_teacher.to(
+                                self.alg.transition.imitation_weight = (use_teacher & teacher_reference_valid).to(
                                     dtype=actions.dtype
                                 )
-                                self.alg.transition.plan_valid = teacher_valid.to(
+                                self.alg.transition.plan_valid = teacher_reference_valid.to(
                                     dtype=actions.dtype
                                 )
 
@@ -584,6 +596,10 @@ class OnPolicyRunner:
         # The former progress-and-reward proxy counted any tiny positive lift.
         crossing_success = float(crossing_snapshot.get("crossing_success_rate", float("nan")))
         self.writer.add_scalar("Metrics/crossing_success_rate", crossing_success, locs["it"])
+        strict_crossing_success = float(crossing_snapshot.get("strict_crossing_success_rate", float("nan")))
+        self.writer.add_scalar("Metrics/strict_crossing_success_rate", strict_crossing_success, locs["it"])
+        strict_obstacle_success = float(crossing_snapshot.get("strict_obstacle_crossing_success_rate", float("nan")))
+        self.writer.add_scalar("Metrics/strict_obstacle_crossing_success_rate", strict_obstacle_success, locs["it"])
         if locs.get("loss_dict") is not None:
             metric_prefix = "AMP" if self.training_type == "amp" else "Distillation"
             for key, value in locs["loss_dict"].items():
@@ -629,6 +645,8 @@ class OnPolicyRunner:
         log_string += (
             f"{'M1 MPC teacher ratio:':>{pad}} {teacher_ratio:.3f}\n"
             f"{'Crossing success rate:':>{pad}} {crossing_success:.3f}\n"
+            f"{'Strict crossing success rate:':>{pad}} {strict_crossing_success:.3f}\n"
+            f"{'Strict obstacle crossing rate:':>{pad}} {strict_obstacle_success:.3f}\n"
         )
         log_string += (
             f"""{'-' * width}\n"""

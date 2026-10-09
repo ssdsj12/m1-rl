@@ -6,6 +6,7 @@ import torch
 from torch import Tensor
 
 from extension.convention import euler_to_quat_batch
+from extension.parallelism.kinematics import rpy_to_rotation_matrix
 from extension.reference.cache import ReferenceTrajectoryCache
 
 
@@ -26,7 +27,10 @@ def mpc_result_to_reference_cache(result) -> ReferenceTrajectoryCache:
     phase_index = phase_row.unsqueeze(0).expand(num_envs, horizon).contiguous()
     valid_mask = torch.ones((num_envs, horizon), dtype=torch.bool, device=root_pos_w.device)
     foot_pos = _as_device_tensor(result.foot_pos, like=root_pos_w)
-    foot_pos_root = foot_pos - root_pos_w.unsqueeze(2)
+    foot_pos_root = torch.einsum(
+        "...ji,...lj->...li", rpy_to_rotation_matrix(result.root_rpy),
+        foot_pos - root_pos_w.unsqueeze(2),
+    )
     return ReferenceTrajectoryCache(
         root_pos_w=root_pos_w,
         root_quat_w=_as_device_tensor(root_quat_w, like=root_pos_w),
@@ -62,7 +66,10 @@ def standstill_cache_from_state(states, *, horizon: int) -> ReferenceTrajectoryC
     foot_pos_w = torch.as_tensor(states.foot_pos, device=root_pos.device).contiguous()
     num_envs = int(root_pos.shape[0])
     phase_row = torch.arange(int(horizon), dtype=torch.long, device=root_pos.device)
-    foot_pos_root = foot_pos_w - root_pos.unsqueeze(1)
+    foot_pos_root = torch.einsum(
+        "...ji,...lj->...li", rpy_to_rotation_matrix(root_rpy),
+        foot_pos_w - root_pos.unsqueeze(1),
+    )
     return ReferenceTrajectoryCache(
         root_pos_w=root_pos.unsqueeze(1).expand(num_envs, int(horizon), 3).contiguous(),
         root_quat_w=root_quat.unsqueeze(1).expand(num_envs, int(horizon), 4).contiguous(),

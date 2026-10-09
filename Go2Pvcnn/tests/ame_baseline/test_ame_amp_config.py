@@ -50,3 +50,8 @@ def test_shared_ppo_values_match_ame_baseline():
         "desired_kl",
     )
     assert all(amp["algorithm"][key] == ame["algorithm"][key] for key in shared)
+
+
+def test_m1_amp_experiment_is_mounted_to_trajectory_manager():
+    from extension.trajectory_manager_factory import TRAJECTORY_MANAGER_EXPERIMENTS
+    assert "m1_cross_large_complex_ame_amp" in TRAJECTORY_MANAGER_EXPERIMENTS

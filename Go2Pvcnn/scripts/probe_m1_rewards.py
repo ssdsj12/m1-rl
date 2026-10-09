@@ -91,8 +91,8 @@ def main():
             if "env_0/Robot" in str(prim.GetPath()) and (prim.GetTypeName() == "PhysicsFixedJoint" or prim.GetName() == "BASE_LINK"):
                 print("M1_PHYSICS_PRIM", str(prim.GetPath()), [(a.GetName(), str(a.Get())) for a in prim.GetAttributes() if "kinematic" in a.GetName().lower() or "enabled" in a.GetName().lower()], flush=True)
         policy, extras = wrapped.get_observations()
-        assert policy.shape == (args.num_envs, 1581), policy.shape
-        assert extras["observations"]["critic"].shape == (args.num_envs, 1584)
+        assert policy.shape == (args.num_envs, 1589), policy.shape
+        assert extras["observations"]["critic"].shape == (args.num_envs, 1592)
         assert wrapped.num_actions == 16
         term = env.action_manager.get_term("JointPositionAction")
         assert tuple(term._joint_names) == cfg.asset_joint_names

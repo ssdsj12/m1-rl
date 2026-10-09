@@ -50,3 +50,80 @@ def test_candidate_rate_uses_all_finished_episodes():
     m.update(candidate=candidate, large_candidate=off, crossing_complete=off,
              done=done, terminated=off, collision=off, large_avoided=off)
     assert m.snapshot()["semantic_candidate_rate"] == 0.5
+
+
+def test_strict_success_is_separate_from_crossing_proxy():
+    m = CrossingEpisodeAccumulator(1, "cpu")
+    on = torch.tensor([True])
+    off = torch.tensor([False])
+    m.update(candidate=on, large_candidate=off, crossing_complete=on,
+             strict_crossing_complete=off, done=on, terminated=off,
+             collision=off, large_avoided=off)
+    out = m.snapshot()
+    assert out["crossing_episodes"] == 1
+    assert out["strict_crossing_episodes"] == 0
+    assert out["strict_crossing_success_rate"] == 0.0
+
+
+def test_geometric_crossing_and_balance_recovery_have_separate_metrics():
+    m = CrossingEpisodeAccumulator(1, "cpu")
+    on = torch.tensor([True])
+    off = ~on
+    m.update(candidate=on, large_candidate=off, crossing_complete=off,
+             strict_crossing_event=on, strict_recovery_complete=off,
+             strict_recovery_frames=torch.tensor([0]),
+             strict_crossing_complete=off, done=off, terminated=off,
+             collision=off, large_avoided=off)
+    m.update(candidate=off, large_candidate=off, crossing_complete=off,
+             strict_crossing_event=off, strict_recovery_complete=on,
+             strict_recovery_frames=torch.tensor([34]),
+             strict_crossing_complete=off, done=on, terminated=off,
+             collision=off, large_avoided=off)
+    out = m.snapshot()
+    assert out["strict_obstacle_crossings"] == 1
+    assert out["strict_obstacle_recovery_rate"] == 1.0
+    assert out["strict_recovery_mean_frames"] == 34.0
+
+
+def test_strict_obstacle_success_rate_uses_obstacle_attempts_not_recovery():
+    m = CrossingEpisodeAccumulator(1, "cpu")
+    on = torch.tensor([True])
+    off = ~on
+    # The episode ends after a geometrically complete crossing but before
+    # balance recovery. Crossing success must remain visible independently.
+    m.update(candidate=on, large_candidate=off, crossing_complete=off,
+             strict_crossing_attempt=on, strict_crossing_event=on,
+             strict_recovery_complete=off, strict_crossing_complete=off,
+             done=on, terminated=off, collision=off, large_avoided=off)
+    out = m.snapshot()
+    assert out["strict_obstacle_attempts"] == 1
+    assert out["strict_obstacle_crossings"] == 1
+    assert out["strict_obstacle_crossing_success_rate"] == 1.0
+    assert out["strict_obstacle_recovery_rate"] == 0.0
+
+
+def test_failed_strict_obstacle_attempt_remains_in_success_rate_denominator():
+    m = CrossingEpisodeAccumulator(1, "cpu")
+    on = torch.tensor([True])
+    off = ~on
+    m.update(candidate=on, large_candidate=off, crossing_complete=off,
+             strict_crossing_attempt=on, strict_crossing_event=off,
+             strict_recovery_complete=off, strict_crossing_complete=off,
+             done=on, terminated=on, collision=on, large_avoided=off)
+    out = m.snapshot()
+    assert out["strict_obstacle_attempts"] == 1
+    assert out["strict_obstacle_crossings"] == 0
+    assert out["strict_obstacle_crossing_success_rate"] == 0.0
+
+
+def test_fall_after_crossing_does_not_erase_crossing_success():
+    m = CrossingEpisodeAccumulator(1, "cpu")
+    on = torch.tensor([True])
+    off = ~on
+    m.update(candidate=on, large_candidate=off, crossing_complete=off,
+             strict_crossing_complete=on, done=on, terminated=on,
+             collision=off, large_avoided=off)
+    out = m.snapshot()
+    assert out["strict_crossing_episodes"] == 1
+    assert out["strict_crossing_success_rate"] == 1.0
+    assert out["crossing_failure_episodes"] == 1

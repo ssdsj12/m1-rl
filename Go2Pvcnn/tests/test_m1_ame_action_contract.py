@@ -15,7 +15,7 @@ def test_policy_action_history_excludes_wheel_columns():
 
 
 def test_mixed_targets_keep_interleaved_order_and_allow_continuous_wheel_velocity():
-    from ame_baseline.m1_ame_contract import m1_action_targets
+    from ame_baseline.m1_ame_contract import m1_action_targets, M1_LEG_ACTION_SCALE_RAD
     default = torch.zeros(2, 16)
     actions = torch.zeros_like(default)
     wheel_ids = [M1_ASSET_JOINT_NAMES.index(n) for n in M1_WHEEL_JOINT_NAMES]
@@ -24,7 +24,7 @@ def test_mixed_targets_keep_interleaved_order_and_allow_continuous_wheel_velocit
     default[:, wheel_ids] = 1000.
     targets = m1_action_targets(actions, default)
     torch.testing.assert_close(targets[:, wheel_ids], torch.full((2, 4), 1. / M1_WHEEL_RADIUS_M))
-    torch.testing.assert_close(targets[:, 1], torch.full((2,), .1))
+    torch.testing.assert_close(targets[:, 1], torch.full((2,), 0.4 * M1_LEG_ACTION_SCALE_RAD))
 
 
 def test_mixed_targets_clip_to_leg_limits_and_wheel_surface_speed_limit():

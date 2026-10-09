@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import torch
 
 from extension.parallelism.types import ParallelismTrajectory
+from extension.parallelism.kinematics import rpy_to_rotation_matrix
 from extension.convention import euler_to_quat_batch
 
 
@@ -63,7 +64,12 @@ def parallelism_trajectory_to_viewer_result(trajectory: ParallelismTrajectory, r
         root_quat_w=root_quat_w,
         joint_angles=trajectory.joint_pos,
         foot_pos_w=trajectory.foot_pos_w,
-        foot_pos_root=trajectory.foot_pos_w - trajectory.root_pos_w.unsqueeze(2),
+        # Targets consumed by the teacher are expressed in the body axes.
+        foot_pos_root=torch.einsum(
+            "...ji,...lj->...li",
+            rpy_to_rotation_matrix(trajectory.root_rpy_w),
+            trajectory.foot_pos_w - trajectory.root_pos_w.unsqueeze(-2),
+        ),
         contact_state=trajectory.contact_state,
         planned_touchdown_w=trajectory.selected_foothold_w,
         parallelism_candidate_center_w=trajectory.diagnostics.candidate_center_w,

@@ -51,6 +51,48 @@ def test_parallelism_terrain_from_scan_preserves_grid_pose():
     assert terrain.resolution == 0.1
 
 
+def test_m1_obstacle_proximity_uses_explicit_lateral_sample_axis(monkeypatch):
+    """The live prewarning query must preserve leg/x/y sample dimensions."""
+    class FakeBackend:
+        planner_joint_names = M1_PLANNER_JOINT_NAMES
+
+        def fk(self, root_pos, root_rpy, planner_joint, *, capsule_samples):
+            del root_rpy, planner_joint, capsule_samples
+            foot = torch.zeros(root_pos.shape[0], 4, 3, dtype=root_pos.dtype)
+            return SimpleNamespace(foot_pos_w=foot)
+
+    captured = {}
+
+    def fake_query(terrain, query_xy):
+        captured["shape"] = tuple(query_xy.shape)
+        shape = query_xy.shape[:-1]
+        return SimpleNamespace(
+            valid=torch.ones(shape, dtype=torch.bool),
+            semantic=torch.ones(shape, dtype=torch.long),
+        )
+
+    monkeypatch.setattr(rewards, "get_robot_backend", lambda name: FakeBackend())
+    import extension.parallelism.terrain as terrain_module
+    monkeypatch.setattr(terrain_module, "query_height_semantic_valid", fake_query)
+    terrain = ParallelismTerrain(
+        height_w=torch.zeros(2, 5, 5),
+        semantic_id=torch.ones(2, 5, 5, dtype=torch.long),
+        valid_mask=torch.ones(2, 5, 5, dtype=torch.bool),
+        origin_w=torch.zeros(2, 3),
+        yaw_w=torch.zeros(2),
+        resolution=0.1,
+    )
+    result = rewards.live_m1_obstacle_proximity_by_leg(
+        torch.zeros(2, 3),
+        torch.tensor([[1., 0., 0., 0.]]).expand(2, -1),
+        torch.zeros(2, len(M1_ASSET_JOINT_NAMES)),
+        M1_ASSET_JOINT_NAMES,
+        terrain,
+    )
+    assert captured["shape"] == (2, 4 * 6 * 3, 2)
+    assert result.tolist() == [[True, True, True, True], [True, True, True, True]]
+
+
 def test_parallelism_terrain_from_scan_rejects_nonfinite_hits_despite_explicit_valid_mask():
     hits = _scan(batch=1)
     hits[0, 6, 2] = torch.nan

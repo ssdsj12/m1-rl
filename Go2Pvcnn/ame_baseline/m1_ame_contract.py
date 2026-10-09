@@ -40,6 +40,25 @@ def m1_last_leg_action(env):
     )
 
 
+def m1_last_action(env):
+    """M1 policy history includes all 12 leg and 4 wheel commands."""
+    return select_named_joint_state(
+        env.action_manager.action,
+        source_names=env.cfg.asset_joint_names,
+        selected_names=M1_ASSET_JOINT_NAMES,
+    )
+
+
+def m1_wheel_surface_velocity(env):
+    """Named wheel speeds in m/s; omit unbounded integrated wheel angles."""
+    robot = env.scene["robot"]
+    return select_named_joint_state(
+        robot.data.joint_vel,
+        source_names=tuple(robot.joint_names),
+        selected_names=M1_WHEEL_JOINT_NAMES,
+    ) * M1_WHEEL_RADIUS_M
+
+
 def m1_action_targets(actions, default_joint_pos):
     """Interleaved leg position (rad) and wheel velocity (rad/s) targets."""
     if actions.shape[-1] != 16 or default_joint_pos.shape != actions.shape:

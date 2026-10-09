@@ -13,6 +13,7 @@ TRAJECTORY_MANAGER_EXPERIMENTS = (
     "teacher_elevation_trajectory_mpc_semantic_flat_small_avoidance",
     "parallelism_tracking_cross_large_complex_amp",
     "m1_cross_large_complex_ame_teacher",
+    "m1_cross_large_complex_ame_amp",
 )
 
 

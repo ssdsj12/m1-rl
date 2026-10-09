@@ -5,6 +5,8 @@ replace body/semantic2 collision penalties or failure terminations.
 """
 from __future__ import annotations
 
+import os
+
 import torch
 from torch import Tensor
 
@@ -16,6 +18,10 @@ from extension.parallelism.rl_adapter import resolve_named_indices
 from extension.parallelism.terrain import query_height_semantic_valid
 from extension.parallelism.types import ParallelismTerrain
 from .m1_ame_rewards import M1_SUPPORT_BODY_NAMES
+from .m1_obstacle_profile import (
+    M1_DEFAULT_SMALL_OBSTACLE_HEIGHT_M,
+    M1_FIXED_SMALL_OBSTACLE_LOCAL_XY,
+)
 
 
 def wheel_obstacle_reward_terms(
@@ -75,6 +81,28 @@ def wheel_obstacle_reward_terms(
     wheel_patch_valid = valid.any(-1).any(-1)
     active_wheel = valid.any(-1) & small.any(-1)
     large_near = ((semantic == 2) & valid).any(dim=(1, 2))
+    # The M1 serial course also contains fixed collision meshes.  Depending on
+    # the Isaac scanner backend those meshes may not carry semantic ids, so a
+    # semantic-only reward silently reports zero lift even when the wheel is
+    # over a real 10 cm block.  Add a geometry-only fallback tied to the exact
+    # authored centers; it is used only for M1's fixed course and never for the
+    # generic random terrain.
+    fixed_small = torch.zeros(batch, 4, dtype=torch.bool, device=command.device)
+    fixed_small_top = torch.zeros(batch, 4, dtype=command.dtype, device=command.device)
+    if course_origin_xy is not None and os.environ.get("M1_OBSTACLE_STAGE", "full").strip().lower() != "none":
+        fixed_xy = command.new_tensor(M1_FIXED_SMALL_OBSTACLE_LOCAL_XY)
+        centers = course_origin_xy[:, None, :2] + fixed_xy[None, :, :]
+        dx = wheel_pos[:, :, None, 0] - centers[:, None, :, 0]
+        dy = wheel_pos[:, :, None, 1] - centers[:, None, :, 1]
+        # Include the wheel envelope and a small scanner tolerance.
+        fixed_small = (dx.abs() <= (0.10 + radius)) & (dy.abs() <= (0.10 + radius))
+        fixed_small &= (root_pos[:, 1] - course_origin_xy[:, 1]).abs()[:, None, None] < 0.75
+        fixed_small = fixed_small.any(-1)
+        fixed_height = float(os.environ.get(
+            "M1_SMALL_OBSTACLE_HEIGHT_M", str(M1_DEFAULT_SMALL_OBSTACLE_HEIGHT_M),
+        ))
+        fixed_small_top = torch.where(fixed_small, root_pos.new_full((batch, 4), fixed_height), fixed_small_top)
+    active_wheel = active_wheel | fixed_small
     # The wheel-local patch is deliberately supplemented with a forward
     # corridor probe.  A wheel can only see a 10 cm block for a few frames
     # once it is already close to the block; the corridor scan gives MPC the
@@ -128,7 +156,7 @@ def wheel_obstacle_reward_terms(
     large_near = large_near | probe_large_any
     upright = 1 - 2 * (qx.square() + qy.square()) > .5
     enabled = (finite & torch.isfinite(speed) & (quat_norm > .5)
-               & (speed > .1) & upright & wheel_patch_valid
+               & (speed > .1) & upright & (wheel_patch_valid | fixed_small.any(-1))
                & small_present & ~large_near)
 
     root_forward = (root_vel[:, :2] * direction).sum(-1)
@@ -154,6 +182,7 @@ def wheel_obstacle_reward_terms(
     # A forward-only probe has no local top for this wheel. Keep that path
     # finite and inactive so it cannot fabricate a clearance event.
     target_top = torch.where(active_wheel, target_top, torch.zeros_like(target_top))
+    target_top = torch.where(fixed_small, fixed_small_top, target_top)
     # During the pre-lift window the obstacle top comes from the fixed-course
     # probe, not from a wheel-local patch yet. Use it only for exploration
     # shaping; strict clearance/success below remains local-patch-only.
@@ -169,7 +198,7 @@ def wheel_obstacle_reward_terms(
     # crossing.  Upward articulated velocity is still required, so a static
     # wheel cannot farm the shaping term.
     lift_progress = ((wheel_bottom_clearance + 0.05) / 0.10).clamp(0., 1.)
-    reward_active_wheel = active_wheel | course_small_any[:, None]
+    reward_active_wheel = active_wheel | fixed_small | course_small_any[:, None]
     climb = (forward_factor * (lift_speed / .2)
              * (0.25 + 0.75 * lift_progress) * reward_active_wheel).mean(-1)
     climb = torch.where(enabled, climb, 0.)

@@ -15,7 +15,7 @@ from extension.semantic_curriculum import SemanticObstacleCount, SemanticObstacl
 
 
 def test_actual_m1_fixed_course_preserves_spacing():
-    source = (Path(__file__).resolve().parents[1] / 'ame_baseline/m1_ame_env_cfg.py').read_text()
+    source = (Path(__file__).resolve().parents[1] / 'ame_baseline/m1_obstacle_profile.py').read_text()
     constants = {}
     for node in ast.parse(source).body:
         if isinstance(node, ast.Assign):
@@ -26,10 +26,20 @@ def test_actual_m1_fixed_course_preserves_spacing():
     large = constants['M1_FIXED_LARGE_OBSTACLE_LOCAL_XY']
     assert len(small) == 6
     # The first block is intentionally inside the 1.5 m semantic scanner so
-    # the teacher can pre-lift; the six-block course then continues at 0.56 m
-    # spacing along +X.
-    assert all(0.70 <= x <= 3.55 and y == 0 for x, y in small)
-    assert small[0][0] == 0.70
+    # the teacher can pre-lift; the six-block course then continues at 0.55 m
+    # spacing along +X with alternating left/right foot-track targets.
+    assert all(0.55 <= x <= 3.30 for x, _ in small)
+    # The live scene probe measured the M1 wheel center tracks at y=+/-0.215 m.
+    # With 4.65 cm wheel thickness and 5 cm obstacle width, each block must
+    # overlap exactly one wheel's lateral envelope instead of sitting beside it.
+    expected_track_y = [0.215, -0.215, 0.215, -0.215, 0.215, -0.215]
+    assert [y for _, y in small] == expected_track_y
+    wheel_half_width = 0.04650/2.0
+    obstacle_half_width = 0.05/2.0
+    assert all(abs(abs(y)-0.215) <= wheel_half_width+obstacle_half_width
+               for _, y in small)
+    assert 0.43 > wheel_half_width+obstacle_half_width
+    assert small[0][0] == 0.55
     curriculum = SemanticObstacleCurriculumCfg(
         plane_counts=(SemanticObstacleCount(small=6, large=2),),
         non_plane_counts=(SemanticObstacleCount(small=6, large=2),),
@@ -64,7 +74,7 @@ def test_m1_profile_builds_ten_centimetre_obstacles_with_foothold_spacing():
             center_safety_half_extent_m=0.45,
             min_spacing_clearance_m=0.80,
         ),
-        scale_profile_overrides={"small": (0.08, 0.10)},
+        scale_profile_overrides={"small": (0.05, 0.10)},
     )
     assert len(anchors) == 10
     assert all(math.isclose(anchor.target_height, 0.10) for anchor in anchors)
@@ -78,7 +88,7 @@ def test_m1_config_declares_m1_obstacle_profile_and_collision_reward():
     root = Path(__file__).resolve().parents[1]
     source = (root / "ame_baseline" / "m1_ame_env_cfg.py").read_text(encoding="utf-8")
     assert "semantic_course_scale_profile_overrides" in source
-    assert '"small": (0.08, 0.10)' in source
+    assert 'M1_SMALL_OBSTACLE_HEIGHT_M' in source
     assert "m1_obstacle_collision_penalty" in source
     assert "stage_small, stage_large = 6, 0" in source
 
@@ -90,6 +100,45 @@ def test_m1_layout_policy_requires_foothold_clearance():
     assert "min_spacing_clearance_m = (0.45,)" in source
 
 
+def test_m1_teacher_has_runtime_course_obstacle_trigger():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "ame_baseline" / "ame_env_wrapper.py").read_text(encoding="utf-8")
+    assert "_m1_fixed_obstacle_proximity_from_foot_xy" in source
+    assert "reference[\"collision_leg_mask\"] = collision_mask | proximity_mask | fixed_mask" in source
+    assert "M1_FIXED_SMALL_OBSTACLE_LOCAL_XY" in source
+    assert "M1_TEACHER_STRICT_SEQUENCE" in source
+
+
+def test_runtime_reward_and_teacher_share_the_authored_m1_course_profile():
+    root = Path(__file__).resolve().parents[1]
+    for relative in (
+        "ame_baseline/m1_ame_env_cfg.py",
+        "ame_baseline/ame_env_wrapper.py",
+        "ame_baseline/m1_obstacle_rewards.py",
+    ):
+        source = (root / relative).read_text(encoding="utf-8")
+        assert "m1_obstacle_profile" in source, f"{relative} bypasses the shared M1 course profile"
+    rewards = (root / "ame_baseline/m1_obstacle_rewards.py").read_text(encoding="utf-8")
+    assert "((0.55, 0.35)" not in rewards, "reward geometry still uses the obsolete +/-0.35 m tracks"
+    wrapper = (root / "ame_baseline/ame_env_wrapper.py").read_text(encoding="utf-8")
+    assert "(0.55, 0.35)" not in wrapper, "teacher geometry still uses the obsolete +/-0.35 m tracks"
+
+
+def test_runtime_strict_crossing_uses_the_same_wheel_obstacle_event_gate():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "ame_baseline" / "ame_env_wrapper.py").read_text(encoding="utf-8")
+    assert "StrictCrossingTracker" in source
+    assert "strict_crossing_complete = strict_result[\"episode_complete\"]" in source
+    assert "wheel_bottom.amax(dim=-1)" not in source
+
+
 def test_generic_course_keeps_legacy_small_obstacle_height():
     from extension.semantic_course import SMALL_OBSTACLE_HEIGHT
     assert SMALL_OBSTACLE_HEIGHT == 0.16
+
+
+def test_m1_crossing_stage_defaults_to_straight_commands():
+    source = (Path(__file__).resolve().parents[1] / "ame_baseline/m1_ame_env_cfg.py").read_text(encoding="utf-8")
+    assert "M1_ALLOW_COURSE_LATERAL_COMMANDS" in source
+    assert "self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)" in source
+    assert "self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)" in source

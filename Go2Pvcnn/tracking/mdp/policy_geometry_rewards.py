@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace as dataclass_replace
 
 import torch
 from torch import Tensor
@@ -294,6 +295,106 @@ def live_m1_policy_geometry_collision_event(
     return collision_bits.reshape(collision_bits.shape[0], -1).any(dim=-1).to(dtype=torch.float32)
 
 
+def live_m1_policy_geometry_collision_by_leg(
+    root_pos_w: Tensor,
+    root_quat_w: Tensor,
+    joint_pos: Tensor,
+    joint_names: Sequence[str],
+    terrain: ParallelismTerrain,
+    margin_m: float = 0.0,
+    lookahead_m: float = 0.0,
+) -> Tensor:
+    """Return semantic-obstacle collision bits reduced to ``[batch, 4]`` legs.
+
+    The online teacher uses this one-step-late safety signal to hand the
+    swing to a support leg that is actually touching an obstacle.  Keeping
+    this separate from the scalar reward avoids hiding which leg caused the
+    event and prevents a fixed timer from repeatedly lifting the wrong foot.
+    """
+    backend = get_robot_backend("m1")
+    root_pos = torch.as_tensor(root_pos_w, dtype=torch.float32)
+    root_quat = torch.as_tensor(root_quat_w, dtype=root_pos.dtype, device=root_pos.device)
+    joint = torch.as_tensor(joint_pos, dtype=root_pos.dtype, device=root_pos.device)
+    # Probe the live geometry a short distance along the measured heading.
+    # This is deliberately separate from ``margin_m``: inflating every
+    # collision shape causes the teacher to react to support-ground contacts,
+    # whereas a forward probe detects the obstacle before the wheel reaches
+    # its leading face and keeps the authored clearance unchanged.
+    if float(lookahead_m) > 0.0:
+        yaw = extract_yaw_batch(root_quat)
+        root_pos = root_pos.clone()
+        root_pos[:, 0] = root_pos[:, 0] + float(lookahead_m) * torch.cos(yaw)
+        root_pos[:, 1] = root_pos[:, 1] + float(lookahead_m) * torch.sin(yaw)
+    planner_joint = select_named_joint_state(joint, source_names=tuple(joint_names), selected_names=backend.planner_joint_names)
+    roll, pitch = extract_roll_pitch_batch(root_quat)
+    yaw = extract_yaw_batch(root_quat)
+    geometry = backend.fk(root_pos, torch.stack((roll, pitch, yaw), dim=-1), planner_joint, capsule_samples=int(backend.cfg.capsule_samples))
+    collision_cfg = backend.cfg if float(margin_m) <= 0.0 else dataclass_replace(
+        backend.cfg, collision_margin_m=float(margin_m),
+    )
+    _, bits = backend.collision_mask(terrain, _expand_geometry_for_collision(geometry), collision_cfg)
+    return bits.any(dim=(2, 3))
+
+
+def live_m1_obstacle_proximity_by_leg(
+    root_pos_w: Tensor,
+    root_quat_w: Tensor,
+    joint_pos: Tensor,
+    joint_names: Sequence[str],
+    terrain: ParallelismTerrain,
+    forward_m: float = 0.24,
+    lateral_m: float = 0.09,
+    rear_forward_extra_m: float = 0.12,
+) -> Tensor:
+    """Detect semantic-small terrain in a short corridor ahead of each M1 foot.
+
+    This is an anticipatory selector, not a collision/success metric.  It
+    samples the live scanner in each foot's lane so the serial teacher can
+    lift the threatened leg before the current geometry intersects the block.
+    Large semantic obstacles are intentionally excluded; their side-avoidance
+    branch remains owned by the environment/policy.
+    """
+    backend = get_robot_backend("m1")
+    root_pos = torch.as_tensor(root_pos_w, dtype=torch.float32)
+    root_quat = torch.as_tensor(root_quat_w, dtype=root_pos.dtype, device=root_pos.device)
+    joint = torch.as_tensor(joint_pos, dtype=root_pos.dtype, device=root_pos.device)
+    planner_joint = select_named_joint_state(
+        joint, source_names=tuple(joint_names), selected_names=backend.planner_joint_names,
+    )
+    roll, pitch = extract_roll_pitch_batch(root_quat)
+    yaw = extract_yaw_batch(root_quat)
+    geometry = backend.fk(
+        root_pos, torch.stack((roll, pitch, yaw), dim=-1), planner_joint,
+        capsule_samples=1,
+    )
+    foot_xy = geometry.foot_pos_w[..., :2]
+    heading = torch.stack((yaw.cos(), yaw.sin()), dim=-1)
+    lateral = torch.stack((-heading[:, 1], heading[:, 0]), dim=-1)
+    sample_x = torch.linspace(
+        0.04, max(float(forward_m), 0.04), 6,
+        dtype=foot_xy.dtype, device=foot_xy.device,
+    )
+    sample_y = foot_xy.new_tensor((-float(lateral_m), 0.0, float(lateral_m)))
+    leg_extra = foot_xy.new_tensor((0.0, 0.0, float(rear_forward_extra_m), float(rear_forward_extra_m)))
+    sample_x_leg = (sample_x[None, None, :] + leg_extra[None, :, None]).clamp_max(
+        max(float(forward_m), 0.04) + max(float(rear_forward_extra_m), 0.0)
+    )
+    # Keep the leg and lateral-sample axes explicit.  The previous expression
+    # aligned ``sample_y`` with the xy coordinate axis (2 vs 3), which raised a
+    # broadcasting error and was then hidden by the wrapper's safety fallback.
+    offsets = heading[:, None, None, None, :] * sample_x_leg[:, :, :, None, None]
+    offsets = offsets + lateral[:, None, None, None, :] * sample_y[None, None, None, :, None]
+    # [B,4,Sx,Sy,2] -> query batch points.
+    query_xy = foot_xy[:, :, None, None, :] + offsets
+    from extension.parallelism.terrain import query_height_semantic_valid
+    query = query_height_semantic_valid(
+        terrain, query_xy.reshape(query_xy.shape[0], -1, 2),
+    )
+    valid = query.valid.reshape(query_xy.shape[:-1])
+    semantic = query.semantic.reshape(query_xy.shape[:-1])
+    return (valid & (semantic == 1)).any(dim=(-1, -2))
+
+
 def m1_policy_geometry_collision_penalty(
     env,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
@@ -338,6 +439,8 @@ def m1_policy_geometry_collision_penalty(
 
 
 __all__ = [
+    "live_m1_policy_geometry_collision_by_leg",
+    "live_m1_obstacle_proximity_by_leg",
     "live_m1_policy_geometry_collision_event",
     "live_policy_geometry_collision_event",
     "m1_policy_geometry_collision_penalty",

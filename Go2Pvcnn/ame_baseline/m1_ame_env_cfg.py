@@ -14,7 +14,7 @@ from go2_pvcnn.tasks.teacher_elevation_trajectory_mpc_semantic_env_cfg import (
 )
 from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES, M1_PLANNER_JOINT_NAMES, M1_WHEEL_JOINT_NAMES, M1_ROOT_Z_M, M1_DEFAULT_ASSET_JOINT_POS, M1_WHEEL_RADIUS_M, M1_WHEEL_THICKNESS_M, M1_WHEEL_HORIZONTAL_ENVELOPE_M
 from extension.parallelism.rl_adapter import select_named_joint_state
-from extension.semantic_course import SemanticCourseLayoutCfg
+from extension.semantic_course import SemanticCourseLayoutCfg, SemanticCourseGroundingCfg
 from extension.semantic_curriculum import SemanticObstacleCount
 from .ame_env_cfg import AmeCrossLargeComplexEnvCfg, AmeObservationsCfg
 from .m1_ame_terminations import nonfinite_robot_state
@@ -23,28 +23,16 @@ from . import m1_obstacle_rewards
 from .m1_ame_actions import M1AmeActionsCfg
 from .m1_ame_assets import spawn_m1_floating_usd
 from .m1_ame_contract import (
-    m1_last_leg_action, M1_WHEEL_ACTION_SCALE_RAD_S, M1_WHEEL_SPEED_LIMIT_RAD_S,
+    m1_last_leg_action, m1_last_action, m1_wheel_surface_velocity,
+    M1_WHEEL_ACTION_SCALE_RAD_S, M1_WHEEL_SPEED_LIMIT_RAD_S,
     M1_TRAINING_ROOT_Z_M, M1_TRAINING_JOINT_POS,
 )
-
-
-# Fixed M1 course anchors: six 10 cm blocks lie on the commanded
-# forward centerline, so every episode presents a sequential one-leg crossing
-# pass. Large blocks stay forward but offset from that centerline for avoidance.
-M1_FIXED_SMALL_OBSTACLE_LOCAL_XY = (
-    # 0.56 m pitch is the smallest spacing that preserves the configured
-    # 0.45 m free corridor around 10 cm blocks (0.05 + 0.05 + 0.45).
-    # It is effectively the requested 0.55 m serial crossing layout while
-    # avoiding a floating-point boundary rejection in the course builder.
-    # Keep the first block inside the 1.5 m semantic scanner footprint while
-    # leaving a body-envelope margin in front of the reset pose.  The prior
-    # 0.55 m anchor put the 10 cm block against the front geometry before a
-    # leg could swing; 0.70 m preserves the pre-lift scan and avoids that
-    # unavoidable initial body collision.
-    (0.70, 0.0), (1.26, 0.0), (1.82, 0.0),
-    (2.38, 0.0), (2.94, 0.0), (3.50, 0.0),
+from .m1_obstacle_profile import (
+    M1_DEFAULT_SMALL_OBSTACLE_HEIGHT_M,
+    M1_FIXED_LARGE_OBSTACLE_LOCAL_XY,
+    M1_FIXED_SMALL_OBSTACLE_LOCAL_XY,
+    M1_SMALL_OBSTACLE_DIAMETER_M,
 )
-M1_FIXED_LARGE_OBSTACLE_LOCAL_XY = ((1.5, -1.0), (3.2, 1.0))
 
 
 def build_m1_policy_joint_terms(state, source_names=M1_ASSET_JOINT_NAMES):
@@ -62,7 +50,8 @@ def m1_joint_vel_rel(env, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
 class M1AmeObservationsCfg(AmeObservationsCfg):
     @configclass
     class PolicyStateCfg(AmeObservationsCfg.PolicyStateCfg):
-        actions = ObsTerm(func=m1_last_leg_action, noise=None)
+        actions = ObsTerm(func=m1_last_action, noise=None)
+        wheel_vel = ObsTerm(func=m1_wheel_surface_velocity, noise=None)
         joint_pos = ObsTerm(func=m1_joint_pos_rel, params={"asset_cfg": SceneEntityCfg("robot", joint_names=list(M1_PLANNER_JOINT_NAMES), preserve_order=True)}, noise=None)
         joint_vel = ObsTerm(func=m1_joint_vel_rel, params={"asset_cfg": SceneEntityCfg("robot", joint_names=list(M1_PLANNER_JOINT_NAMES), preserve_order=True)}, noise=None)
     @configclass
@@ -200,8 +189,16 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
             if speed_min < 0.0 or speed_max < speed_min:
                 raise ValueError("M1_FORWARD_SPEED_MIN/MAX must satisfy 0 <= min <= max")
             self.commands.base_velocity.ranges.lin_vel_x = (speed_min, speed_max)
-            self.commands.base_velocity.ranges.lin_vel_y = (-0.04, 0.04)
-            self.commands.base_velocity.ranges.ang_vel_z = (-0.15, 0.15)
+            # The authored crossing course is a straight world +X lane.
+            # Random lateral/yaw commands make a straight-wheel teacher leave
+            # the lane and turn obstacle contacts into orientation failures;
+            # side avoidance is trained separately in the large-obstacle stage.
+            if os.environ.get("M1_ALLOW_COURSE_LATERAL_COMMANDS", "0").strip().lower() in {"1", "true", "yes"}:
+                self.commands.base_velocity.ranges.lin_vel_y = (-0.04, 0.04)
+                self.commands.base_velocity.ranges.ang_vel_z = (-0.15, 0.15)
+            else:
+                self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
+                self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
         # The semantic course is authored in the tile/world +X direction.
         # Keep M1 episodes at its protected start pose; inheriting the generic
         # +/-pi yaw reset makes the forward scanner face away from all six
@@ -239,7 +236,12 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
         # raise the scanner terrain height map.  Pass their physical heights
         # to the classifier/teacher so the wheel target includes the true
         # obstacle top plus the required clearance.
-        self.mpc_planner_cfg.runtime.semantic_small_obstacle_height_m = 0.10
+        small_obstacle_height_m = float(os.environ.get(
+            "M1_SMALL_OBSTACLE_HEIGHT_M", str(M1_DEFAULT_SMALL_OBSTACLE_HEIGHT_M),
+        ))
+        if not 0.03 <= small_obstacle_height_m <= 0.16:
+            raise ValueError("M1_SMALL_OBSTACLE_HEIGHT_M must be in [0.03, 0.16]")
+        self.mpc_planner_cfg.runtime.semantic_small_obstacle_height_m = small_obstacle_height_m
         self.mpc_planner_cfg.runtime.semantic_large_obstacle_height_m = 0.55
         # The generic Go2 planner's 6 cm semantic clearance is insufficient
         # for the M1 wheel/knee geometry after inverse-kinematics projection:
@@ -250,6 +252,19 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
         self.mpc_planner_cfg.runtime.low_small_swing_clearance_max_m = 0.26
         self.mpc_planner_cfg.runtime.low_small_swing_height_lower_step_m = 0.28
         self.mpc_planner_cfg.runtime.continuous_low_small_crossing_arc_lift_step_m = 0.18
+        # The wheel can clear the block while the knee/calf envelope still
+        # scrapes it.  Raise the M1 body-leg clearance constraints separately
+        # from the wheel-top clearance so the MPC trajectory lifts the whole
+        # linkage, not only the wheel endpoint.
+        self.mpc_planner_cfg.runtime.body_leg_semantic_clearance_m = 0.24
+        self.mpc_planner_cfg.runtime.body_leg_root_lift_margin_m = 0.14
+        self.mpc_planner_cfg.runtime.body_leg_root_lift_max_m = 0.28
+        if hasattr(self.mpc_planner_cfg.losses, "fk_body_leg_collision"):
+            self.mpc_planner_cfg.losses.fk_body_leg_collision.knee_margin_m = 0.08
+            self.mpc_planner_cfg.losses.fk_body_leg_collision.shank_margin_m = 0.08
+        if hasattr(self.mpc_planner_cfg.losses, "leg_collision"):
+            self.mpc_planner_cfg.losses.leg_collision.knee_margin_m = 0.08
+            self.mpc_planner_cfg.losses.leg_collision.shank_margin_m = 0.08
         # Do not use a global root-height target: it destabilizes the learned
         # checkpoint. Instead allow the semantic crossing branch to request a
         # genuinely high arc; the generic 0.18 m cap was below the M1 wheel
@@ -267,19 +282,30 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
         # M1 uses 10 cm semantic obstacles. The generic Go2 course keeps its
         # historical profile; this override is applied only to the M1 terrain.
         self.scene.terrain.semantic_course_scale_profile_overrides = {
-            # Keep the required 10 cm height, but leave a narrow 8 cm
+            # Keep the required 10 cm height, but leave a narrow 5 cm
             # footprint so the serial wheel lift is not defeated by a side
             # scrape from the M1 knee/calf envelope.
-            "small": (0.08, 0.10),
+            "small": (M1_SMALL_OBSTACLE_DIAMETER_M, small_obstacle_height_m),
             "large": (0.45, 0.55),
         }
         self.scene.terrain.semantic_course_layout_cfg = SemanticCourseLayoutCfg(
+            small_shape_pool=("cuboid", "cylinder"),
             tile_margin_m=0.50,
             center_safety_half_extent_m=0.45,
             center_safety_radius_m=None,
             fixed_small_obstacle_local_xy=M1_FIXED_SMALL_OBSTACLE_LOCAL_XY,
-            fixed_large_obstacle_local_xy=M1_FIXED_LARGE_OBSTACLE_LOCAL_XY,
+            fixed_large_obstacle_local_xy=(
+                () if os.environ.get("M1_OBSTACLE_STAGE", "full").strip().lower()
+                in {"small", "small_only"}
+                else M1_FIXED_LARGE_OBSTACLE_LOCAL_XY
+            ),
             min_spacing_clearance_m=0.45,
+        )
+        # The shared course embeds geometry by 1.5 cm and its sphere ignores
+        # target_height. M1 acceptance needs *exposed* 10 cm geometry, not an
+        # 8.5 cm box or 5 cm sphere with a misleading 10 cm config label.
+        self.scene.terrain.semantic_course_grounding_cfg = SemanticCourseGroundingCfg(
+            embed_depth_m=0.0,
         )
         # More repeated crossing attempts, while leaving a protected reset and
         # touchdown corridor for the M1 wheel footprint.
@@ -301,12 +327,17 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
             stage_small, stage_large = 0, 0
         elif obstacle_stage in {"warmup", "two"}:
             stage_small, stage_large = 2, 0
+        elif obstacle_stage in {"small", "small_only"}:
+            # Physical crossing gate: expose the complete six-block serial
+            # course without side large obstacles masking the teacher.  The
+            # full stage restores the two large obstacles for avoidance.
+            stage_small, stage_large = 6, 0
         else:
             stage_small, stage_large = 6, 0
         self.semantic_obstacle_curriculum.terrain_obstacle_count_overrides.update({
             # Increase repeated 10 cm crossing opportunities while keeping the
-            # protected reset/touchdown corridor and 0.80 m inter-obstacle
-            # clearance below. Large obstacles remain sparse so the policy
+            # protected reset/touchdown corridor and 0.56 m inter-obstacle
+            # pitch below. Large obstacles remain sparse so the policy
             # learns crossing on small blocks instead of unsafe contacts.
             "flat_dense_small_obstacles": SemanticObstacleCount(small=stage_small, large=stage_large),
             "flat": SemanticObstacleCount(small=stage_small, large=stage_large),
@@ -314,8 +345,9 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
         self.semantic_obstacle_curriculum.plane_counts = (
             SemanticObstacleCount(small=stage_small, large=stage_large),
         )
+        non_plane_large = 2 if obstacle_stage == "full" else stage_large
         self.semantic_obstacle_curriculum.non_plane_counts = (
-            SemanticObstacleCount(small=stage_small, large=(2 if obstacle_stage == "full" else stage_large)),
+            SemanticObstacleCount(small=stage_small, large=non_plane_large),
         )
         self.semantic_obstacle_curriculum.center_safety_half_extent_m = (0.45,)
         self.semantic_obstacle_curriculum.min_spacing_clearance_m = (0.45,)
@@ -334,9 +366,14 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
         self.scene.robot.spawn.func = spawn_m1_floating_usd
         actuator = self.scene.robot.actuators["all_joints"]
         self.scene.robot.actuators = {
-            # Simulation-calibrated gains: 25 Nm/rad let the floating M1 sag
-            # onto its knees. Validate these against flat support/rolling probes.
-            "legs": actuator.replace(joint_names_expr=list(M1_PLANNER_JOINT_NAMES), stiffness=200.0, damping=8.0),
+            # High support gains keep the floating M1's three loaded wheels
+            # under the body while a fourth wheel is unloaded.  Lower gains
+            # let the root sag and invalidate the serial crossing sequence.
+            "legs": actuator.replace(
+                joint_names_expr=list(M1_PLANNER_JOINT_NAMES),
+                stiffness=float(os.environ.get("M1_LEG_STIFFNESS", "800.0")),
+                damping=float(os.environ.get("M1_LEG_DAMPING", "40.0")),
+            ),
             "wheels": actuator.replace(
                 joint_names_expr=list(M1_WHEEL_JOINT_NAMES), stiffness=0.0,
                 # Velocity-servo gain, not passive rolling resistance. The

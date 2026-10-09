@@ -180,7 +180,9 @@ def test_m1_teacher_keeps_one_leg_for_the_full_phase_block():
              [False, False, True, True],
              [False, False, True, True]],
         ),
-        "phase_index": torch.tensor([1, 7, 8]),
+        # The production M1 teacher uses a 32-step serial phase. Check the
+        # last frame of one phase and the first frame of the handoff.
+        "phase_index": torch.tensor([1, 31, 32]),
         "valid_mask": torch.ones(3, dtype=torch.bool),
     }
     for row in range(3):

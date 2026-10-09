@@ -38,4 +38,16 @@ def get_m1_ame_train_cfg():
 def get_m1_ame_amp_train_cfg():
     cfg = copy.deepcopy(get_ame_amp_train_cfg())
     cfg["experiment_name"] = "m1_cross_large_complex_ame_amp"
+    # AMP must use the same conservative M1 PPO update as the non-AMP
+    # curriculum. The generic AME-AMP config inherits 1e-3, which destroys
+    # the standing limit cycle within a few rollouts before the obstacle
+    # teacher can contribute.
+    cfg["algorithm"]["learning_rate"] = float(
+        os.environ.get("M1_LEARNING_RATE", "2.0e-5")
+    )
+    cfg["algorithm"]["schedule"] = "fixed"
+    cfg["algorithm"]["imitation_coef"] = float(
+        os.environ.get("M1_IMITATION_COEF", "0.25")
+    )
+    cfg["algorithm"]["ppo_log_ratio_clip"] = 5.0
     return cfg

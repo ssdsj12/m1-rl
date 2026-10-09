@@ -2,6 +2,30 @@
 from __future__ import annotations
 
 
+def apply_m1_leg_joint_limits(robot_prim):
+    """Intersect source USD limits with the shared M1 controller limits.
+
+    Only the spawned instance is edited. Do not reinterpret the advertised
+    180 Nm maximum as a rating for every motor or alter authored inertias.
+    """
+    from math import degrees
+    from pxr import Usd, UsdPhysics
+    from extension.parallelism.m1_kinematics import (
+        M1_PLANNER_JOINT_NAMES, M1_ABAD_LOWER, M1_ABAD_UPPER,
+        M1_HIP_LOWER, M1_HIP_UPPER, M1_KNEE_LOWER, M1_KNEE_UPPER,
+    )
+    lower = [v for triple in zip(M1_ABAD_LOWER, M1_HIP_LOWER, M1_KNEE_LOWER) for v in triple]
+    upper = [v for triple in zip(M1_ABAD_UPPER, M1_HIP_UPPER, M1_KNEE_UPPER) for v in triple]
+    bounds = dict(zip(M1_PLANNER_JOINT_NAMES, zip(lower, upper)))
+    for prim in Usd.PrimRange(robot_prim):
+        if prim.GetName() not in bounds:
+            continue
+        joint = UsdPhysics.RevoluteJoint(prim)
+        lo, hi = bounds[prim.GetName()]
+        joint.GetLowerLimitAttr().Set(max(joint.GetLowerLimitAttr().Get(), degrees(lo)))
+        joint.GetUpperLimitAttr().Set(min(joint.GetUpperLimitAttr().Get(), degrees(hi)))
+
+
 def spawn_m1_floating_usd(prim_path, cfg, translation=None, orientation=None):
     import isaaclab.sim as sim_utils
     from pxr import Usd, UsdPhysics, PhysxSchema
@@ -11,6 +35,7 @@ def spawn_m1_floating_usd(prim_path, cfg, translation=None, orientation=None):
     # spawn_from_usd can expand a regex; move the root schema in every actual
     # spawned robot before PhysX creates articulation handles.
     for robot_prim in sim_utils.find_matching_prims(prim_path):
+        apply_m1_leg_joint_limits(robot_prim)
         stage = robot_prim.GetStage()
         base = stage.GetPrimAtPath(str(robot_prim.GetPath()) + "/BASE_LINK")
         if not base or not base.HasAPI(UsdPhysics.RigidBodyAPI):

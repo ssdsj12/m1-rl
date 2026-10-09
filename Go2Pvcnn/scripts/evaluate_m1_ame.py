@@ -24,6 +24,10 @@ def main():
         from isaaclab.terrains import TerrainImporter
         from isaaclab.envs import ManagerBasedRLEnv
         from ame_baseline.m1_ame_env_cfg import M1AmeCrossLargeComplexEnvCfg
+        from ame_baseline.m1_obstacle_profile import (
+            M1_FIXED_SMALL_OBSTACLE_LOCAL_XY,
+            M1_SMALL_OBSTACLE_DIAMETER_M,
+        )
         from ame_baseline.ame_env_wrapper import AmeRslRlEnvWrapper
         from ame_baseline.actor_critic_ame import ActorCriticAME
         from ame_baseline.m1_evaluation_metrics import EpisodeMetrics, collision_from_rewards
@@ -57,20 +61,20 @@ def main():
         if scenario != "flat":
             height = (args.obstacle_threshold if args.obstacle_threshold is not None else .10) if scenario == "small" else .80
             if scenario == "small":
-                # Match the M1 training course: six small obstacles on the
-                # commanded forward centerline.  The previous three-object
-                # zig-zag evaluator rewarded a large lateral detour and
-                # could not distinguish stepping over the course from going
-                # around it.
+                # Reuse the exact M1 training course. Each obstacle occupies
+                # one wheel track and alternates left/right, so evaluation
+                # measures serial single-leg crossings rather than a body-
+                # centerline obstacle the legs could never encounter.
                 small_height = max(0.10, height)
                 spawn = sim_utils.CuboidCfg(
-                    size=(0.10, 0.10, small_height),
+                    size=(M1_SMALL_OBSTACLE_DIAMETER_M,
+                          M1_SMALL_OBSTACLE_DIAMETER_M, small_height),
                     rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
                     collision_props=sim_utils.CollisionPropertiesCfg(),
                 )
                 objects = tuple(
-                    (f"EvalObstacle{i}", spawn, (1.20 + 0.80 * i, 0.0, small_height / 2))
-                    for i in range(6)
+                    (f"EvalObstacle{i}", spawn, (x, y, small_height / 2))
+                    for i, (x, y) in enumerate(M1_FIXED_SMALL_OBSTACLE_LOCAL_XY)
                 )
                 for name, spawn, pos in objects:
                     cfg.scene.__setattr__(name, RigidObjectCfg(

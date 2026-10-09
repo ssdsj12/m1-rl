@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT="${REPO_ROOT:-/home/hexinkun/m1_rl}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 ISAAC_ENV="${ISAAC_ENV:-/home/hexinkun/miniconda3/envs/amp}"
 PYTHON_BIN="${PYTHON_BIN:-${ISAAC_ENV}/bin/python}"
 VULKAN_ICD_MANIFEST="${VULKAN_ICD_MANIFEST:-${REPO_ROOT}/Go2Pvcnn/config/vulkan/nvidia_egl_icd.json}"
 VULKAN_PROBE="${VULKAN_PROBE:-${REPO_ROOT}/Go2Pvcnn/scripts/probe_isaac_vulkan.py}"
 
 cd "${REPO_ROOT}"
+printf 'TRAIN_REPO_ROOT=%s\n' "$(pwd -P)"
 
 export PATH="${ISAAC_ENV}/bin:${PATH}"
 export PYTHONUNBUFFERED=1

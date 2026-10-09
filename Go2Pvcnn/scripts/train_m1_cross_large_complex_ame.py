@@ -21,6 +21,10 @@ for path in (PACKAGE_ROOT, RSL_RL_ROOT):
         sys.path.insert(0, str(path))
 
 
+from ame_baseline.m1_runtime_defaults import apply_m1_runtime_defaults
+apply_m1_runtime_defaults()
+
+
 def _parse_args():
     from isaaclab.app import AppLauncher
 
@@ -28,6 +32,8 @@ def _parse_args():
     parser.add_argument("--num_envs", type=int, default=1024)
     parser.add_argument("--max_iterations", type=int, default=10000)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--course-profile", choices=("mixed", "fixed"), default="mixed",
+                        help="M1 mixed reference terrain with flat density x1.5; fixed is diagnostic only.")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--keep_std", action="store_true")
@@ -111,6 +117,10 @@ def main() -> int:
 
         _register_runtime_env(gym, "Isaac-M1-Cross-Large-Complex-AME-v0", M1AmeCrossLargeComplexEnvCfg)
         env_cfg = M1AmeCrossLargeComplexEnvCfg()
+        if args.course_profile == "mixed":
+            from ame_baseline.m1_mixed_course import configure_mixed_terrain
+            configure_mixed_terrain(env_cfg)
+        print(f"[M1] course_profile={args.course_profile}; robot=m1; action_dim=16", flush=True)
         env_cfg.scene.num_envs = args.num_envs
         env_cfg.sim.device = device
         env_cfg.seed = args.seed

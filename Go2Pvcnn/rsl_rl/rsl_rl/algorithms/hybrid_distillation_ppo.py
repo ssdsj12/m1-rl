@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -229,7 +231,17 @@ class HybridDistillationPPO:
 
         teacher_mask = self._teacher_control_mask
         teacher_mask_action = teacher_mask.unsqueeze(-1)
-        env_action = torch.where(teacher_mask_action, teacher_action, student_action)
+        blend_enabled = os.environ.get("M1_TEACHER_BLEND_ACTIONS", "0").strip().lower() not in {"0", "false", "no"}
+        if blend_enabled:
+            # Replacing an entire environment with a discontinuous MPC action
+            # can topple an otherwise stable policy. Keep the teacher source
+            # assignment for accounting, but ramp its action into the student
+            # command with an explicit bounded coefficient.
+            blend_alpha = min(max(float(os.environ.get("M1_TEACHER_BLEND_ALPHA", "0.25")), 0.0), 1.0)
+            blended = student_action + blend_alpha * (teacher_action - student_action)
+            env_action = torch.where(teacher_mask_action, blended, student_action)
+        else:
+            env_action = torch.where(teacher_mask_action, teacher_action, student_action)
         ppo_active = (~teacher_mask).to(student_action.dtype)
 
         self.transition.actions = env_action.detach()

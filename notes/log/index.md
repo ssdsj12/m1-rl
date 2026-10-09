@@ -1,3 +1,117 @@
+- [WBC handoff counterfactual and clock repair](2026-10-09-m1-wbc-handoff-counterfactual.md): same-state torque-slew diagnosis;22ms initial capture is transient;294step native clock false rejection reproduced and fixed,119CPUtests. Native revalidation/crossing open.
+- [Four-second PREPARE and PD unload](2026-10-09-m1-pd-unload-diagnosis.md):4sPREPARE8/8, measuredPDunload0/8; selected-leg height correction still fails, body-pose/tracking cancel requested rise. No long training.
+- [M1 mixed terrain native verification](2026-10-09-m1-mixed-terrain-verification.md):148passed/1skipped;2376records,2280small10cm USD bounds,172semantic-small rays,2neutral steps,16actions. No crossing/training claim.
+- [M1 mixed terrain implementation ledger](2026-10-09-m1-mixed-dense-progress.md): approved mixed profile with M1 retained, flat counts x1.5; structured maximum-density20seed layout passes; actual registry and encounter metrics wired,4review findings repaired. Probe ended, no long training.
+- [M1 mixed terrain density audit](2026-10-09-m1-mixed-terrain-audit.md): preimplementation reference audit; old random packing165small+3large fails10/10seeds at.45m clearance, motivating structured layout.
+- [M1 batched measured PREPARE controller](2026-10-09-m1-batched-prepare-controller.md):92focusedtests; acceleration-bounded production-PD400step physical gate8/8ready, fresh margin31.31--34.40mm; no non-wheel contact force. PREPARE only, UNLOAD/lift/roll/landing still open; no training.
+- [M1 parameter/execution contract and physical support failure](2026-10-09-m1-parameter-and-execution-repair.md):124passed/1skipped;1589/1592 verified in Isaac; real10cm shapes fixed; first selected lift lacks pre-transfer, COM19.36mm outside three-support triangle; freeze ablation also fails. Reference versus fallback validity separated; save100 watchdog repaired; no training.
+- [M1 obstacle-to-wheel-track alignment](2026-10-08-m1-obstacle-track-alignment.md): live geometry exposed former y=+/-0.35 m blocks missing measured wheel tracks at +/-0.215 m; corrected and physically verified six alternating anchors; 173 focused tests pass, still no crossing.
+- [M1 single-wheel swing reference](2026-10-08-m1-single-wheel-swing-reference.md): time-parameterized wheel-envelope clearance and one-wheel QP task added; 165 WBC tests pass; not wired to physical obstacles, no crossing claim or training.
+- [M1 WBC ground-contact observability](2026-10-08-m1-wbc-ground-contact-observability.md): one-env GPU7 smoke observes all four native wheel contacts by tick 8, but loads are transient/unequal; 142 focused WBC tests pass; no stance/crossing/training; placeholder restored.
+- [Default PD force-source calibration](2026-10-08-m1-wbc-pd-oracle.md): focused147passed/1skipped; projected-force native oracle passed at two dt; no grounded crossing/training; placeholder1118093restored.
+- [Actual WBC free execution](2026-10-08-m1-wbc-execution.md):125tests;24actualrowticks verify K/D0/readback/continuity/dynamics residual, not stance;placeholder1018794restored.
+- [Explicit speed and effort history](2026-10-08-m1-wbc-limits.md):124tests; bounded-speed shadow feasible, native force sources disagree under PD; explicit initialization required,placeholder982669restored.
+- [Joint-state bounds and unset speed limit](2026-10-08-m1-wbc-joint-bounds.md):116tests; live rearrelease shadow feasible, native leg speedlimit unset so no actuation certificate;placeholder943133restored.
+- [Live contact-step rejection](2026-10-08-m1-wbc-contact-step.md):113tests; fullh/velocitybias integrated, failure isolated to multipoint consistency and diagnostic acceleration bounds; no relaxation/actuation,placeholder913319restored.
+- [Live contact motion](2026-10-08-m1-wbc-motion.md):109tests; measured rear separation/front approach/slip expose velocity-transition prerequisite;allentrieslogged,placeholder889301restored.
+- [Guarded numerical fallback](2026-10-08-m1-wbc-active-set.md):105tests; native allattached solves unchanged constraints but still misses rolling target; correct release preserved;placeholder867270restored, no actuation/training.
+- [Native rest-mode rolling feasibility](2026-10-08-m1-wbc-candidates.md):100tests; rearpointrelease meets native rolling target, opposite direction doesnot; allattached inaccurate rejected;placeholder786369restored.
+- [WBC point release constraints](2026-10-08-m1-wbc-modes.md):95tests; zero releasedforce and unilateral acceleration, synthetic polygon pivot; native mode estimator/control still pending.
+- [WBC contact transport/static QP](2026-10-08-m1-wbc-transport.md):86tests, native static QP feasible within measured friction/effort limits; no actuation;placeholder736509restored.
+- [WBC live materials](2026-10-08-m1-wbc-materials.md):77tests; native randomized wheel coefficients and schema defaults yield measured conservative bounds;exception visibility fixed;placeholder706235restored.
+- [WBC kinematic bias](2026-10-08-m1-wbc-kinematics.md):63tests; native8rows x3ticks link acceleration agrees with J*qdd+bias;placeholder650836restored; rolling contact/stance still open.
+- [WBC multipoint contacts](2026-10-08-m1-wbc-contacts.md):52tests; truepoints/groupedloadbounds and env0native force/velocityclosure pass;placeholder532072restored.
+- [Constrained WBC CPU QP](2026-10-08-m1-wbc-qp.md):45tests/15QP cases pass physical constraints and taskpriority; native contact adapter next, placeholder354723untouched.
+- [WBC free-body actuation](2026-10-08-m1-wbc-free.md):30tests;24native row-ticks pass drive ownership/bias residual with nocontact;placeholder354723restored, contactQP next.
+- [WBC energy and inertia frame](2026-10-08-m1-wbc-energy.md):28tests; fullM mismatch isolated to inertia frame, corrected and native fullM/velocity/energy pass;placeholder275143restored.
+- [Native WBC static consistency](2026-10-08-m1-wbc-native.md):22tests;8native fullM SPD/gravity/masschecks pass, no controlacceptance;placeholder240899restored.
+- [WBC dynamics snapshot](2026-10-08-m1-wbc-snapshot.md): user approved implementation;21tests RED/GREEN, full named dynamics/freshness adapter; native oracle next, no actuator or training change.
+- [WBC API inventory](2026-10-08-m1-wbc-api.md): installed full dynamics wrappers present; deprecated APIs omit root, effort/PD ownership caveat; no physical run.
+- [Dynamic WBC design](2026-10-08-m1-wbc-design.md): user direction approved; unified torque/contact design written, review pending; no runtime change, placeholder99388 untouched.
+- [Lift handoff](2026-10-08-m1-lift-handoff.md):55tests; all8settle96 thenROLL5underload21.16N;handofffixed/dynamicsopen,placeholder99388restored.
+- [Mesh pairs](2026-10-08-m1-mesh-pairs.md):13tests; exact10facecancellation preserves sampledoutershape,ROLL0 underload remains;notpromoted,placeholder62471restored.
+- [Entry capability](2026-10-08-m1-entry-capability.md):20tests; executable candidate filter fixed,2.5mscomparison stillfails PREPARE62,defaultunchanged;placeholder13723restored.
+- [Rolling patches](2026-10-08-m1-roll-patches.md):7tests; targetconstant/torquesmooth, contactpatch switch;256resolution fails early and not promoted,placeholder4171104restored.
+- [Rolling substeps](2026-10-08-m1-roll-substeps.md):153tests; unchanged physical trajectory; final5ms load/COM/angular impulse isolated, contact/actuator coupling next; placeholder4135886 restored.
+- [Rolling continuity](2026-10-08-m1-roll-continuous.md):149tests; zero-start and continuous-start both reject dynamic support, next coupled acceleration/COM audit; placeholder4102845 restored,no training.
+- [UNLOAD support feedback](2026-10-08-m1-unload-support.md):144tests; double limiter fixed; all8 full159mm lift/20ROLL, LAND11 row5 contact loss. Placeholder4039652 restored,no training.
+- [Attitude feedback](2026-10-08-m1-attitude-feedback.md):103tests; tilt improves but same29.99N/LIFT36 rejection. Refines drift cause; support-relative COM needed, no gain sweep/training.
+- [Anticipatory runtime](2026-10-08-m1-anticipatory-runtime.md):74tests; all8 PREPARE pass, LIFT36 static30Nallocation rejects; anchor drift18.15mm, candidate defaultoff/no training.
+- [Confirmed PREPARE4s](2026-10-08-m1-prepare-four-seconds.md):userapproved,design/probe200stepcapupdated,33tests; causalreference runtimeintegration next.
+- [Transfer deadline](2026-10-07-m1-transfer-budget.md):historical2sconflict; decisionresolved2026-10-08, seeabove.
+- [Causal entry forecast](2026-10-07-m1-entry-forecast.md):19tests,actualentrysnapshot;8/8staticcandidates across17heights, noextratilt, worst35.25N; physicaltransfer next.
+- [Anticipatory selector](2026-10-07-m1-anticipatory-selector.md):20tests; every suppliedlift sample mustpass, allinvalid index-1; causalentryforecast wiring next.
+- [Anticipatory support pose](2026-10-07-m1-support-pose.md):1715poses/row, originalentryanchors yield35Nsolutionsall8 versuslateFBLnoneinfinitegrid; causalentry/pathselection next.
+- [Named mass predictor](2026-10-07-m1-mass-predictor.md):8tests,792nativeposes float32<5.74um, namepermutationexact; candidatepose supportintegration next.
+- [Direct native COM](2026-10-07-m1-native-com.md):3tests,792rows, directposeCOM4.27um/body3.67um; exact baseline trajectory, anticipatorysupport implementation next.
+- [M1 COM replay](2026-10-07-m1-com-replay.md):792recordedposes, maxCOM4.33um with wheel-fitted attitude; directroot/bodyCOM validation next, no controlchange.
+- [M1 mass tree](2026-10-07-m1-mass-tree.md):CPU source inventory,17bodies/16movingjoints,total41.045319557kg; named FK/native comparison next, no controller change.
+- [Current-SDF load feedback](2026-10-07-m1-sdf-load-feedback.md):12tests;ROLL9reject, minimumhorizontalentry80.713mm>80mm for35N; anticipatoryliftedCOM/posture needed, notthresholdrelaxation.
+- [LIFT gate wiring](2026-10-07-m1-lift-gate.md):29tests; actualworldmodemask fixed,0/9underloadtargetincrements versus14/14baseline; corrects earlierpauseclaim,ROLL13stillrejects.
+- [ROLL handoff](2026-10-07-m1-roll-handoff.md):18tests; removing initialbrake improves direction butsupport rejects10; preexistingLIFTtransients require supportcontrol, nothandoffonly.
+- [UNLOAD ramp](2026-10-07-m1-unload-ramp.md):49tests;8/8unload and~16cmwheel-center lift, but supporttransients andROLLoffset5reject remain; no crossing claim.
+- [Friction substeps](2026-10-07-m1-friction-substeps.md):7tests, true friction moment explains static34N versus actual23..27N support deficit; COM momentum consistency verified, dynamic transfer coordination next.
+- [COM substeps](2026-10-07-m1-com-substeps.md):3tests, exact baseline reproduction; mass-weighted COM lateral acceleration and normal-only sensor limitation guide dynamic support investigation.
+- [Named support substeps](2026-10-07-m1-support-substeps.md):correct FBL/FAR/RBL/RAR humanlabels; native5ms confirms sustained loaddecline, notendpointnoise or misindexedPDconflict.
+- [Settled height activation](2026-10-07-m1-height-settled.md):39tests;selectedforce0all8at52, frontsupport26..29N andtransferboundreject53; three-support coordination next.
+- [Height-only frame](2026-10-07-m1-height-only-frame.md):46tests;exactheight/bodyXY contract, physicaltransferboundreject12; earlycoordination next, notpromoted.
+- [Hold pose attribution](2026-10-07-m1-hold-pose-attribution.md):21tests;ignoredtilt explains~4mmheightlag;fullXYZ rejects15,lateral/framecoupling; worldZ-only correction next.
+- [Phase wheel holding](2026-10-07-m1-phase-wheel-hold.md):20tests;UNLOAD0frame rejection resolved,100UNLOAD thencontact-persistence timeout; noLIFT/training.
+- [PREPARE wheel holding](2026-10-07-m1-prepare-wheel-hold.md):18tests;8envdrift reduced24..39→6.68..12.37mm; noLIFT, continuous phase handoff next.
+- [Wheel-hold primitive](2026-10-07-m1-wheel-hold-primitive.md):16CPU tests; bounded longitudinal feedback, no runtime/physical claim; PREPARE and phase handoff next.
+- [SDF single-leg entry](2026-10-07-m1-sdf-single-leg-entry.md):15tests;actual24..39mmwheelanchor drift causesUNLOAD0frame rejection;wheelholding/coordination next,noLIFT/training.
+- [SDF contact margin](2026-10-07-m1-sdf-contact-margin.md):14tests;effective1mmrest/2mmcontact restores8/8four-supportrolling112..113mm; no single-leg/obstacle acceptance yet.
+- [Original-mesh SDF comparison](2026-10-07-m1-source-sdf-comparison.md):8tests;32wheel triangle shapes,unchanged physical arrays;128/256reject before rolling on contact gate, not a fix.
+- [Source mesh topology](2026-10-07-m1-source-mesh-topology.md): CPU all-four-wheel audit finds six nonmanifold edges each; installed SDF interface verified, solid validity/cooking next. No runtime change.
+- [Explicit wheel effort](2026-10-07-m1-explicit-wheel-effort.md):54tests;native3Nmverified,8/8settle but loadedwheelstall persists; source-mesh collision fidelity next.
+- [Cylinder / unload boundary](2026-10-07-m1-cylinder-and-unload-boundary.md):49tests;finalpostaction gate bug fixed physically, cylinder still stalls/rejects102underload; no geometry promotion.
+- [Free-wheel drive isolation](2026-10-07-m1-free-wheel-drive.md):107tests;allfourliftedwheels track~.075radcommand,8/8settle;loaded contact/constraints prioritized, not crossing.
+- [Contact architecture audit](2026-10-07-m1-contact-architecture-audit.md):persistent positive contact pairs correlate with stalled loaded wheels; free-wheel drive isolation before architecture replacement.
+- [Half timestep comparison](2026-10-07-m1-half-timestep.md):24tests;20mscontrol preserved, no rolling improvement and landing protection rejects; retain baseline, architecture review next.
+- [Native substep audit](2026-10-07-m1-native-substeps.md):18tests;cache/native exact equality, endpoint velocity integral differs strongly from rotation; controlled solver/timestep investigation next.
+- [Phase-isolated drive gain](2026-10-07-m1-roll-gain-comparison.md):90tests;actual20ROLL/5LAND,8/8settle but no effective travel despite greater drive estimate; contact/substep consistency next.
+- [Preload higher-drive comparison](2026-10-07-m1-preload-drive-comparison.md):14tests;8/8settle and>=34.278Nsupport but negative1.109mm progress; drive/contact resistance remains open.
+- [Leg-aware preload cycle](2026-10-07-m1-rear-preload-cycle.md):74tests;8/8 stable short cycles, rolling support>=34.976N; no effective forward travel, traction remains open.
+- [COM runtime integration](2026-10-07-m1-com-runtime.md):78tests; smooth feedback still rejects103, leg-specific preload room identified; no crossing acceptance.
+- [COM trajectory primitive](2026-10-07-m1-com-trajectory.md):77tests; PD/static effort evidence and bounded acceleration/braking reference; runtime integration still pending.
+- [Moving-load feedback](2026-10-07-m1-moving-load-feedback.md):73tests; reserve contract fixed, static moving COM correction worsens transient unload; keep opt-in/off, dynamic coordination next.
+- [Split-shoulder controlled comparison](2026-10-07-m1-split-shoulder-comparison.md):46tests; corrected RNG confound; finer shape still loses support/no forward traversal, moving-load control next.
+- [Three-support contact audit](2026-10-07-m1-three-support-contact.md):14tests; loaded FAR/RBL contacts stationary with negligible wheel-angle change, contact-fidelity comparison next.
+- [Low-speed support comparison](2026-10-07-m1-low-speed-support.md):13tests; .02cap still loses support atstep104 with negative progress; speed alone not a fix.
+- [Support reserve bound](2026-10-07-m1-support-reserve-bound.md):58tests;40Nreserve requires80.264mm>80mm; retain35Ndefault and pursue moving control.
+- [Shoulder lift cycle](2026-10-07-m1-shoulder-lift-cycle.md):53tests;8/8staticlift/land, moving case trips30Nfloor; control redistribution next.
+- [Shoulder-wheel comparison](2026-10-07-m1-shoulder-wheel-comparison.md):24tests;8/8rolling49.8..62.7mm with identical physical arrays; radial geometry error bounded, conservative oracle needed.
+- [Wheel envelope comparison](2026-10-07-m1-wheel-envelope-comparison.md):23tests; opt-in collision envelope restores8/8rolling86.8..94.7mm; production tire fidelity/real crossing still open.
+- [Cooked wheel hull](2026-10-07-m1-cooked-wheel-hull.md):actual34vertices/62polygons; contact moments and uneven tread support geometry comparison, not yet causal proof.
+- [Contact patch evidence](2026-10-07-m1-contact-patch-evidence.md):exact filter provides stationary two-point44mm patch; true obstacle-free control reproduces failure; prior flat label corrected.
+- [PhysX drive and solver comparison](2026-10-07-m1-physx-drive-solver.md):22tests; actual backend drive matches; velocity iterations4 does not restore traversal.
+- [Collision frame audit](2026-10-07-m1-collision-frame-audit.md):CPU USD inspection finds identity collision-body frame and aligned wheel axis; live contact/solver still open.
+- [Wheel angle response](2026-10-07-m1-wheel-angle-response.md):read-only angle telemetry shows no sustained rotation despite positive instantaneous speeds; investigate solver/contact consistency.
+- [Sustained rolling](2026-10-07-m1-sustained-rolling.md):21 tests; 180-step physical comparison, sustained command still produces no effective traversal.
+- [Rolling without support feedforward](2026-10-07-m1-rolling-no-feedforward.md):100-step matched control, negative submillimeter progress remains; no crossing acceptance.
+- [Upload improvements and rolling diagnostic](2026-10-07-m1-upload-improvements.md):20 tests; four-support comparison and runtime limits; traversal unresolved.
+- [Wheel traction audit](2026-10-07-m1-wheel-traction-audit.md):no friction/positionlock/torqueclipping;convexHullshapehypothesisawaitscontrolleddrivecomparison.
+- [SETTLE contact persistence](2026-10-07-m1-settle-contact-persistence.md):172tests;8/8stablelandingwithfrozenheightandunchangedfinalgate;effectiveforwardmotionstillopen.
+- [Bounded rolling ramp](2026-10-07-m1-bounded-rolling-ramp.md):54tests;support35.11N maintained,butnetprogress<1mm andlandingjitterremain;notcrossing.
+- [Rolling axis and control](2026-10-07-m1-rolling-axis-control.md):target/axisverified;zero-speed20framehold passes whileforwardstepfails;boundedaccelerationnext,landingcontactstillopen.
+- [Rolling support probe](2026-10-07-m1-rolling-support-probe.md):46tests;9rollingactions then30Nsupport-floor rejection;axis/velocity/loadtransfer investigation next.
+- [Measured traverse gate](2026-10-07-m1-measured-traverse-gate.md):43CPUtests;envelope5cmclearance/4cmfar-side gate,realboxandrollingruntimeintegrationpending.
+- [Retimed lift cycle](2026-10-07-m1-retimed-lift-cycle.md):8/8physical15.31..15.77cm flatrise andstablelanding withunchanged joint limit; traverse window still unverified.
+- [Crossing time budget](2026-10-07-m1-crossing-time-budget.md): actual CPU lift_target needs 4.38 s for 15 cm up/down, before traverse; trajectory feasibility now blocks obstacle smoke.
+- [Four-support settle](2026-10-07-m1-four-support-settle.md):139tests;8/8flatcycle completes4saction+.72ssettle; actualobstacle/clearance/video stillopen.
+- [Bounded ground search](2026-10-07-m1-ground-search.md):106tests;8touchdownwithin4s,1.6..2mmsearchneeded;fourcontactsettling stillopen.
+- [Landing timing isolation](2026-10-07-m1-landing-timing.md):43tests;6postactioncontacts,2zeroheightwithoutload; stilltimeout, boundedcontactsearch next.
+- [Controlled lowering cycle](2026-10-07-m1-controlled-land-cycle.md):104tests;200up/downactions,nearanchor but no>10Ntouchdown,landingtimeout; ground/budget audit next.
+- [Continuous lift handoff](2026-10-07-m1-lift-handoff.md):133tests;8/8flatlift17.32..17.82cm,stable200actions; landing/obstacles unverified.
+- [Finite unloading](2026-10-07-m1-finite-unload.md):132tests;8/8sustainedunload within94samples, firstLIFTslew rejection exposeshandoff;0executedlift.
+- [Vertical-only unloading](2026-10-07-m1-vertical-only-unload.md):130tests;no lateralabort,4sustained/6instantready,timeout/0LIFT; finite-progress next.
+- [Frame residual attribution](2026-10-07-m1-frame-residual.md):54tests; lateralerror dominates25.034mm translation rejection,otherguardsvalid; vertical-onlycomparison next.
+- [Frame backtracking progress](2026-10-07-m1-frame-backtrack-progress.md):127tests; fixesdiscrete.5plateau but step25 row5 frame bound rejects; noLIFT.
+- [Selected world unload](2026-10-07-m1-selected-world-unload.md):125tests;6/8 sustainedready,remaining5.59/5.80N,timeout/0LIFT. Frame-slew reason and handoff remain.
+- [Unload joint attribution](2026-10-07-m1-unload-joint-attribution.md): stancejoint errors dominate; lateforce stillfalls without effort holds; architectural loop-ownership review next.
+- [Unload realized response](2026-10-07-m1-unload-response.md):48tests; actual wheel remains near/below anchor, root sag5mm, effort holds dominate over load holds;0LIFT.
+- [Zero force target comparison](2026-10-07-m1-zero-force-target.md):121tests; selected9..19N, unloading stilltimesout,0LIFT; architecture checkpoint before further tuning.
+
 | 2026-09-29 | M1 10 cm crossing contract and Go2-to-M1 runtime audit | Per-wheel clearance fix, single-leg teacher, collision semantics, layout fallback, 0.30 m stable arc | 65 focused tests + 1 planner test passed; PhysX gate not yet claimed; no training started | [contract fix](2026-09-29-m1-10cm-crossing-contract-fix.md) |
 | 2026-09-28 | M1 active chain conversion and 10 cm obstacle profile | M1 terrain override, explicit M1 collision reward, spacing/reset safety, focused tests | 3 obstacle-profile tests passed; focused M1 suite has stale reward-value failures; PhysX trajectory gate remains | [conversion log](2026-09-28-m1-go2-to-m1-10cm-obstacles.md) |
 - [2026-10-01 M1 approach-gate audit](2026-10-01-m1-approach-gate-audit.md): actual wrapper CPU replay reproduces premature leg output; no physical acceptance or new training.
@@ -7,11 +121,117 @@
 
 - [2026-10-01 stance encoding and auto-reset](2026-10-01-m1-reset-stance-evidence.md): RED/GREEN 45 tests, failed physical trials, current bounded reset probe; no crossing acceptance.
 
+- [2026-10-07 contact-driven crossing design](2026-10-07-m1-contact-crossing-design.md):
+  user approved direction; negative physical evidence and written acceptance spec;
+  no new control implementation or training.
+
+- [2026-10-07 isolated PREPARE gate](2026-10-07-m1-prepare-gate.md):
+  20 new gate contracts + 23 regression tests passed; no runtime integration or training.
+
 # Test Log Index
+
+- [2026-10-08 WBC execution adapter contract](2026-10-08-m1-wbc-execution-adapter.md): 11 focused tests pass; fresh native-clock initialization and sole-owner/readback guards implemented. No grounded actuation or crossing evidence yet.
+- [2026-10-07 coordinated unloading](2026-10-07-m1-coordinated-unload.md):117tests,
+  100UNLOADsteps noallocationabort; selected12..19N, timeout/0LIFT. Finite convergence
+  remains before successful measured unloading; no training or crossing proof.
+
+- [2026-10-07 measured unload feedback](2026-10-07-m1-unload-feedback.md):116tests,
+  settle-gated trial reduces selected18..31N but allocationfailsstep68; no lift.
+  Coordinate bounded COM transfer next, preserve all support thresholds.
+
+- [2026-10-07 backend effort semantics](2026-10-07-m1-backend-effort.md):112tests;
+  backend gains/sent effort match8/8, normal-only contact proxy corrected;
+  close parameter audit and progress measured unload control, no lift acceptance.
+
+- [2026-10-07 total effort audit](2026-10-07-m1-total-effort-audit.md):112tests,
+  unchanged unload control; PD+FF/contactproxy17..22Nm mismatch. Backend convention
+  audit next, not evidence for blind PD cancellation or crossing acceptance.
+
+- [2026-10-07 measured unload phase](2026-10-07-m1-unload-phase.md):112tests;
+  100-step actual timeout despite converged effort, selected25..47N; no lift,
+  clear confirmed. Audit total PD+feedforward/contact consistency next.
+
+- [2026-10-07 phase effort integration](2026-10-07-m1-phase-effort.md):108tests,
+  PREPARE8/8 then LIFTstep7 three-support allocation rejects4rows, clear confirmed;
+  bounded unloading transition remains, no lift/crossing acceptance.
+
+- [2026-10-07 matched standing comparison](2026-10-07-m1-standing-comparison.md):
+  named-leg error improves~46..48% with feedforward; two flat8x100 native0,
+  contacts maintained/clear confirmed;107tests, no dynamic lift acceptance.
+
+- [2026-10-07 guarded standing effort](2026-10-07-m1-standing-effort.md):107 tests,
+  flat8x100 native0, support maintained and effort cleared; leg-only error metric
+  still needed, no lift or crossing proof.
+
+- [2026-10-07 load-feasible physical lift](2026-10-07-m1-load-feasible-lift.md):
+  f3adc98 guard stops step38,8.49N; millimeter wheel rise, root/joint tracking
+  offsets recorded. Native0 is clean diagnostic exit, not successful lift.
+
+- [2026-10-07 load-feasible PREPARE](2026-10-07-m1-load-feasible-prepare.md):
+  102 tests; bounded flat8 readiness and independent30N allocation8/8, native0.
+  No actual lift/torque/crossing acceptance.
+
+- [2026-10-07 three-support post-PREPARE](2026-10-07-m1-three-support-audit.md):
+  actual PREPARE8/8, computed30N three-support feasible2/8; new readiness mismatch.
+  100 tests/native0, no torque application or crossing acceptance.
+
+- [2026-10-07 vertical support allocation](2026-10-07-m1-vertical-allocation.md):
+  100 tests pass; read-only eight-environment static allocation accepted, native0.
+  No applied torque or crossing acceptance; actuator lifecycle remains next.
+
+- [2026-10-07 dynamics frame audit](2026-10-07-m1-dynamics-frames.md):95 tests
+  pass; actual helper-linked8-env smoke verifies COM-to-wheel-origin Jacobian
+  and gravity conventions. No applied effort or crossing acceptance.
+
+- [2026-10-07 force-aware transfer](2026-10-07-m1-force-transfer.md):92 tests
+  pass; physical support still fails atstep43. Review whole-body load dynamics;
+  no crossing acceptance or training.
+
+- [2026-10-07 command-to-COM feedback](2026-10-07-m1-command-com-feedback.md):
+  89 tests pass; measured tracking offset verified; physical PREPARE8/8 but
+  lift loses support atstep45. Actual force allocation remains unresolved.
+
+- [2026-10-07 hard-margin feasibility](2026-10-07-m1-hard-margin-feasibility.md):
+  88 tests pass; physical200 steps retain support but stall below readiness;
+  no meaningful lift, no crossing/training acceptance.
+
+- [2026-10-07 lift support transfer](2026-10-07-m1-lift-support-transfer.md):
+  87 tests pass; physical guard stops atstep8 on transfer target bound before
+  support loss. Hard-margin feasibility unresolved; no crossing acceptance.
+
+- [2026-10-07 lift torque/pose feedback](2026-10-07-m1-lift-pose-feedback.md):
+  no estimated effort saturation;86 tests pass, optional feedback still loses
+  support atstep24. No crossing acceptance/training.
+
+- [2026-10-07 single-wheel lift](2026-10-07-m1-single-lift.md):83 CPU tests pass;
+  physical8-env guard stops atstep36 on support loss, actual rise millimeters;
+  not crossing acceptance, no training.
+
+- [2026-10-07 first PREPARE readiness8/8](2026-10-07-m1-prepare-ready.md):
+  actual flat8x100/native0, seed2; all ready by1.68s, CPU75pass;
+  no lifting/crossing/training acceptance.
+
+- [2026-10-07 live support feedback](2026-10-07-m1-live-support-feedback.md):
+  separated measured support projection from fixed IK anchors; CPU69pass,
+  flat8x32/native0, front readiness still fails.
+
+- [2026-10-07 PREPARE physical diagnostics](2026-10-07-m1-prepare-physical.md):
+  flat8x100 completes but front readiness fails; speed04 hits bound;
+  projection/feedback regressions fixed, CPU67pass, no crossing acceptance.
+
+- [2026-10-07 bounded load transfer](2026-10-07-m1-load-transfer.md):
+  frozen anchors/height, M1 IK/limits/slew; 64 focused CPU tests pass,
+  not yet a physical controller acceptance.
+
+- [2026-10-07 support observer](2026-10-07-m1-support-observer.md):
+  signed vertical contact, mass-weighted COM, per-leg margin and tilt-rate;
+  54 focused CPU tests passed, physical runtime validation remains open.
 
 This page indexes verification evidence. Keep it short enough to scan.
 
 ## Recent Logs
+
+| 2026-10-03 | M1 serial foot-anchor regression | Current foot FK captured at phase handoff and frozen within phase | `43 passed, 1 skipped`; pycompile passed | Isaac CUDA/PhysX foundation blocks physical smoke; no training | [T306](../todo/T306-m1-ame-long-train-stability.md) | [foot-anchor regression](2026-10-03-m1-foot-anchor-regression.md) |
 
 | 2026-09-20 | 静态registry/encounter CPU core | registry394ea67/core d27e26c均SPEC→QUALITY通过，main2317full252.31s/0skip/exit0、最终184focused | identity/有序完成/离开/再接近/连续多对象；1024单ray CPU12.51→0.36s、暴力oracle一致 | 未接pre-helper/sync/raw replay，非Kit/G1/G2/PPO/10000 | [T306.6h.6a.1a.2c.2](../todo/T306-m1-ame-long-train-stability.md) | [registry/coordinator](2026-09-20-m1-encounter-registry-coordinator.md) |
 
@@ -782,3 +1002,8 @@ This page indexes verification evidence. Keep it short enough to scan.
 
 - [2026-07-24 cross stance/common and SDF follow-up](2026-07-24-joint-mpc-cross-stance-common-and-sdf-follow-up.md): controlled small passes every flat/common metric, including stance grounding/semantics; line-search current-map SDF query is fixed, but strict cross remains red because no swing foot intersects the footprint.
 - [2026-07-21 flat axis-19 and viewer gate](2026-07-21-joint-mpc-rti-flat-axis19-viewer-gate.md): formal `19/19` flat cells and real eight-case viewer smoke pass; CUDA Graph capture remains Stage B work.
+
+- 2026-10-03 M1 serial PhysX follow-up: headless runtime recovered, but 128-step physical four-leg gate remains failed; no long training started.
+- [M1 teacher PhysX probe performance](2026-10-09-m1-teacher-physx-probe-performance.md): 6-obstacle swing geometry passes; real teacher probe failed to finish within >7 min without stage telemetry; added progress logging and one passing contract test; no physical crossing evidence; GPU7 separate process untouched.
+- [M1 Climb SDK source and bottom clearance](2026-10-09-m1-climb-sdk-and-bottom-clearance.md): Climb/state8 identified; numeric posture not exposed in inspected files.47tests passed, no physical crossing claim or training; vendor preset/capture needed.
+- [M1 oriented wheel-bottom measurement](2026-10-09-m1-oriented-wheel-bottom.md):52tests, source USD/full-mesh extrema agree, cached2259vs194634vertices; no physical crossing/Climb pose claim, no training.

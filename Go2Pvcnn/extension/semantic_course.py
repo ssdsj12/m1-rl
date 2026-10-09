@@ -68,8 +68,10 @@ class SemanticCourseLayoutCfg:
     center_safety_radius_m: float | None = None
     fixed_small_obstacle_local_xy: tuple[tuple[float, float], ...] | None = None
     fixed_large_obstacle_local_xy: tuple[tuple[float, float], ...] | None = None
+    small_shape_pool: tuple[ShapeKind, ...] | None = None
     min_spacing_clearance_m: float = DEFAULT_MIN_SPACING_CLEARANCE_M
     max_layout_attempts: int = DEFAULT_MAX_LAYOUT_ATTEMPTS
+    placement_strategy: str = "random"
 
 
 @dataclass(frozen=True)
@@ -271,8 +273,10 @@ def layout_cfg_for_row(
         center_safety_radius_m=base_layout_cfg.center_safety_radius_m,
         fixed_small_obstacle_local_xy=base_layout_cfg.fixed_small_obstacle_local_xy,
         fixed_large_obstacle_local_xy=base_layout_cfg.fixed_large_obstacle_local_xy,
+        small_shape_pool=base_layout_cfg.small_shape_pool,
         min_spacing_clearance_m=float(min_spacing),
         max_layout_attempts=int(base_layout_cfg.max_layout_attempts),
+        placement_strategy=base_layout_cfg.placement_strategy,
     )
 
 
@@ -564,6 +568,23 @@ def _stage_slots(
     layout_cfg: SemanticCourseLayoutCfg,
     scale_profile_overrides: dict[str, tuple[float, float]] | None = None,
 ) -> list[_LayoutSlot]:
+    if layout_cfg.placement_strategy == "m1_structured":
+        if layout_cfg.fixed_small_obstacle_local_xy or layout_cfg.fixed_large_obstacle_local_xy:
+            raise ValueError('structured and fixed obstacle layouts cannot be combined')
+        from ame_baseline.m1_mixed_course import structured_positions
+        points = structured_positions(
+            stage_counts['small'], stage_counts['large'],
+            seed=int(semantic_course_seed) * 1000003 + row * 1009 + col,
+            tile_size=tile_size,
+            small_diameter=semantic_scale_profile('small',scale_profile_overrides=scale_profile_overrides)[0],
+            large_diameter=semantic_scale_profile('large',scale_profile_overrides=scale_profile_overrides)[0],
+            gap=layout_cfg.min_spacing_clearance_m,
+            safety=layout_cfg.center_safety_half_extent_m, margin=layout_cfg.tile_margin_m,
+        )
+        return [_LayoutSlot(kind,index,xy,False) for kind in ('small','large')
+                for index,xy in enumerate(points[kind])]
+    if layout_cfg.placement_strategy != "random":
+        raise ValueError(f'unknown placement strategy {layout_cfg.placement_strategy!r}')
     ordered_classes = ("large", "small")
     placed: list[tuple[tuple[float, float], float]] = []
     slots: list[_LayoutSlot] = []
@@ -708,6 +729,9 @@ def build_course_anchors(
                     col=col,
                     slot_index=slot.slot_index,
                     semantic_class=semantic_class,
+                    shape_pool=(resolved_layout_cfg.small_shape_pool
+                                if semantic_class == "small" and resolved_layout_cfg.small_shape_pool is not None
+                                else SHARED_NATIVE_SHAPE_POOL),
                 )
                 shape_params = shape_params_for_profile(
                     shape_kind,
@@ -865,6 +889,9 @@ class SemanticCourseTerrainImporter(TerrainImporter):
         )
         for obstacle in obstacles:
             _spawn_grounded_shape(obstacle)
+        # Retain the same grounded records that were actually spawned, before
+        # consumers initialize. Rebuild the registry after any scene rebuild.
+        self.grounded_course_obstacles = tuple(obstacles)
 
 
 def ensure_semantic_course_roots() -> None:

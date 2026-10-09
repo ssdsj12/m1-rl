@@ -154,7 +154,7 @@ class AmeRslRlEnvWrapper(VecEnv):
         if self._m1_teacher_hold_pose is None or self._m1_teacher_hold_pose.shape != current_pos.shape:
             self._m1_teacher_hold_pose = default_pos.detach().clone()
             self._m1_teacher_hold_phase = torch.zeros_like(self._m1_teacher_age)
-        phase_block = max(1, int(os.environ.get("M1_TEACHER_PHASE_BLOCK", "8")))
+        phase_block = max(1, int(os.environ.get("M1_TEACHER_PHASE_BLOCK", "128")))
         phase_slot = torch.div(self._m1_teacher_age, phase_block, rounding_mode="floor")
         from extension.parallelism.m1_kinematics import M1_PLANNER_JOINT_NAMES
         planner_cols = [M1_ASSET_JOINT_NAMES.index(name) for name in M1_PLANNER_JOINT_NAMES]

@@ -50,6 +50,10 @@ graph LR
 
 ## 阅读入口
 
+M1 当前执行与验收边界：
+[human-17](human/human-17-m1-execution-gates.md) /
+[ai-17](ai/ai-17-m1-execution-gates.md)。PREPARE 通过不代表已抬腿或完成跨越。
+
 如果你是第一次读这个仓库，推荐先走 `human` 主线：
 
 1. [human/human-00-reading-guide.md](human/human-00-reading-guide.md)

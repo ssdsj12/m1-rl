@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from math import cos
+from math import cos, radians
 
 import torch
 from torch import Tensor
@@ -56,8 +56,12 @@ M1_ABAD_LOWER = (-0.523, -0.697, -0.523, -0.697)
 M1_ABAD_UPPER = (0.697, 0.523, 0.697, 0.523)
 M1_HIP_LOWER = (-2.443,) * 4
 M1_HIP_UPPER = (2.443,) * 4
-M1_KNEE_LOWER = (-2.801,) * 4
-M1_KNEE_UPPER = (2.801,) * 4
+# The source USD allows 160.485 degrees, but the published M1 specification
+# states +/-160 degrees. Use the narrower bound in IK and action decoding;
+# spawn_m1_floating_usd applies the same intersection to the live articulation.
+# Source: https://www.genisomai.com/product-robot/m1 (checked 2026-10-09).
+M1_KNEE_LOWER = (-radians(160.0),) * 4
+M1_KNEE_UPPER = (radians(160.0),) * 4
 
 
 @dataclass(frozen=True)
