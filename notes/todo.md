@@ -1,5 +1,9 @@
 ## 2026-10-10 active: T306/pure-ppo-learning
 
+- policy-contact-stall/persistent-reward：用户批准修复并恢复model600；逐障碍同侧前后轮严格恢复凭据、防绕行持久门控、全目标高度增量奖励。真实旧轨迹及4env2000步奖励回放确认后区不再正收益；学习成功仍OPEN。[最终验证/部署](log/2026-10-10-m1-persistent-crossing-repair.md)。
+
+- OPEN子节点 required-crossing/policy-contact-stall：model600边界暂停，实际4env策略回放各1000步零提前2cm/零严格跨越；关节偏离约.4rad、root升高约8cm。核对跨越未完成却离开slab后恢复正收益的漏洞；奖励修正前不自动重启。[证据](log/2026-10-10-m1-model600-contact-replay.md)。
+
 - diagnostic-wiring修复：正常恢复绑定/显式报错、真实轮底增量防刷分、真实顶部池化，212相关测试及4env原生通过；model_500边界部署。学习效果/严格跨越仍OPEN。[当前记录](log/2026-10-10-m1-recovery-prelift-pooling-repair.md)。
 
 - OPEN子节点 required-crossing/diagnostic-wiring：默认恢复路径robot未绑定，异常吞掉使recovery恒false；CPU反例确认。另有地图池化削弱/探索不足风险，尚无线上逐帧归因。本轮只诊断，未改生产或停训。[证据/下一步](log/2026-10-10-m1-perception-reward-diagnosis.md)。

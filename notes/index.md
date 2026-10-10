@@ -1,5 +1,9 @@
 # TestPvcnnWithIsaacsim Notes Index
 
+最新已授权：[持久跨越奖励修复](log/2026-10-10-m1-persistent-crossing-repair.md)。未完成同侧前后轮严格恢复，绕过后仍屏蔽正奖励；实际单轮增量延伸到障碍顶+3cm。验证后从本次model600恢复，实际PID/run以部署记录为准。以下等待确认/旧PID均为历史。
+
+最新：[model600真实策略接触回放](log/2026-10-10-m1-model600-contact-replay.md)。修复后仍无2cm预抬，已在校验model600后暂停PID12707。4env均值/采样各1000步均无严格跨越；实测策略伸腿抬机身，关节/高度恢复门槛真实不满足。待奖励防绕过设计，勿按下文旧PID自动重启。
+
 最新已授权修复：[恢复判定/增量抬轮/地图保真](log/2026-10-10-m1-recovery-prelift-pooling-repair.md)。212相关回归、4环境原生恢复/地图/奖励接线通过；model_500边界部署，恢复本次谱系并上传m1-10-10。实际跨越仍未验收，以下“尚未修复”为历史诊断。
 
 最新只读诊断：[感知与奖励接线](log/2026-10-10-m1-perception-reward-diagnosis.md)。确认默认无debug路径的robot未赋值异常被吞，稳定恢复/晋级被阻断；不解释所有零预抬。CPU复现完成，尚未修复或停训。

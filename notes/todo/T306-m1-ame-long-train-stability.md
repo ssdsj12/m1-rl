@@ -2,6 +2,12 @@
 
 ## Current State
 
+OPEN同级子节点 terminal-obstacle-space：最终probe的stage2/3末slab外摆放触发现有tile包络timeout。不要放宽边界；需在stage3全程验收前核对最后10cm障碍后轮越障/恢复余量，必要时提出最小布局调整。本轮恢复当前stage1奖励学习不以此冒充8障碍全程通过。[证据](../log/2026-10-10-m1-persistent-crossing-repair.md)。
+
+最新：用户已批准修复后恢复长训。persistent-reward子节点实现逐障碍严格恢复凭据和持久奖励屏蔽，并把实际单轮增量延伸至top+3cm；保持纯PPO/2048和严格成功定义。离线真实旧轨迹及4env2000步新奖励回放均验证绕行后正收益已剥除；最终版本验证/实际resume身份见[记录](../log/2026-10-10-m1-persistent-crossing-repair.md)。恢复后重点核对是否转为原地停滞、真实prelift/clearance/strict recovery，不凭总reward宣称学会。以下等待确认是历史。
+
+最新OPEN子节点 policy-contact-stall：12707已在model600校验后停下；诊断13222完成2000策略步后退出。真实轮底未提前2cm、严格跨越0；恢复门槛失效是策略关节/root偏离而非robot绑定复发。下一步完成未成功越障不得恢复正奖励的有界设计，并处理奖励高度空档；没有部署新奖励或重启长训。[现场记录](../log/2026-10-10-m1-model600-contact-replay.md)。
+
 diagnostic-wiring已修复，212相关测试和4env原生恢复/地图/奖励接线通过。恢复默认路径不依赖debug，.3单遭遇奖励预算按真实轮底新增高度支付；地图保留真实顶部。model_500边界部署，恢复本次谱系；真实跨越/视频验收仍OPEN。[证据与上传](../log/2026-10-10-m1-recovery-prelift-pooling-repair.md)。以下未修复状态为历史。
 
 OPEN子节点pure-ppo-learning/required-crossing/diagnostic-wiring：默认无trace/debug时，ame_env_wrapper恢复块robot未赋值并被except吞掉；CPU原代码重放false，先绑定则true。阻断稳定恢复奖励与课程晋级，但不解释零预抬。stage1 iteration372窗口4322尝试/0成功；本轮用户只要求探查，未修复/停训。地图池化和小探索幅度另作证据分级。[诊断](../log/2026-10-10-m1-perception-reward-diagnosis.md)。

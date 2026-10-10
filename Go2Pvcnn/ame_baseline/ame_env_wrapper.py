@@ -151,6 +151,7 @@ class AmeRslRlEnvWrapper(VecEnv):
             self.num_envs, self.device, obstacle_count=len(M1_FIXED_SMALL_OBSTACLE_LOCAL_XY),
         )
         self._m1_course_registry = None
+        self._m1_required_gate = None
         if getattr(getattr(self.unwrapped, 'cfg', None), 'm1_course_profile', 'fixed') == 'mixed':
             from .m1_course_registry import CourseRegistry
             from .m1_dynamic_crossing import EncounterCrossingTracker
@@ -162,6 +163,10 @@ class AmeRslRlEnvWrapper(VecEnv):
             self._m1_strict_crossing = EncounterCrossingTracker(
                 self.num_envs, self.device, obstacle_count=self._m1_course_registry.capacity,
             )
+            if getattr(self.unwrapped.cfg, 'm1_flat_first', False):
+                from .m1_required_crossing import RequiredCrossingRewardGate
+                self._m1_required_gate = RequiredCrossingRewardGate(
+                    self.num_envs, self._m1_course_registry.capacity, self.device)
         self._small_candidate_prev = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self._small_candidate_seen = torch.zeros_like(self._small_candidate_prev)
         self._small_candidate_lift_seen = torch.zeros_like(self._small_candidate_prev)
@@ -1026,6 +1031,8 @@ class AmeRslRlEnvWrapper(VecEnv):
         self._small_candidate_lift_seen.zero_()
         self._small_candidate_clearance_seen.zero_()
         self._m1_strict_crossing.reset(torch.ones(self.num_envs, dtype=torch.bool, device=self.device))
+        if self._m1_required_gate is not None:
+            self._m1_required_gate.reset(torch.ones(self.num_envs, dtype=torch.bool, device=self.device))
         self._large_candidate_seen.zero_()
         return self._format_observations(obs_dict)
 
@@ -1086,12 +1093,16 @@ class AmeRslRlEnvWrapper(VecEnv):
                 print("M1_CONTROL_TRACE " + json.dumps(row), flush=True)
         # Snapshot BEFORE Isaac auto-reset so terminal rewards cannot use a
         # newly spawned pose/course. Only the straight progressive rows apply.
-        from .m1_required_crossing import required_crossing_zone, required_crossing_reward
+        from .m1_required_crossing import progressive_required_wheels, required_crossing_reward
         required_zone = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         if getattr(self.unwrapped.cfg, 'm1_flat_first', False):
             levels = self.unwrapped.scene.terrain.terrain_levels
-            required_zone = ((levels >= 1) & (levels <= 3) & required_crossing_zone(
-                self.unwrapped.scene['robot'].data.root_pos_w, self._m1_current_course()))
+            course = self._m1_current_course()
+            course['valid'] &= ((levels >= 1) & (levels <= 3))[:, None]
+            required_zone = self._m1_required_gate.update(
+                self.unwrapped.scene['robot'].data.root_pos_w, course,
+                progressive_required_wheels(course, self.unwrapped.scene.env_origins[:, 1]),
+                self._m1_strict_crossing.recovered_for_course(course))
         obs_dict, rewards, terminated, truncated, extras = self.env.step(actions)
         small_candidate, large_candidate = self.get_obstacle_presence()
         if self._m1_step_debug:
@@ -1439,6 +1450,8 @@ class AmeRslRlEnvWrapper(VecEnv):
         self._small_candidate_lift_seen = torch.where(done, torch.zeros_like(self._small_candidate_lift_seen), self._small_candidate_lift_seen)
         self._small_candidate_clearance_seen = torch.where(done, torch.zeros_like(self._small_candidate_clearance_seen), self._small_candidate_clearance_seen)
         self._m1_strict_crossing.reset(done)
+        if self._m1_required_gate is not None:
+            self._m1_required_gate.reset(done)
         # Isaac auto-reset bypasses wrapper.reset(). Never retain the previous
         # course's world-frame wheel/root anchor in a newly reset row.
         if self._m1_teacher_hold_foot_phase is not None:

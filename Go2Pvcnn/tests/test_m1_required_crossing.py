@@ -130,8 +130,8 @@ def test_millimeter_airborne_prelift_is_incremental_capped_and_not_success():
         assert not out['recovery_complete'].item()
         if rise < .02:
             assert not out['single_prelift_event'].item()
-    assert deltas == pytest.approx([.15, .25, .20, .40, 0.], abs=1e-6)
-    assert sum(deltas) == pytest.approx(1.)
+    assert deltas == pytest.approx([.15, .25, .20, .90, .50], abs=1e-6)
+    assert sum(deltas) == pytest.approx(2.)
     assert t.crossing_count.item() == 0
 
 

@@ -21,7 +21,10 @@ class EncounterCrossingTracker:
         self.prelift_high_water=torch.zeros(num_envs,device=device)
         self.last_contact_bottom=torch.full((num_envs,),float('nan'),device=device)
         self.prelift_bottom_high_water=torch.full_like(self.last_contact_bottom,float('nan'))
+        self.prelift_target_bottom=torch.full_like(self.last_contact_bottom,float('nan'))
+        self.prelift_budget=torch.zeros_like(self.prelift_high_water)
         self.used=torch.zeros(num_envs,obstacle_count,4,device=device,dtype=torch.bool)
+        self.recovered=torch.zeros_like(self.used)
         self.known_ids=torch.full((num_envs,obstacle_count),-2,device=device,dtype=torch.long)
         self.crossing_count=torch.zeros_like(self.slot)
 
@@ -32,11 +35,27 @@ class EncounterCrossingTracker:
         self.inner.reset(rows)
         self.slot[rows]=-1;self.target_obstacle_id[rows]=-1
         self.early_lift[rows]=False;self.used[rows]=False
+        self.recovered[rows]=False
         self.prelift_rewarded[rows]=False
         self.prelift_high_water[rows]=0
         self.last_contact_bottom[rows]=float('nan')
         self.prelift_bottom_high_water[rows]=float('nan')
+        self.prelift_target_bottom[rows]=float('nan')
+        self.prelift_budget[rows]=0
         self.crossing_count[rows]=0;self.known_ids[rows]=-2
+
+    @torch.no_grad()
+    def recovered_for_course(self,course):
+        """Return strict receipts only for the same current registry identities.
+
+        This read-only snapshot is safe to query before the next update notices
+        a terrain change. Unknown, replaced and invalid slots have no receipt.
+        """
+        ids,valid=course['ids'],course['valid']
+        if ids.shape!=self.known_ids.shape or valid.shape!=ids.shape:
+            raise ValueError('course registry capacity/batch mismatch')
+        matches=(self.known_ids==ids)&(self.known_ids>=0)&valid
+        return (self.recovered&matches[:,:,None]).clone()
 
     @torch.no_grad()
     def update(self,*,wheel_pos_w,wheel_quat_w,course,direction_w,wheel_bottom_z_w,wheel_grounded,
@@ -88,6 +107,8 @@ class EncounterCrossingTracker:
         self.inner.target_wheel=torch.where(start,new_wheel,self.inner.target_wheel)
         self.last_contact_bottom[start]=float('nan')
         self.prelift_bottom_high_water[start]=float('nan')
+        self.prelift_target_bottom[start]=float('nan')
+        self.prelift_budget[start]=0
         self.prelift_high_water[start]=0
         self.used[rows[start],new_slot[start],new_wheel[start]]=True
         enabled=self.slot>=0
@@ -107,10 +128,18 @@ class EncounterCrossingTracker:
         # Track the last loaded wheel-bottom location, not the ground beneath
         # the future obstacle. Rolling uphill while loaded is not an air lift.
         contact_update=enabled&before&grounded&torch.isfinite(bottom)
+        # Freeze the target and maximum payable rise at the first measured
+        # loaded reference. Lower recontacts must never replenish the budget.
+        first_contact=contact_update&~torch.isfinite(self.prelift_target_bottom)
+        target_bottom=selected_center[:,2]+float(required_clearance)
+        self.prelift_target_bottom=torch.where(first_contact,target_bottom,
+                                               self.prelift_target_bottom)
+        self.prelift_budget=torch.where(first_contact,((target_bottom-bottom)/.02).clamp_min(0.),
+                                        self.prelift_budget)
         self.last_contact_bottom=torch.where(contact_update,bottom,self.last_contact_bottom)
-        loaded_high_water=torch.where(torch.isfinite(self.prelift_bottom_high_water),
+        observed_high_water=torch.where(torch.isfinite(self.prelift_bottom_high_water),
             torch.maximum(self.prelift_bottom_high_water,bottom),bottom)
-        self.prelift_bottom_high_water=torch.where(contact_update,loaded_high_water,
+        self.prelift_bottom_high_water=torch.where(contact_update,observed_high_water,
                                                    self.prelift_bottom_high_water)
         lifted=(~grounded & torch.isfinite(self.last_contact_bottom)
                 & (bottom>=self.last_contact_bottom+.02))
@@ -149,38 +178,49 @@ class EncounterCrossingTracker:
             wheel_bottom_z_w=wheel_bottom_z_w,obstacle_half_extents=projected,
             required_clearance=required_clearance,required_far_margin=required_far_margin,
             stable_frames=stable_frames,approach_distance=approach_distance)
+        # The inner tracker clears target_wheel on recovery. Preserve the
+        # selected slot/wheel from before its update, and certify only after
+        # its full consecutive nominal-support recovery gate passes.
+        completed=enabled&out['recovery_complete']
+        self.recovered[rows[completed],slot[completed],selected[completed]]=True
         self.crossing_count+=out['event_complete'].long()
         out['attempt_started']=start
         out['crossing_count']=self.crossing_count.clone()
         out['episode_complete']=torch.zeros_like(start)
         out['target_obstacle_id']=self.target_obstacle_id.clone()
         out['single_prelift_event']=single_prelift
-        # Reward newly measured rise before the obstacle, while retaining the
-        # >=2cm event as telemetry and as a separate strict crossing gate.
-        # The world-bottom high-water mark survives bobbing and lower loaded
-        # references. Loaded uphill motion advances it without reward. The
-        # normalized budget caps all increments at one per encounter.
-        matches_lane=local_pos[rows,selected,1].abs()<=hy[rows,slot]+widths[rows,selected]
-        progress_safe=(enabled & before & matches_lane & ~grounded & single_support
-                       & ~out['failed'] & ~collision & torch.isfinite(bottom)
-                       & torch.isfinite(self.last_contact_bottom)
-                       & torch.isfinite(self.prelift_bottom_high_water))
-        rise=((bottom-self.prelift_bottom_high_water)/.02).clamp(0.,1.)
-        progress_delta=torch.minimum(rise,1.-self.prelift_high_water)
-        out['prelift_progress_delta']=torch.where(progress_safe,progress_delta,
-                                                 torch.zeros_like(progress_delta))
-        self.prelift_high_water+=out['prelift_progress_delta']
-        self.prelift_bottom_high_water=torch.where(progress_safe,
-            torch.maximum(self.prelift_bottom_high_water,bottom),self.prelift_bottom_high_water)
-        out['overlap_sample']=overlap & torch.isfinite(bottom_clearance)
-        out['bottom_clearance']=torch.where(out['overlap_sample'], bottom_clearance,
-                                           torch.full_like(bottom_clearance, float('nan')))
         # Failed attempts stay counted, but must not suppress every later
-        # encounter. Release only once the target wheel leaves this vicinity.
+        # encounter. Decide abandonment before rewarding this observation so
+        # retreating outside the encounter cannot pay a final height increment.
         outside=(local_pos[rows,selected,0].abs()>hx[rows,slot]+wheel_horizontal_radius+approach_distance)
         outside |= local_pos[rows,selected,1].abs()>hy[rows,slot]+widths[rows,selected]+approach_distance
         abandoned=enabled&outside&~self.inner.awaiting_recovery
         out['failed'] |= abandoned
+        # Reward newly measured rise before the obstacle, while retaining the
+        # >=2cm event as telemetry and as a separate strict crossing gate.
+        # The world-bottom high-water mark survives bobbing and lower loaded
+        # references. Loaded and unsafe motion advances it without reward. The
+        # same 2cm units continue only up to the actual top+clearance target.
+        matches_lane=local_pos[rows,selected,1].abs()<=hy[rows,slot]+widths[rows,selected]
+        progress_safe=(enabled & before & matches_lane & ~grounded & single_support
+                       & ~out['failed'] & ~collision & torch.isfinite(bottom)
+                       & torch.isfinite(self.last_contact_bottom)
+                       & torch.isfinite(self.prelift_bottom_high_water)
+                       & torch.isfinite(self.prelift_target_bottom))
+        rewarded_bottom=torch.minimum(bottom,self.prelift_target_bottom)
+        rise=((rewarded_bottom-self.prelift_bottom_high_water)/.02).clamp_min(0.)
+        progress_delta=torch.minimum(rise,(self.prelift_budget-self.prelift_high_water).clamp_min(0.))
+        out['prelift_progress_delta']=torch.where(progress_safe,progress_delta,
+                                                 torch.zeros_like(progress_delta))
+        self.prelift_high_water+=out['prelift_progress_delta']
+        # An unsafe rise cannot become newly payable when support is restored
+        # at the same height; only later, newly measured safe rise can earn.
+        measured_before=enabled&before&torch.isfinite(bottom)
+        self.prelift_bottom_high_water=torch.where(measured_before,
+            observed_high_water,self.prelift_bottom_high_water)
+        out['overlap_sample']=overlap & torch.isfinite(bottom_clearance)
+        out['bottom_clearance']=torch.where(out['overlap_sample'], bottom_clearance,
+                                           torch.full_like(bottom_clearance, float('nan')))
         released=out['recovery_complete'] | abandoned
         if released.any():
             self.inner.reset(released)
@@ -189,4 +229,6 @@ class EncounterCrossingTracker:
             self.prelift_high_water[released]=0
             self.last_contact_bottom[released]=float('nan')
             self.prelift_bottom_high_water[released]=float('nan')
+            self.prelift_target_bottom[released]=float('nan')
+            self.prelift_budget[released]=0
         return out

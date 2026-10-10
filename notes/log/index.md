@@ -1,3 +1,5 @@
+- [Persistent crossing reward repair](2026-10-10-m1-persistent-crossing-repair.md): approved repair/resume; actual recovered-wheel ledger and full-target measured prelift, no positive post-slab bypass reward in saved and native trajectories; learning still open.
+- [Model600 contact replay](2026-10-10-m1-model600-contact-replay.md): historical checkpoint-boundary diagnosis, followed by approved reward repair above.
 - [Recovery/prelift/pooling repair](2026-10-10-m1-recovery-prelift-pooling-repair.md):212CPUtests,4envnative recovery/map/reward wiring pass; model500boundary deployment and m1-10-10 publication, no learning claim.
 - [Perception/recovery diagnosis](2026-10-10-m1-perception-reward-diagnosis.md): historical diagnosis, now followed by approved repair above.
 - [Required crossing reward/layout](2026-10-10-m1-required-crossing.md):134affectedtests/finalnativepassed; fresh2048PID10311 starting; no learned crossing claim.

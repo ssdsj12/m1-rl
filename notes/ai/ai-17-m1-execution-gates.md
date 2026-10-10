@@ -1,5 +1,15 @@
 # M1 execution gates contract
 
+Latest [persistent reward](../log/2026-10-10-m1-persistent-crossing-repair.md)
+supersedes the finite slab and .3-per-encounter cap. Stages1--3 latch approached
+obligations until identity-matched strict recovered receipts for both authored
+same-side wheels (FBL/RBL or FAR/RAR). Bypass/far exit/retreat cannot unlock.
+Pre-step mask survives Isaac terminal reset; done/registry change clear state.
+Actual safe single-wheel progress retains .3/.02m slope through measured
+top+required_clearance, frozen initial-loaded budget, no repeated/unsafe-height
+credit. Strict2cm event and>=3cm sampled top clearance/recovery gates unchanged.
+PurePPO2048 resumes only the current model600 lineage; learned crossing OPEN.
+
 Latest [repair](../log/2026-10-10-m1-recovery-prelift-pooling-repair.md): default
 recovery binds robot and surfaces errors; per-encounter .3 incremental measured
 wheel-bottom reward with world high-water anti-farming; obstacle pooling gathers

@@ -61,10 +61,13 @@ try:
     reset_checks=[]
     reward_checks=[]
     scan_checks=[]
+    bypass_checks=[]
     for curriculum_stage in (1,2,3,4,0):
         # Diagnostic-only state assignment to test every reset path; no checkpoint.
         env._m1_learning_gate.stage=curriculum_stage
         wrapper.reset()
+        assert not wrapper._m1_required_gate.started.any()
+        assert not wrapper._m1_strict_crossing.recovered.any()
         course=wrapper._m1_current_course()
         count=course['valid'].sum(-1)
         if curriculum_stage<4:
@@ -108,11 +111,34 @@ try:
             raw_top=scanner.data.ray_hits_w[:,:,2].masked_fill(~raw_small,-torch.inf).amax(-1)
             assert torch.allclose(encoded_top,raw_top,atol=1e-4), 'Pooling diluted real block height'
             scan_checks.append({'stage':curriculum_stage,'raw_top':raw_top.tolist(),'encoded_top':encoded_top.tolist()})
+            # The last stage2/3 slabs reach the tile boundary. A placement
+            # after it is an intentional out-of-bounds timeout, not a usable
+            # reward check. Keep the boundary; test post-slab stage1 here.
+            if curriculum_stage!=1:
+                continue
+            # Diagnostic placement after the last slab tests reward wiring,
+            # not locomotion or crossing. No receipt is manufactured.
+            pose=robot.data.root_state_w[:,:7].clone()
+            last=torch.where(course['valid'],course['centers_top'][...,0]+course['half_extents'][...,0],
+                             torch.full_like(course['half_extents'][...,0],-torch.inf)).amax(-1)
+            pose[:,0]=last+1.1
+            robot.write_root_pose_to_sim(pose)
+            robot.write_root_velocity_to_sim(torch.zeros((4,6),device=args.device))
+            for _ in range(4):
+                _,reward,done,extra=wrapper.step(zeros)
+                log=extra['log']
+                assert not done.any(), ('post_slab_placement',curriculum_stage,pose[:,0].tolist())
+                assert not wrapper._m1_strict_crossing.recovered.any()
+                assert float(log['RequiredCrossing/zone_fraction'])==1.
+                assert float(log['RequiredCrossing/event_bonus'])==0.
+                assert (reward<=1e-6).all()
+                assert torch.allclose(reward,env.reward_manager._step_reward.clamp_max(0).sum(-1)*env.step_dt,atol=1e-5)
+            bypass_checks.append({'stage':curriculum_stage,'reward':reward.tolist(),'blocked':1.,'recovered':0})
     print('M1_FLAT_FIRST_RESULT '+json.dumps({'scope':'geometry_and_reset_integration_not_learning',
         'initial_obstacles':0,'stage_heights':measured,'reset_checks':reset_checks,
         'policy_shape':list(obs.shape),'metrics':env._m1_learning_gate.metrics(),
         'reward_checks':reward_checks,'recovery_ready_last20':recovery_checks[-20:],
-        'live_scan_checks':scan_checks}),flush=True)
+        'live_scan_checks':scan_checks,'post_slab_checks':bypass_checks}),flush=True)
 except BaseException:
     traceback.print_exc()
     raise
