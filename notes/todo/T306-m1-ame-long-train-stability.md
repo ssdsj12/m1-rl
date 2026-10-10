@@ -2,6 +2,8 @@
 
 ## Current State
 
+只读跟进terminal-obstacle-space：stage2标称后轮严格远侧落足剩余root边界余量.411292m；stage3欠.488708m（+X、585mm标称水平姿态）。不能泛化为所有策略姿态不可能；stage2/3原probe摆放均越界不等于两者都不能跨。候选仅stage3整列后移.6m，仍需动态恢复余量验证，尚未改地形。当前stage1 PID14800继续；raw增量非零但2cm事件/严格成功0。[监控与静态审计](../log/2026-10-10-m1-persistent-monitor-2218.md)。
+
 OPEN同级子节点 terminal-obstacle-space：最终probe的stage2/3末slab外摆放触发现有tile包络timeout。不要放宽边界；需在stage3全程验收前核对最后10cm障碍后轮越障/恢复余量，必要时提出最小布局调整。本轮恢复当前stage1奖励学习不以此冒充8障碍全程通过。[证据](../log/2026-10-10-m1-persistent-crossing-repair.md)。
 
 最新：用户已批准修复后恢复长训。persistent-reward子节点实现逐障碍严格恢复凭据和持久奖励屏蔽，并把实际单轮增量延伸至top+3cm；保持纯PPO/2048和严格成功定义。离线真实旧轨迹及4env2000步新奖励回放均验证绕行后正收益已剥除；最终版本验证/实际resume身份见[记录](../log/2026-10-10-m1-persistent-crossing-repair.md)。恢复后重点核对是否转为原地停滞、真实prelift/clearance/strict recovery，不凭总reward宣称学会。以下等待确认是历史。
