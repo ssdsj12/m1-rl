@@ -35,6 +35,58 @@ def _terms(case):
     return wheel_obstacle_reward_terms(**case)
 
 
+def test_ppo_single_wheel_lift_earns_reward_while_chassis_waits():
+    case = _case()
+    case['root_lin_vel_w'].zero_()
+    case['wheel_lin_vel_w'].zero_()
+    case['wheel_lin_vel_w'][0, 0, 2] = .1
+    case['allow_stationary_single_lift'] = True
+    assert _terms(case)[1].item() > 0
+
+
+@pytest.mark.parametrize('distance', [.18,.20,.34,.36,.48,.50,.64])
+def test_narrow_obstacle_between_old_probe_points_still_rewards_pre_lift(distance):
+    case = _case(semantic=0)
+    terrain=case['terrain']
+    terrain.height_w.zero_()
+    xs=torch.arange(121)*.02-1.2
+    ys=torch.arange(121)*.02-1.2
+    mask=((xs-distance).abs()[None,:] <= .025) & (ys.abs()[:,None] <= .025)
+    terrain.semantic_id[0][mask]=1
+    terrain.height_w[0][mask]=.10
+    case['root_lin_vel_w'].zero_()
+    case['wheel_lin_vel_w'].zero_()
+    case['wheel_lin_vel_w'][0,0,2]=.1
+    case['allow_stationary_single_lift']=True
+    assert _terms(case)[1].item() > 0, 'real5cm-wide obstacle missed between sparse x probes'
+
+
+def test_ppo_stationary_multi_wheel_bounce_is_not_single_lift():
+    case = _case()
+    case['root_lin_vel_w'].zero_()
+    case['wheel_lin_vel_w'].zero_()
+    case['wheel_lin_vel_w'][0, :2, 2] = .1
+    case['allow_stationary_single_lift'] = True
+    assert _terms(case)[1].item() == 0
+
+
+def test_stationary_lift_has_episode_budget_and_repeated_reads_are_idempotent():
+    from ame_baseline.m1_obstacle_rewards import bounded_stationary_lift_reward
+    state = {}
+    total = 0.
+    for step in range(30):
+        args = dict(reward=torch.ones(2), stationary=torch.tensor([True, False]),
+                    reset=torch.tensor([False, False]), step_id=step, dt=.02, state=state)
+        out = bounded_stationary_lift_reward(**args)
+        torch.testing.assert_close(bounded_stationary_lift_reward(**args), out)
+        total += out[0].item() * .02
+        assert out[1].item() == 1.
+    assert total == pytest.approx(.05)
+    out = bounded_stationary_lift_reward(reward=torch.ones(2), stationary=torch.ones(2,dtype=torch.bool),
+        reset=torch.tensor([True, False]), step_id=31, dt=.02, state=state)
+    assert out[0].item() > 0
+
+
 def test_forward_progress_and_articulated_wheel_lift_have_bounded_signal():
     progress, climb = _terms(_case())
     torch.testing.assert_close(progress, torch.tensor([.5]))
@@ -229,6 +281,15 @@ def test_wrapper_selects_named_link_state_independent_of_body_order():
             get_command=lambda name: torch.tensor([[.5, 0., 0.]])))
     assert module.m1_small_obstacle_progress(env).item() == pytest.approx(.5)
     assert module.m1_small_obstacle_climb(env).item() > 0.0
+
+
+def test_mixed_course_never_uses_fixed_course_reward_fallback():
+    from ame_baseline.m1_obstacle_rewards import reward_course_origin
+    origin = torch.zeros(2, 3)
+    mixed = SimpleNamespace(cfg=SimpleNamespace(m1_course_profile='mixed'))
+    fixed = SimpleNamespace(cfg=SimpleNamespace(m1_course_profile='fixed'))
+    assert reward_course_origin(mixed, origin) is None
+    torch.testing.assert_close(reward_course_origin(fixed, origin), origin[:, :2])
 
 
 def test_forward_probe_does_not_fabricate_wheel_clearance():

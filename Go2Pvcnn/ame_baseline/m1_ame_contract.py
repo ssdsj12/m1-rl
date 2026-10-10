@@ -24,12 +24,14 @@ M1_LEG_ACTION_SCALE_RAD = 1.50
 M1_WHEEL_ACTION_SCALE_RAD_S = 1.0 / M1_WHEEL_RADIUS_M
 M1_WHEEL_SPEED_LIMIT_RAD_S = 2.0 / M1_WHEEL_RADIUS_M
 # Center each wheel below its hip mount using the M1 0.26/0.28 m links.
-# Keep the documented 1.10 rad knee bend while eliminating the backward
-# support-polygon offset of the imported fixed-base demonstration pose.
-_TRAIN_KNEE = 1.10
+# User-approved Climb reference: 585 mm TOTAL source-mesh height, not root Z.
+# Joint angles are calibrated from this asset, not vendor-published presets.
+# See scripts/audit_m1_standing_height.py for independent mesh FK verification.
+_TRAIN_KNEE = 1.6824843873167417
 _TRAIN_HIP = -atan2(.28 * sin(_TRAIN_KNEE), .26 + .28 * cos(_TRAIN_KNEE))
 M1_TRAINING_JOINT_POS = (0., _TRAIN_HIP, _TRAIN_KNEE, 0.) * 4
-M1_TRAINING_ROOT_Z_M = M1_WHEEL_RADIUS_M + .26 * cos(_TRAIN_HIP) + .28 * cos(_TRAIN_HIP + _TRAIN_KNEE)
+# Ground the lowest collision mesh; the analytic tire differs by 0.21 mm.
+M1_TRAINING_ROOT_Z_M = 0.45600081145762916
 
 
 def m1_last_leg_action(env):

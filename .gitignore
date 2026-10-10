@@ -27,6 +27,7 @@ nohup.out
 # Model checkpoints and training outputs
 runs/
 checkpoints/
+*.pt
 *.pth
 *.ckpt
 
@@ -52,3 +53,5 @@ eval_output/*/
 
 # Isolated development worktrees
 .worktrees/
+.m1-pure-ppo.lock
+.superpowers/

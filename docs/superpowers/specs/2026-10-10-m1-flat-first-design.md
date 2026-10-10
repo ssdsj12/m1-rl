@@ -1,0 +1,29 @@
+# Approved M1 flat-first PPO curriculum
+
+User confirmed2026-10-10: restartfromscratch,2048envs,purePPO,noactionguidance.
+585mmnominalposture unchanged. Learn .18--.45m/sforward on trulyemptyflatground
+before obstacle exposure. Preserve existingobstacle/mixedprofiles fordiagnostics.
+
+Runtime courses:stage0row0flatempty;stage1row1flat2alternating3cmblocks;
+stage2row2flat4alternating6cm;stage3row3flat8alternating10cm;
+stage4originalmixedtypes onrows4--9. Prebuildgeometry,change origins onlyonreset.
+Sparsepitch1.8m,densepitch.9m,lanes+/-.215m. Stage0start2mbehindcenterof16mtile
+keeps20s*.45m/snominalforwardtravelwithinemptytile.
+
+Three consecutivewindows each>=2048completedepisodes qualify by>=90%full
+finite nonterminatedepisodes andpositive worldXprogress>=.7integratedcommand,
+plusactualtimeweighted bodyXspeederror<.08m/s. Shortfailures countdenominator;
+initialresetdoesnot. Stampstageperepisode sooldstagecannotpromotenewstage.
+Stages1--3addstrictattempts>0 and stablepostcrossrecovery/attempts>=.5.
+Existingstrictcrossingreportremainsunchanged;curriculumrecoveryismorestrict.
+
+SampleviaexistingvelocityrewardhookbeforeIsaacautoreset withoutalteringreturn.
+TensorBoardlogsCurriculum/terrain_levels/*stage,count,passrate,velocityerror,
+strictattempts/successes andstreak. Checkpointpersiststage+windowaggregates;
+discardinflightstatesonresume;rejectflatfirstresumewithmissingmetadata.
+
+Validation:CPUfalsepositive/regressiontests;native4envactualcolliderheights,
+initialemptyregistry,andresetpaths;thenfresh2048run10000iterations,save100.
+Keepcheckpoints,openTensorBoardnewrun,updateexistingmonitor. NoGPUparallelprobe
+besidelongrun. Physicalwalking/crossingclaimsrequireactualrollout/video,notgates
+ortrainingstartup. Otherprograms/display/oldGPU7untouched.

@@ -82,7 +82,7 @@ class M1AmeRewardsCfg(CrossLargeComplexPpoRewardsCfg):
         # Strong pre-contact shaping encourages an actual early swing. This
         # remains distinct from strict success, which still requires 5 cm
         # wheel-bottom clearance and stable post-obstacle touchdown.
-        func=m1_obstacle_rewards.m1_small_obstacle_climb, weight=1.5,
+        func=m1_obstacle_rewards.m1_small_obstacle_climb, weight=4.0,
         params={"command_name": "base_velocity"},
     )
     small_obstacle_corridor = RewTerm(
@@ -107,7 +107,7 @@ class M1AmeRewardsCfg(CrossLargeComplexPpoRewardsCfg):
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=list(M1_PLANNER_JOINT_NAMES), preserve_order=True)},
     )
     joint_pos = RewTerm(
-        func=m1_rewards.m1_joint_position_penalty, weight=-0.7,
+        func=m1_rewards.m1_joint_position_penalty, weight=-0.1,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=list(M1_PLANNER_JOINT_NAMES), preserve_order=True),
                 "stand_still_scale": 5.0, "velocity_threshold": 0.3},
     )
@@ -136,12 +136,9 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
     wheel_radius_m: float = M1_WHEEL_RADIUS_M
     wheel_thickness_m: float = M1_WHEEL_THICKNESS_M
     wheel_horizontal_envelope_m: float = M1_WHEEL_HORIZONTAL_ENVELOPE_M
-    # Keep the reset contract identical to M1_CFG/checkpoint_602.  The
-    # centered-wheel training pose is useful for a fresh policy but makes an
-    # existing locomotion checkpoint fall immediately.
-    # Keep the checkpoint's supported stance.  M1_ROOT_Z_M is the centered
-    # wheel pose used by the fresh asset; model_600 was trained with the
-    # taller -0.573 rad hip stance below.
+    # User-approved 585 mm total-height reference, calibrated on the M1 USD.
+    # This is root-frame height, not total robot height. Checkpoint reuse must
+    # be physically checked because the default joint-position offset changes.
     root_z_m: float = M1_TRAINING_ROOT_Z_M
     wheel_action_scale: float = M1_WHEEL_ACTION_SCALE_RAD_S
     actions: M1AmeActionsCfg = M1AmeActionsCfg()
@@ -425,10 +422,10 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
                     term.params["asset_cfg"].body_names = m1_foot_pattern
                     term.params["asset_cfg"].preserve_order = True
         self.experiment_name = "m1_cross_large_complex_ame"
-        # The online MPC teacher owns and refreshes the reference cache.
-        self.planner_owned_reference_cache = True
-        self.use_batched_reference_trajectory = True
-        self.planner_backend = "mpc"
+        # PPO alone owns actions; legacy planner configuration is inert.
+        self.planner_owned_reference_cache = False
+        self.use_batched_reference_trajectory = False
+        self.planner_backend = None
 
 __all__ = [
     "M1AmeCrossLargeComplexEnvCfg",

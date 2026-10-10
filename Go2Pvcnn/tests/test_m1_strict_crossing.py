@@ -285,7 +285,7 @@ def test_recovery_diagnostic_failure_cannot_clear_safe_crossing_touchdown():
 
     touchdown_split = gate_block.index("strict_crossing_touchdown = touchdown_safe.clone()")
     recovery_pose = gate_block.index("recovery_pose_ready = m1_recovery_pose_ready(")
-    recovery_except = gate_block.rindex("except Exception:")
+    recovery_except = gate_block.rindex("except Exception as exc:")
     recovery_failure = gate_block[recovery_except:]
 
     assert touchdown_split < recovery_pose < recovery_except

@@ -36,6 +36,7 @@ def wheel_obstacle_reward_terms(
     course_origin_xy: Tensor | None = None,
     return_presence: bool = False,
     return_clearance: bool = False,
+    allow_stationary_single_lift: bool = False,
 ) -> tuple[Tensor, ...]:
     """Return bounded signed progress and nonnegative articulated lift [B].
 
@@ -64,8 +65,15 @@ def wheel_obstacle_reward_terms(
     lateral = torch.stack((-direction[:, 1], direction[:, 0]), -1)
 
     radius = M1_WHEEL_HORIZONTAL_ENVELOPE_M
+    # Keep the existing physical lookahead bounds, but cover the gaps between
+    # old15cm samples: authored5cm blocks otherwise starve real pre-lift rewards.
+    # Retain original samples so diagnostics at the exact old offsets stay valid.
+    longitudinal = sorted(set(
+        [-radius, 0., radius, radius+.15, radius+.30, radius+.45, radius+.60]
+        + [-radius + .02*i for i in range(int((2*radius+.60)/.02)+1)]
+    ))
     offsets = command.new_tensor([(x, y)
-        for x in (-radius, 0., radius, radius + .15, radius + .30, radius + .45, radius + .60)
+        for x in longitudinal
         for y in (-radius, 0., radius)])
     patch_xy = (wheel_pos[:, :, None, :2]
                 + direction[:, None, None] * offsets[None, None, :, :1]
@@ -176,6 +184,16 @@ def wheel_obstacle_reward_terms(
     )
     relative_up = wheel_vel[..., 2] - rigid_velocity[..., 2]
     lift_speed = torch.minimum(wheel_vel[..., 2], relative_up).clamp(0., .2)
+    if allow_stationary_single_lift:
+        # PPO must be able to discover lifting before forward travel. Only
+        # one articulating wheel near a real local small obstacle is eligible;
+        # body heave, reverse motion and stationary multi-wheel bouncing are not.
+        single_up = (lift_speed > .02).sum(-1) == 1
+        waiting = (root_forward.abs() <= .02) & single_up
+        forward_factor = torch.where(
+            waiting[:, None] & active_wheel & (lift_speed > .02),
+            torch.ones_like(forward_factor), forward_factor,
+        )
     # wheel_pos is the wheel-link centre, not the contact patch.  Convert to
     # wheel-bottom clearance before both shaping and success accounting.
     target_top = torch.where(small, height, -torch.inf).amax(-1)
@@ -219,7 +237,15 @@ def wheel_obstacle_reward_terms(
     return result
 
 
-def _terms_from_env(env, command_name, return_presence=False, return_clearance=False):
+def reward_course_origin(env, scene_origins):
+    """Only the fixed diagnostic course may use fixed-six fallback geometry."""
+    if getattr(getattr(env, 'cfg', None), 'm1_course_profile', 'fixed') == 'mixed':
+        return None
+    return scene_origins[:, :2] if scene_origins is not None else None
+
+
+def _terms_from_env(env, command_name, return_presence=False, return_clearance=False,
+                    allow_stationary_single_lift=False):
     from tracking.mdp.policy_geometry_rewards import _terrain_from_scanner
 
     robot = env.scene['robot']
@@ -241,8 +267,9 @@ def _terms_from_env(env, command_name, return_presence=False, return_clearance=F
         root_lin_vel_w=data.root_link_lin_vel_w, root_ang_vel_w=data.root_ang_vel_w,
         wheel_pos_w=data.body_link_pos_w[:, body_ids],
         wheel_lin_vel_w=data.body_link_lin_vel_w[:, body_ids], terrain=terrain,
-        course_origin_xy=(scene_origins[:, :2] if scene_origins is not None else None),
+        course_origin_xy=reward_course_origin(env, scene_origins),
         return_presence=return_presence, return_clearance=return_clearance,
+        allow_stationary_single_lift=allow_stationary_single_lift,
     )
     return terms
 
@@ -251,8 +278,42 @@ def m1_small_obstacle_progress(env, command_name='base_velocity') -> Tensor:
     return _terms_from_env(env, command_name)[0]
 
 
-def m1_small_obstacle_climb(env, command_name='base_velocity') -> Tensor:
-    return _terms_from_env(env, command_name)[1]
+def bounded_stationary_lift_reward(*, reward, stationary, reset, step_id, dt, state):
+    """At most .05 unweighted reward-seconds per episode while not progressing.
+
+    With climb weight4 this is <=.2 per episode, well below fall cost20.
+    Duplicate metric reads at the same physics state do not spend budget twice.
+    Forward crossing shaping is unaffected; no action is changed here.
+    """
+    if dt <= 0:
+        raise ValueError('positive reward timestep required')
+    if state.get('step') == step_id:
+        return state['reward'].clone()
+    remaining = state.get('remaining', torch.full_like(reward, .05))
+    remaining = torch.where(reset, torch.full_like(remaining, .05), remaining)
+    granted = torch.minimum(reward.clamp_min(0), remaining / dt)
+    result = torch.where(stationary, granted, reward)
+    state.update(step=step_id, reward=result.detach().clone(),
+                 remaining=(remaining-torch.where(stationary, granted*dt, 0.)).clamp_min(0).detach())
+    return result
+
+
+def m1_small_obstacle_climb(env, command_name='base_velocity', allow_stationary_single_lift=True) -> Tensor:
+    reward = _terms_from_env(env, command_name,
+        allow_stationary_single_lift=allow_stationary_single_lift)[1]
+    if allow_stationary_single_lift and hasattr(env, 'common_step_counter'):
+        if not hasattr(env, '_m1_stationary_lift_reward_state'):
+            env._m1_stationary_lift_reward_state = {}
+        # A conservative speed test also budgets sideward shuffling: it must
+        # not repeatedly rearm an unlimited stationary-lift bonus.
+        command = env.command_manager.get_command(command_name)[:, :2]
+        direction = command / command.norm(dim=-1, keepdim=True).clamp_min(.1)
+        forward = (env.scene['robot'].data.root_lin_vel_b[:, :2] * direction).sum(-1)
+        stationary = forward <= .02
+        reward = bounded_stationary_lift_reward(reward=reward, stationary=stationary,
+            reset=env.reset_buf.bool(), step_id=int(env.common_step_counter),
+            dt=float(env.step_dt), state=env._m1_stationary_lift_reward_state)
+    return reward
 
 
 def m1_obstacle_presence(env, command_name='base_velocity') -> tuple[Tensor, Tensor]:

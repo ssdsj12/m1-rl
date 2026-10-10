@@ -29,9 +29,10 @@ def get_m1_ame_train_cfg():
         os.environ.get("M1_LEARNING_RATE", "2.0e-5")
     )
     cfg["algorithm"]["schedule"] = "fixed"
-    cfg["algorithm"]["imitation_coef"] = float(
-        os.environ.get("M1_IMITATION_COEF", "0.25")
-    )
+    # Pure PPO is an explicit contract, not a ratio override which could
+    # still execute the teacher or populate imitation targets.
+    cfg["enable_mpc_teacher"] = False
+    cfg["algorithm"]["imitation_coef"] = 0.0
     cfg["algorithm"]["ppo_log_ratio_clip"] = 5.0
     return cfg
 

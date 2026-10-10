@@ -21,10 +21,6 @@ for path in (PACKAGE_ROOT, RSL_RL_ROOT):
         sys.path.insert(0, str(path))
 
 
-from ame_baseline.m1_runtime_defaults import apply_m1_runtime_defaults
-apply_m1_runtime_defaults()
-
-
 def _parse_args():
     from isaaclab.app import AppLauncher
 
@@ -32,7 +28,7 @@ def _parse_args():
     parser.add_argument("--num_envs", type=int, default=1024)
     parser.add_argument("--max_iterations", type=int, default=10000)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--course-profile", choices=("mixed", "fixed"), default="mixed",
+    parser.add_argument("--course-profile", choices=("mixed", "fixed", "flat-first"), default="mixed",
                         help="M1 mixed reference terrain with flat density x1.5; fixed is diagnostic only.")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--checkpoint", type=str, default=None)
@@ -120,6 +116,9 @@ def main() -> int:
         if args.course_profile == "mixed":
             from ame_baseline.m1_mixed_course import configure_mixed_terrain
             configure_mixed_terrain(env_cfg)
+        elif args.course_profile == "flat-first":
+            from ame_baseline.m1_mixed_course import configure_flat_first_terrain
+            configure_flat_first_terrain(env_cfg)
         print(f"[M1] course_profile={args.course_profile}; robot=m1; action_dim=16", flush=True)
         env_cfg.scene.num_envs = args.num_envs
         env_cfg.sim.device = device
@@ -137,18 +136,21 @@ def main() -> int:
         print(f"[AME] log_dir={log_dir}", flush=True)
 
         env = gym.make("Isaac-M1-Cross-Large-Complex-AME-v0", cfg=env_cfg)
-        # Install the M1 MPC trajectory manager before wrapping the env so the
-        # teacher adapter can consume current_reference() during rollouts.
-        from extension.trajectory_manager_factory import attach_trajectory_manager_if_enabled
-        attach_trajectory_manager_if_enabled(
-            env.unwrapped,
-            env_cfg,
-            experiment_name="m1_cross_large_complex_ame_teacher",
-            device=device,
-        )
+        if getattr(env.unwrapped, "_trajectory_manager", None) is not None:
+            raise RuntimeError("Pure PPO must not have a trajectory manager")
         if env.unwrapped.scene["robot"].is_fixed_base:
             raise RuntimeError("M1 locomotion requires a floating base; check USD root_joint")
         wrapped_env = AmeRslRlEnvWrapper(env, clip_actions=100.0)
+        if args.course_profile == "flat-first" and not args.resume:
+            terrain = env.unwrapped.scene.terrain
+            from extension.semantic_course import terrain_column_names_from_generator
+            names = terrain_column_names_from_generator(terrain.cfg.terrain_generator)
+            flat_col = names.index('flat')
+            if (not bool((terrain.terrain_levels == 0).all())
+                    or not bool((terrain.terrain_types == flat_col).all())
+                    or bool(wrapped_env._m1_current_course()['valid'].any())):
+                raise RuntimeError('Fresh flat-first must start every environment on obstacle-free flat terrain')
+            print(f"[M1] flat_first_verified envs={args.num_envs} stage=0 active_obstacles=0", flush=True)
         policy_obs, extras = wrapped_env.get_observations()
         critic_obs = extras["observations"]["critic"]
         print(
@@ -157,6 +159,7 @@ def main() -> int:
         )
 
         train_cfg = get_m1_ame_train_cfg()
+        print("[M1] controller=ppo; mpc_teacher=disabled; imitation_coef=0", flush=True)
         if os.environ.get("SAVE_INTERVAL"):
             train_cfg["save_interval"] = int(os.environ["SAVE_INTERVAL"])
         dump_yaml(str(log_dir / "env_cfg.yaml"), _yaml_safe(env_cfg.to_dict()))

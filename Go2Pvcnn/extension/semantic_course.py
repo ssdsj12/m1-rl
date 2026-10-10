@@ -568,11 +568,16 @@ def _stage_slots(
     layout_cfg: SemanticCourseLayoutCfg,
     scale_profile_overrides: dict[str, tuple[float, float]] | None = None,
 ) -> list[_LayoutSlot]:
-    if layout_cfg.placement_strategy == "m1_structured":
+    if layout_cfg.placement_strategy in ("m1_structured", "m1_dense_forward", "m1_progressive"):
         if layout_cfg.fixed_small_obstacle_local_xy or layout_cfg.fixed_large_obstacle_local_xy:
             raise ValueError('structured and fixed obstacle layouts cannot be combined')
-        from ame_baseline.m1_mixed_course import structured_positions
-        points = structured_positions(
+        from ame_baseline.m1_mixed_course import structured_positions, dense_forward_positions
+        placer = dense_forward_positions if layout_cfg.placement_strategy == 'm1_dense_forward' else structured_positions
+        if layout_cfg.placement_strategy == 'm1_progressive':
+            from functools import partial
+            from ame_baseline.m1_mixed_course import progressive_positions
+            placer = partial(progressive_positions, row=row)
+        points = placer(
             stage_counts['small'], stage_counts['large'],
             seed=int(semantic_course_seed) * 1000003 + row * 1009 + col,
             tile_size=tile_size,
@@ -721,6 +726,9 @@ def build_course_anchors(
                     semantic_class,
                     scale_profile_overrides=scale_profile_overrides,
                 )
+                if resolved_layout_cfg.placement_strategy == 'm1_progressive' and semantic_class == 'small':
+                    from ame_baseline.m1_mixed_course import progressive_row
+                    target_height = progressive_row(row)[1]
                 root = SEMANTIC_COURSE_SMALL_ROOT if semantic_class == "small" else SEMANTIC_COURSE_LARGE_ROOT
                 local_x, local_y = slot.local_xy
                 shape_kind = select_shape_kind(
@@ -738,6 +746,12 @@ def build_course_anchors(
                     target_diameter=target_diameter,
                     target_height=target_height,
                 )
+                if (resolved_layout_cfg.placement_strategy == 'm1_progressive'
+                        and semantic_class == 'small' and 1 <= row <= 3):
+                    # Short single-wheel blocks: cover lane drift without
+                    # spanning both wheel tracks. Keep flat/mixed rows intact.
+                    shape_kind = 'cuboid'
+                    shape_params = {'size': (.10, .18, target_height)}
                 anchors.append(
                     CourseAnchor(
                         row=row,

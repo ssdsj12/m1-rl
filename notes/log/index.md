@@ -1,3 +1,11 @@
+- [Recovery/prelift/pooling repair](2026-10-10-m1-recovery-prelift-pooling-repair.md):212CPUtests,4envnative recovery/map/reward wiring pass; model500boundary deployment and m1-10-10 publication, no learning claim.
+- [Perception/recovery diagnosis](2026-10-10-m1-perception-reward-diagnosis.md): historical diagnosis, now followed by approved repair above.
+- [Required crossing reward/layout](2026-10-10-m1-required-crossing.md):134affectedtests/finalnativepassed; fresh2048PID10311 starting; no learned crossing claim.
+- [Flat-first progression](2026-10-10-m1-flat-first-curriculum.md):118tests/finalnativepassed; fresh2048PID7747,stage0emptyflat verified,model_0saved; actuallearningunverified.
+- [585mm posture calibration](2026-10-10-m1-585mm-stance.md):99tests and4env5second neutral hold pass; user switched to fresh2048env10000iterations,PID6169; no crossing claim.
+- [Narrow obstacle reward sampling](2026-10-10-m1-ppo-narrow-probe-repair.md):7reproductions,117tests and2048two-update validation; deployed atmodel_300, long resume model_302/PID4930; no crossing claim.
+- [Dense forward2048](2026-10-10-m1-dense-forward-2048.md):108tests; native3360small10cm colliders and2048two-iteration updates pass; model_102 resumed, actual crossing unverified.
+- [Pure PPO verification](2026-10-10-m1-pure-ppo.md):103 tests and final256env smoke pass; teacher disabled; actual crossing remains unverified.
 - [Current snapshot upload verification](2026-10-09-m1-current-upload.md):215WBC tests pass; include near-contact helpers; physical crossing still unverified.
 - [Released material-point acceleration](2026-10-09-m1-wbc-released-material-bias.md):3RED then200WBCtests; released nonpenetration uses material bias, not moving geometry. No live release acceptance.
 - [Native patch transition history](2026-10-09-m1-wbc-patch-transition-history.md): incoming zero-force geometry discarded before impact; immediate release remains infeasible under original torque slew. Next predictive contact transition.

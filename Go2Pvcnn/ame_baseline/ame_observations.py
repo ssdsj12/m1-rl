@@ -39,14 +39,14 @@ def _quat_apply_inverse(quat: torch.Tensor, vec: torch.Tensor) -> torch.Tensor:
     return (flat_vec - flat_quat[:, :1] * cross + xyz.cross(cross, dim=-1)).reshape(shape)
 
 
-def _local_ray_hits(sensor) -> torch.Tensor:
+def _local_ray_hits(sensor, env_slice: slice = slice(None)) -> torch.Tensor:
     data = sensor.data
-    hits_w = torch.as_tensor(data.ray_hits_w)
+    hits_w = torch.as_tensor(data.ray_hits_w)[env_slice]
     if hits_w.ndim != 3 or hits_w.shape[-1] != 3:
         raise ValueError(f"ray_hits_w must have shape [N,R,3], got {tuple(hits_w.shape)}")
 
-    sensor_pos_w = torch.as_tensor(data.pos_w, dtype=hits_w.dtype, device=hits_w.device)
-    sensor_quat_w = torch.as_tensor(data.quat_w, dtype=hits_w.dtype, device=hits_w.device)
+    sensor_pos_w = torch.as_tensor(data.pos_w, dtype=hits_w.dtype, device=hits_w.device)[env_slice]
+    sensor_quat_w = torch.as_tensor(data.quat_w, dtype=hits_w.dtype, device=hits_w.device)[env_slice]
     alignment = getattr(sensor.cfg, "ray_alignment", None) if hasattr(sensor, "cfg") else None
     if alignment == "yaw":
         sensor_quat_w = _yaw_quat(sensor_quat_w)
@@ -59,18 +59,26 @@ def _local_ray_hits(sensor) -> torch.Tensor:
 
 
 def downsampled_ame_scan(env, sensor_cfg, target_size: int = 16) -> torch.Tensor:
-    """Return `[x_local,y_local,z_local,terrain,small,large]` as `[N,6,S,S]`."""
+    """Return `[x_local,y_local,z_local,terrain,small,large]` as `[N,6,S,S]`.
+
+    Obstacle bins retain one real hit of the winning class (large > small),
+    selected by world height. Terrain bins average finite hits as before.
+    Bins without any finite hit have zero XYZ and all-zero semantic channels
+    to represent unknown space, rather than fabricated terrain.
+    """
 
     if target_size <= 0:
         raise ValueError("target_size must be positive")
     sensor = _sensor_from_env(env, sensor_cfg.name)
-    local = _local_ray_hits(sensor)
-    batch, num_rays, _ = local.shape
+    hits_w = torch.as_tensor(sensor.data.ray_hits_w)
+    if hits_w.ndim != 3 or hits_w.shape[-1] != 3:
+        raise ValueError(f"ray_hits_w must have shape [N,R,3], got {tuple(hits_w.shape)}")
+    batch, num_rays, _ = hits_w.shape
     side = math.isqrt(num_rays)
     if side * side != num_rays:
         raise ValueError(f"ray scan length {num_rays} is not a perfect square")
 
-    semantic = torch.as_tensor(sensor.data.semantic_map, dtype=torch.long, device=local.device)
+    semantic = torch.as_tensor(sensor.data.semantic_map, dtype=torch.long, device=hits_w.device)
     if semantic.shape != (batch, side, side):
         raise ValueError(
             f"semantic_map must have shape {(batch, side, side)}, got {tuple(semantic.shape)}"
@@ -79,15 +87,43 @@ def downsampled_ame_scan(env, sensor_cfg, target_size: int = 16) -> torch.Tensor
         values = torch.unique(semantic).detach().cpu().tolist()
         raise ValueError(f"semantic_map ids must be in {{0,1,2}}, got {values}")
 
-    xyz = local.reshape(batch, side, side, 3).permute(0, 3, 1, 2)
-    xyz = F.adaptive_avg_pool2d(xyz, (target_size, target_size))
+    outputs = []
+    # Bound transform/masking temporaries independently of the training env count.
+    # Do not materialize an additional full [2048,151,151,3] geometry tensor.
+    for start in range(0, batch, 128):
+        env_slice = slice(start, start + 128)
+        local = _local_ray_hits(sensor, env_slice)
+        count = local.shape[0]
+        source = hits_w[env_slice]
+        valid = torch.isfinite(source).all(dim=-1)
+        pose_valid = (
+            torch.isfinite(torch.as_tensor(sensor.data.pos_w, device=hits_w.device)[env_slice]).all(dim=-1)
+            & torch.isfinite(torch.as_tensor(sensor.data.quat_w, device=hits_w.device)[env_slice]).all(dim=-1)
+        )
+        valid = (valid & pose_valid.unsqueeze(1)).reshape(count, side, side)
+        ids = semantic[env_slice]
+        xyz = local.reshape(count, side, side, 3).permute(0, 3, 1, 2)
+        weights = valid.unsqueeze(1).to(dtype=local.dtype)
+        coverage = F.adaptive_avg_pool2d(weights, (target_size, target_size))
+        xyz = F.adaptive_avg_pool2d(xyz * weights, (target_size, target_size))
+        xyz = xyz / torch.where(coverage > 0, coverage, torch.ones_like(coverage))
 
-    # Pool class ids before one-hot conversion so every output cell stays one-hot.
-    pooled_ids = F.adaptive_max_pool2d(
-        semantic.to(dtype=xyz.dtype).unsqueeze(1), (target_size, target_size)
-    ).squeeze(1).to(dtype=torch.long)
-    one_hot = F.one_hot(pooled_ids, num_classes=3).permute(0, 3, 1, 2).to(dtype=xyz.dtype)
-    return torch.cat((xyz, one_hot), dim=1)
+        # Invalid source hits cannot win the semantic class or the height search.
+        class_scores = ids.to(dtype=local.dtype).masked_fill(~valid, -1).unsqueeze(1)
+        pooled_ids = F.adaptive_max_pool2d(class_scores, (target_size, target_size)).squeeze(1).long()
+        world_z = source[..., 2].reshape(count, side, side)
+        for obstacle_class in (1, 2):
+            heights = world_z.masked_fill(~(valid & (ids == obstacle_class)), -torch.inf)
+            _, indices = F.adaptive_max_pool2d(
+                heights.unsqueeze(1), (target_size, target_size), return_indices=True
+            )
+            selected = local.gather(1, indices.flatten(1).unsqueeze(-1).expand(-1, -1, 3))
+            selected = selected.transpose(1, 2).reshape(count, 3, target_size, target_size)
+            xyz = torch.where((pooled_ids == obstacle_class).unsqueeze(1), selected, xyz)
+        one_hot = F.one_hot(pooled_ids.clamp_min(0), num_classes=3).permute(0, 3, 1, 2)
+        one_hot = one_hot.to(dtype=local.dtype) * (pooled_ids >= 0).unsqueeze(1)
+        outputs.append(torch.cat((xyz, one_hot), dim=1))
+    return torch.cat(outputs, dim=0)
 
 
 __all__ = ["downsampled_ame_scan"]

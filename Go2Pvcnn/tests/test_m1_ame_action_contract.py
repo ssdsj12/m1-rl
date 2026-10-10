@@ -42,4 +42,12 @@ def test_training_stance_centers_the_wheels_under_the_four_hip_mounts():
     joints = select_named_joint_state(torch.tensor(M1_TRAINING_JOINT_POS)[None], source_names=M1_ASSET_JOINT_NAMES, selected_names=M1_PLANNER_JOINT_NAMES)
     geometry = m1_fk(torch.tensor([[0., 0., M1_TRAINING_ROOT_Z_M]]), torch.zeros(1, 3), joints)
     torch.testing.assert_close(geometry.foot_pos_w[0, :, 0], torch.tensor([.3295, .3295, -.3295, -.3295]))
-    torch.testing.assert_close(geometry.foot_pos_w[0, :, 2], torch.full((4,), M1_WHEEL_RADIUS_M))
+    # Analytic tire radius differs from the source collision mesh by 0.21 mm.
+    torch.testing.assert_close(geometry.foot_pos_w[0, :, 2], torch.full((4,), M1_WHEEL_RADIUS_M), atol=0.001, rtol=0.)
+
+
+def test_training_stance_matches_approved_585mm_total_mesh_height():
+    from ame_baseline.m1_ame_contract import M1_TRAINING_ROOT_Z_M
+    # Independent BASE_LINK visual mesh upper bound from source USD audit.
+    base_top_above_root = 0.128999188542366
+    assert abs(M1_TRAINING_ROOT_Z_M + base_top_above_root - .585) < 1e-6

@@ -285,7 +285,8 @@ class OnPolicyRunner:
                         actions = self.alg.act(obs, critic_obs, env=self.env)  # (num_envs, action_dim)
                         # Optional direct M1 MPC teacher action.  This keeps the
                         # AME network unchanged and blends only valid MPC rows.
-                        get_teacher = getattr(self.env, "get_mpc_teacher_action", None)
+                        get_teacher = (getattr(self.env, "get_mpc_teacher_action", None)
+                                       if self.cfg.get("enable_mpc_teacher", True) else None)
                         if callable(get_teacher):
                             teacher_action, teacher_valid = get_teacher()
                             if teacher_action is not None:
@@ -541,7 +542,7 @@ class OnPolicyRunner:
 
         ep_string = ""
         if locs["ep_infos"]:
-            for key in locs["ep_infos"][0]:
+            for key in dict.fromkeys(k for info in locs["ep_infos"] for k in info):
                 infotensor = torch.tensor([], device=self.device)
                 for ep_info in locs["ep_infos"]:
                     # handle scalar and zero dimensional tensor infos
@@ -552,7 +553,11 @@ class OnPolicyRunner:
                     if len(ep_info[key].shape) == 0:
                         ep_info[key] = ep_info[key].unsqueeze(0)
                     infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
-                value = torch.mean(infotensor)
+                if key.startswith('RequiredCrossing/'):
+                    from ame_baseline.m1_required_crossing import aggregate_metric
+                    value = aggregate_metric(key, infotensor)
+                else:
+                    value = torch.mean(infotensor)
                 # log to logger and terminal
                 if "/" in key:
                     self.writer.add_scalar(key, value, locs["it"])
@@ -576,6 +581,8 @@ class OnPolicyRunner:
             warmup_end=teacher_warmup,
             decay_end=teacher_decay,
         )
+        if not self.cfg.get("enable_mpc_teacher", True):
+            teacher_ratio = 0.0
         self.writer.add_scalar("Policy/m1_teacher_ratio", teacher_ratio, locs["it"])
         total = max(int(locs.get("m1_teacher_total_count", 0)), 1)
         self.writer.add_scalar("Policy/m1_teacher_valid_fraction", float(locs.get("m1_teacher_valid_count", 0)) / total, locs["it"])

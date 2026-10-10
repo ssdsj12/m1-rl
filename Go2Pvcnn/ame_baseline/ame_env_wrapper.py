@@ -1084,6 +1084,14 @@ class AmeRslRlEnvWrapper(VecEnv):
                     "short_trigger": bool(m1_teacher_obstacle_presence(self.unwrapped)[0][idx]),
                 }
                 print("M1_CONTROL_TRACE " + json.dumps(row), flush=True)
+        # Snapshot BEFORE Isaac auto-reset so terminal rewards cannot use a
+        # newly spawned pose/course. Only the straight progressive rows apply.
+        from .m1_required_crossing import required_crossing_zone, required_crossing_reward
+        required_zone = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        if getattr(self.unwrapped.cfg, 'm1_flat_first', False):
+            levels = self.unwrapped.scene.terrain.terrain_levels
+            required_zone = ((levels >= 1) & (levels <= 3) & required_crossing_zone(
+                self.unwrapped.scene['robot'].data.root_pos_w, self._m1_current_course()))
         obs_dict, rewards, terminated, truncated, extras = self.env.step(actions)
         small_candidate, large_candidate = self.get_obstacle_presence()
         if self._m1_step_debug:
@@ -1142,8 +1150,9 @@ class AmeRslRlEnvWrapper(VecEnv):
         crossing_complete = (self._small_candidate_prev & ~small_candidate & self._small_candidate_seen
                              & (self._small_candidate_lift_seen | lift_seen_now)
                              & (self._small_candidate_clearance_seen | clearance_seen_now))
-        # Existing proxy only; not proof of strict per-foot crossing.
-        crossing_complete &= self._m1_teacher_age >= 24
+        # Existing proxy only; not proof of strict per-foot crossing. Its
+        # lifecycle is the measured candidate/lift/clearance state above,
+        # never the clock of an optional (now disabled in PPO) teacher.
         term = terminated.bool()
         names = list(self.unwrapped.reward_manager.active_terms)
         from .m1_strict_crossing import strict_collision_from_reward_terms
@@ -1179,12 +1188,14 @@ class AmeRslRlEnvWrapper(VecEnv):
         # measurement can never erase an already-safe crossing.
         strict_crossing_touchdown = touchdown_safe.clone()
         try:
-            quat = self.unwrapped.scene["robot"].data.root_quat_w
+            # Required in the normal (trace/debug disabled) training path too.
+            robot = self.unwrapped.scene["robot"]
+            quat = robot.data.root_quat_w
             qw, qx, qy, qz = quat.unbind(-1)
             roll = torch.atan2(2.0 * (qw * qx + qy * qz), 1.0 - 2.0 * (qx.square() + qy.square()))
             pitch = torch.asin((2.0 * (qw * qy - qz * qx)).clamp(-1.0, 1.0))
             tilt = torch.stack((roll.abs(), pitch.abs()), dim=-1).amax(dim=-1)
-            angular_velocity = self.unwrapped.scene["robot"].data.root_ang_vel_w
+            angular_velocity = robot.data.root_ang_vel_w
             tilt_rate = angular_velocity[:, :2].abs().amax(dim=-1)
             # Tilt/rate, nominal joint pose, and reset-height restoration are
             # exclusively post-cross recovery gates.
@@ -1235,8 +1246,10 @@ class AmeRslRlEnvWrapper(VecEnv):
                 nominal_pose_ready=recovery_pose_ready,
                 root_height_ready=root_height_ready,
             )
-        except Exception:
-            recovery_balance_safe = torch.zeros_like(done)
+        except Exception as exc:
+            # An unavailable measurement is a wiring failure, not a measured
+            # failure to recover. Continuing would silently train on bad labels.
+            raise RuntimeError("M1 recovery measurement failed") from exc
         strict_result = {
             "episode_complete": torch.zeros_like(done),
             "attempt_started": torch.zeros_like(done),
@@ -1335,6 +1348,34 @@ class AmeRslRlEnvWrapper(VecEnv):
                 "recovery_frames": torch.zeros_like(done, dtype=torch.long),
             }
         strict_crossing_complete = strict_result["episode_complete"]
+        if getattr(self.unwrapped.cfg, 'm1_flat_first', False):
+            rewards, removed, event_bonus = required_crossing_reward(
+                rewards, self.unwrapped.reward_manager._step_reward,
+                float(self.unwrapped.step_dt), blocked=required_zone, collision=collision,
+                done=done, prelift=strict_result.get('single_prelift_event', torch.zeros_like(done)),
+                recovery=strict_result['recovery_complete'],
+                prelift_progress_delta=strict_result.get('prelift_progress_delta', torch.zeros_like(rewards)))
+            # Isaac may reuse extras. Snapshot tensors so runner steps do not
+            # alias the next frame's dict or in-place updated measurements.
+            extras['log'] = {k: v.detach().clone() if isinstance(v, torch.Tensor) else v
+                             for k, v in extras.get('log', {}).items()}
+            log = extras['log']
+            log['RequiredCrossing/removed_positive_reward'] = removed.mean()
+            log['RequiredCrossing/event_bonus'] = event_bonus.mean()
+            log['RequiredCrossing/zone_fraction'] = required_zone.float().mean()
+            log['RequiredCrossing/prelift_events'] = strict_result.get('single_prelift_event', torch.zeros_like(done)).sum()
+            log['RequiredCrossing/prelift_progress_delta'] = strict_result.get('prelift_progress_delta', torch.zeros_like(rewards)).mean()
+            log['RequiredCrossing/loaded_touchdown_fraction'] = touchdown_safe.float().mean()
+            log['RequiredCrossing/recovery_ready_fraction'] = recovery_balance_safe.float().mean()
+            log['RequiredCrossing/stable_landings'] = strict_result['recovery_complete'].sum()
+            log['RequiredCrossing/collision_frames'] = (required_zone & collision).sum()
+            samples = strict_result.get('overlap_sample', torch.zeros_like(done)) & ~done
+            clearance = strict_result.get('bottom_clearance', torch.full_like(rewards, float('nan')))
+            log['RequiredCrossing/clearance_samples'] = samples.sum()
+            log['RequiredCrossing/min_bottom_clearance_m'] = (
+                clearance[samples].min() if samples.any() else rewards.new_tensor(float('nan')))
+        from .m1_mixed_course import record_curriculum_strict_events
+        record_curriculum_strict_events(self.unwrapped, strict_result, done)
         self.crossing_metrics.update(
             candidate=small_candidate,
             large_candidate=large_candidate,

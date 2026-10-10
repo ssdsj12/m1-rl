@@ -2,6 +2,32 @@
 
 ## Current State
 
+diagnostic-wiring已修复，212相关测试和4env原生恢复/地图/奖励接线通过。恢复默认路径不依赖debug，.3单遭遇奖励预算按真实轮底新增高度支付；地图保留真实顶部。model_500边界部署，恢复本次谱系；真实跨越/视频验收仍OPEN。[证据与上传](../log/2026-10-10-m1-recovery-prelift-pooling-repair.md)。以下未修复状态为历史。
+
+OPEN子节点pure-ppo-learning/required-crossing/diagnostic-wiring：默认无trace/debug时，ame_env_wrapper恢复块robot未赋值并被except吞掉；CPU原代码重放false，先绑定则true。阻断稳定恢复奖励与课程晋级，但不解释零预抬。stage1 iteration372窗口4322尝试/0成功；本轮用户只要求探查，未修复/停训。地图池化和小探索幅度另作证据分级。[诊断](../log/2026-10-10-m1-perception-reward-diagnosis.md)。
+
+最新required-crossing覆盖下文历史：旧8573停止；用户要求fresh2048/10000，不接旧PT。134相关测试、原生奖励接线通过，能力仍OPEN。[记录](../log/2026-10-10-m1-required-crossing.md)。
+
+用户明确取消速度误差晋级门槛，其他条件不变。20测试通过；一次性watcher8491等待7747的model_500，随后从501续训9499轮，保留optimizer/std/课程。需核实切换结果和更新TensorBoard。[变更与待验证](../log/2026-10-10-m1-remove-speed-gate.md)。[出界异常仍待诊断](../log/2026-10-10-m1-flat-first-boundary-watch.md)。
+
+部署：PID7747，run2026-10-10_14-16-08/bb57e7d，日志/tmp/m1-ppo-flat-first-20261010.log，fresh2048/10000，model_0保存。118测试+最终原生验证通过，生产断言全部2048环境stage0障碍0。TensorBoard/监控已切换。能力未验收。
+
+最新flat-first：旧6169停止，按用户确认从零先训真正空平地，再3/6/10cm和混合地形。三窗口各>=2048完成回合、>=90%完整无失败且误差<.08；障碍阶段另要求稳定跨越率>=.5。课程状态随PT保存，边界保护避免误入邻地块。[实现/验证](../log/2026-10-10-m1-flat-first-curriculum.md)。
+
+新子节点585mm-stance：用户确认按585mm总高度校准初始姿态（非root高度，且较旧姿态低100mm）。99回归与独立4环境5秒静立通过，0重置，最大倾角0.438度，承重后高577–578mm。用户随后要求从零，旧4930和等待400的watcher已停，新6169训练2048环境10000轮，无resume/旧checkpoint。实际抬轮/跨越尚未验证。[记录](../log/2026-10-10-m1-585mm-stance.md)。
+
+新子节点 narrow-probe-repair：15cm间隔奖励采样漏掉5cm障碍；加密为2cm且保持原探测范围，7RED→117GREEN。已在model_300边界部署、2048两轮通过；model_302续训9699轮，启动PID4930，日志/tmp/m1-pure-ppo-denseprobe-20261010.log。不能把测试等同学习成功。[记录](../log/2026-10-10-m1-ppo-narrow-probe-repair.md)。
+
+最新用户更新：2048环境，前方加密单轮10cm障碍。dense-forward-2048子节点已实现布局、固定朝向及命令边界，108测试通过；256训练已停在已保存model_100之后。原生几何、2048两轮更新均通过，model_102续训9899轮，启动PID3886，不宣称跨越成功。[日志](../log/2026-10-10-m1-dense-forward-2048.md)。
+
+2026-10-10 新子节点 pure-ppo-learning：按用户要求停用 MPC/模仿/接管，奖励地形调优。
+新服务器 GPU0；旧 GPU7 状态不可推用。103 项测试和最终256环境2轮 smoke 通过。
+目标长训10000轮、保存100。跨越能力仍未验证，不用代理奖励冒充严格成功。
+开放：学习效果/严格成功、课程初始层级观察、奖励刷分检查。
+Baseline/Last Feature Commit: bb57e7d; Current Work Ref: codex/m1-contact-recovery (uncommitted).
+Last Verified Commit: bb57e7d plus tested diff, no physical crossing acceptance.
+[验证/下一步](../log/2026-10-10-m1-pure-ppo.md)。下文为历史状态。
+
 2026-10-09 user-requested current-version upload: child contact-transition-consistency
 now includes contact_inventory (retains zero-force geometry without inventing
 support) and near_contact_gap_constraints (material-point semiimplicit preview

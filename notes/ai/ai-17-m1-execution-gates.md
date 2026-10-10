@@ -1,5 +1,40 @@
 # M1 execution gates contract
 
+Latest [repair](../log/2026-10-10-m1-recovery-prelift-pooling-repair.md): default
+recovery binds robot and surfaces errors; per-encounter .3 incremental measured
+wheel-bottom reward with world high-water anti-farming; obstacle pooling gathers
+highest valid winning-class hit XYZ. Event/success thresholds remain unchanged.
+
+Latest: [required-crossing](../log/2026-10-10-m1-required-crossing.md) removes
+positive reward in progressive obstacle slabs; actual single prelift and stable
+recovery pulses replace sliding progress. Per-overlap3cm mesh-bottom minimum,
+three-wheel support, fresh training required. Speed-error gate remains removed.
+
+Latestflat-first profile:emptyflat starts,newfreshPPO; realpre-reset progress
+andcompletedepisode gates selectrows0..3flat,then4..9mixed. Speederror logged only. Stage0..3originsX-2m;
+body/tirebounds timeoutpreventsadjacenttileunregisteredobstacles. Stable recovery
+counter,notfirsttouchdown,qualifiesobstaclepromotion. SavecurriculumstateinPT;
+oldmodelswithoutitcannotresumeprofile. [Evidence](../log/2026-10-10-m1-flat-first-curriculum.md).
+
+User-authorized stance exception:585mm total source mesh height, root .4560008115,
+hip -.8826416550, knee1.6824843873. Asset-calibrated angles, not vendor preset
+verification. Pure PPO/no teacher unchanged. Physical stability and checkpoint
+adaptation are required before deployment. [Evidence](../log/2026-10-10-m1-585mm-stance.md).
+
+Reward-query repair: retain old physical lookahead bounds but add2cm longitudinal
+samples so5cm blocks cannot fall between15cm probes. No coefficient, policy,
+actuator or strict-success changes. [Evidence](../log/2026-10-10-m1-ppo-narrow-probe-repair.md).
+
+Dense-forward update:2048env launcher; mixed16x16tiles, eight10cm alternating
+anchors on y=+/- .215 per tile, fixed spawnxy/yaw and forward-only command limits.
+Background excludes landing corridor. This is layout exposure, not a controller
+enforcing one-leg lift. [Validation](../log/2026-10-10-m1-dense-forward-2048.md).
+
+2026-10-10 override: pure PPO is the active training contract. No MPC teacher,
+imitation or action takeover; WBC diagnostics below are historical, not training gates.
+Only reward/terrain tuning is authorized. Strict physical crossing remains the acceptance
+criterion, distinct from lift reward and proxy rate. [Evidence](../log/2026-10-10-m1-pure-ppo.md).
+
 Contact model correction: attached acceleration uses moving-geometry total
 bias; released unilateral nonpenetration uses material-point bias. Both fields
 remain available; `constraint_bias` identifies the one actually used perpoint.

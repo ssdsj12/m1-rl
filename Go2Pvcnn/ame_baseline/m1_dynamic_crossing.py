@@ -17,7 +17,10 @@ class EncounterCrossingTracker:
         self.target_obstacle_id=torch.full_like(self.slot,-1)
         self.heading=torch.zeros(num_envs,2,device=device);self.heading[:,0]=1
         self.early_lift=torch.zeros(num_envs,device=device,dtype=torch.bool)
+        self.prelift_rewarded=torch.zeros_like(self.early_lift)
+        self.prelift_high_water=torch.zeros(num_envs,device=device)
         self.last_contact_bottom=torch.full((num_envs,),float('nan'),device=device)
+        self.prelift_bottom_high_water=torch.full_like(self.last_contact_bottom,float('nan'))
         self.used=torch.zeros(num_envs,obstacle_count,4,device=device,dtype=torch.bool)
         self.known_ids=torch.full((num_envs,obstacle_count),-2,device=device,dtype=torch.long)
         self.crossing_count=torch.zeros_like(self.slot)
@@ -29,7 +32,10 @@ class EncounterCrossingTracker:
         self.inner.reset(rows)
         self.slot[rows]=-1;self.target_obstacle_id[rows]=-1
         self.early_lift[rows]=False;self.used[rows]=False
+        self.prelift_rewarded[rows]=False
+        self.prelift_high_water[rows]=0
         self.last_contact_bottom[rows]=float('nan')
+        self.prelift_bottom_high_water[rows]=float('nan')
         self.crossing_count[rows]=0;self.known_ids[rows]=-2
 
     @torch.no_grad()
@@ -81,6 +87,8 @@ class EncounterCrossingTracker:
         self.target_obstacle_id=torch.where(start,ids[rows,new_slot],self.target_obstacle_id)
         self.inner.target_wheel=torch.where(start,new_wheel,self.inner.target_wheel)
         self.last_contact_bottom[start]=float('nan')
+        self.prelift_bottom_high_water[start]=float('nan')
+        self.prelift_high_water[start]=0
         self.used[rows[start],new_slot[start],new_wheel[start]]=True
         enabled=self.slot>=0
         slot=self.slot.clamp_min(0)
@@ -100,9 +108,25 @@ class EncounterCrossingTracker:
         # the future obstacle. Rolling uphill while loaded is not an air lift.
         contact_update=enabled&before&grounded&torch.isfinite(bottom)
         self.last_contact_bottom=torch.where(contact_update,bottom,self.last_contact_bottom)
+        loaded_high_water=torch.where(torch.isfinite(self.prelift_bottom_high_water),
+            torch.maximum(self.prelift_bottom_high_water,bottom),bottom)
+        self.prelift_bottom_high_water=torch.where(contact_update,loaded_high_water,
+                                                   self.prelift_bottom_high_water)
         lifted=(~grounded & torch.isfinite(self.last_contact_bottom)
                 & (bottom>=self.last_contact_bottom+.02))
-        self.early_lift |= enabled&before&lifted
+        single_support = wheel_grounded.sum(-1) == 3
+        self.early_lift |= enabled&before&lifted&single_support
+        self.inner.failed |= enabled & self.early_lift & ~grounded & ~single_support
+        single_prelift = (enabled & before & lifted & (wheel_grounded.sum(-1) == 3)
+                          & ~self.inner.failed & ~collision & ~self.prelift_rewarded)
+        self.prelift_rewarded |= single_prelift
+        overlap = (enabled & (local_pos[rows,selected,0]+wheel_horizontal_radius >= near)
+            & (local_pos[rows,selected,0]-wheel_horizontal_radius <= hx[rows,slot])
+            & (local_pos[rows,selected,1].abs() <= hy[rows,slot]+widths[rows,selected]))
+        bottom_clearance = bottom-selected_center[:,2]
+        # Every sampled overlap must clear the top, not merely one lucky frame.
+        self.inner.failed |= overlap & (~torch.isfinite(bottom_clearance)
+                                        | (bottom_clearance < required_clearance))
         self.inner.failed |= enabled&~before&~self.early_lift
         fully_past=(local_pos[rows,selected,0]-wheel_horizontal_radius
                     >=hx[rows,slot]+required_far_margin)
@@ -130,6 +154,27 @@ class EncounterCrossingTracker:
         out['crossing_count']=self.crossing_count.clone()
         out['episode_complete']=torch.zeros_like(start)
         out['target_obstacle_id']=self.target_obstacle_id.clone()
+        out['single_prelift_event']=single_prelift
+        # Reward newly measured rise before the obstacle, while retaining the
+        # >=2cm event as telemetry and as a separate strict crossing gate.
+        # The world-bottom high-water mark survives bobbing and lower loaded
+        # references. Loaded uphill motion advances it without reward. The
+        # normalized budget caps all increments at one per encounter.
+        matches_lane=local_pos[rows,selected,1].abs()<=hy[rows,slot]+widths[rows,selected]
+        progress_safe=(enabled & before & matches_lane & ~grounded & single_support
+                       & ~out['failed'] & ~collision & torch.isfinite(bottom)
+                       & torch.isfinite(self.last_contact_bottom)
+                       & torch.isfinite(self.prelift_bottom_high_water))
+        rise=((bottom-self.prelift_bottom_high_water)/.02).clamp(0.,1.)
+        progress_delta=torch.minimum(rise,1.-self.prelift_high_water)
+        out['prelift_progress_delta']=torch.where(progress_safe,progress_delta,
+                                                 torch.zeros_like(progress_delta))
+        self.prelift_high_water+=out['prelift_progress_delta']
+        self.prelift_bottom_high_water=torch.where(progress_safe,
+            torch.maximum(self.prelift_bottom_high_water,bottom),self.prelift_bottom_high_water)
+        out['overlap_sample']=overlap & torch.isfinite(bottom_clearance)
+        out['bottom_clearance']=torch.where(out['overlap_sample'], bottom_clearance,
+                                           torch.full_like(bottom_clearance, float('nan')))
         # Failed attempts stay counted, but must not suppress every later
         # encounter. Release only once the target wheel leaves this vicinity.
         outside=(local_pos[rows,selected,0].abs()>hx[rows,slot]+wheel_horizontal_radius+approach_distance)
@@ -140,5 +185,8 @@ class EncounterCrossingTracker:
         if released.any():
             self.inner.reset(released)
             self.slot[released]=-1;self.target_obstacle_id[released]=-1;self.early_lift[released]=False
+            self.prelift_rewarded[released]=False
+            self.prelift_high_water[released]=0
             self.last_contact_bottom[released]=float('nan')
+            self.prelift_bottom_high_water[released]=float('nan')
         return out

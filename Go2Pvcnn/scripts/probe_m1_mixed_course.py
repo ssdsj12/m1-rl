@@ -45,8 +45,10 @@ try:
     counts=Counter((x.row,x.col,x.semantic_class) for x in records)
     for row in range(10):
         for col,name in enumerate(names):
-            expected=flat_counts(row) if name=='flat' else (REFERENCE_NONPLANE_SMALL[row],REFERENCE_NONPLANE_LARGE[row])
+            expected=flat_counts(row) if name=='flat' else (max(8,REFERENCE_NONPLANE_SMALL[row]),REFERENCE_NONPLANE_LARGE[row])
             assert tuple(counts[(row,col,kind)] for kind in ('small','large'))==expected,(row,col,name,expected)
+            front=sorted([x for x in records if x.row==row and x.col==col and x.semantic_class=='small'],key=lambda x:x.slot_index)[:8]
+            assert [x.local_xy for x in front]==[(.9+.9*i,.215 if i%2==0 else -.215) for i in range(8)]
     flat=names.index('flat');rough=names.index('random_rough')
     terrain.terrain_levels.copy_(torch.tensor([0,9,0,9],device=args.device))
     terrain.terrain_types.copy_(torch.tensor([flat,flat,rough,rough],device=args.device))
@@ -54,9 +56,9 @@ try:
     env.reset()
     wrapper=AmeRslRlEnvWrapper(env)
     actual=wrapper._m1_current_course()
-    assert actual['valid'].sum(-1).tolist()==[15,165,0,4],(terrain.terrain_levels.tolist(),actual['valid'].sum(-1).tolist())
+    assert actual['valid'].sum(-1).tolist()==[15,165,8,8],(terrain.terrain_levels.tolist(),actual['valid'].sum(-1).tolist())
     assert not env.scene['robot'].is_fixed_base and wrapper.num_actions==16
-    print('M1_MIXED_STAGE registry_ready '+json.dumps({'records':len(records),'env_counts':[15,165,0,4]}),flush=True)
+    print('M1_MIXED_STAGE registry_ready '+json.dumps({'records':len(records),'env_counts':[15,165,8,8]}),flush=True)
     stage=omni.usd.get_context().get_stage()
     bbox=UsdGeom.BBoxCache(Usd.TimeCode.Default(),[UsdGeom.Tokens.default_])
     # Validate every small collider's live world bounds, not only metadata.

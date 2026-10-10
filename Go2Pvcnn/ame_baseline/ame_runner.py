@@ -42,6 +42,10 @@ class AmeOnPolicyRunner(on_policy_runner.OnPolicyRunner):
         on_policy_runner.ActorCriticAME = ActorCriticAME
         super().__init__(*args, **kwargs)
 
+    def _learning_gate(self):
+        unwrapped = getattr(getattr(self, 'env', None), 'unwrapped', None)
+        return getattr(unwrapped, '_m1_learning_gate', None)
+
     def save(self, path, infos=None):
         destination = Path(path)
         base_checkpoint = destination.with_name(
@@ -62,6 +66,9 @@ class AmeOnPolicyRunner(on_policy_runner.OnPolicyRunner):
             checkpoint["ame_num_critic_obs"] = self.alg.actor_critic.map_dim + self.alg.actor_critic.critic_state_dim
             checkpoint["ame_num_actions"] = int(self.alg.actor_critic.std.numel())
             checkpoint["next_iter"] = self.current_learning_iteration + 1
+            gate = self._learning_gate()
+            if gate is not None:
+                checkpoint['m1_learning_curriculum'] = gate.state_dict()
             _atomic_torch_save(checkpoint, destination)
             if external_logger:
                 self.writer.save_model(destination, self.current_learning_iteration)
@@ -70,6 +77,9 @@ class AmeOnPolicyRunner(on_policy_runner.OnPolicyRunner):
 
     def load(self, path, load_optimizer=True, keep_std=True):
         checkpoint = torch.load(path, map_location=self.device)
+        gate = self._learning_gate()
+        if gate is not None and 'm1_learning_curriculum' not in checkpoint:
+            raise ValueError('Flat-first resume requires learning curriculum metadata')
         actual = checkpoint.get("ame_architecture_signature")
         if actual != AME_ARCHITECTURE_SIGNATURE:
             raise ValueError(
@@ -104,6 +114,10 @@ class AmeOnPolicyRunner(on_policy_runner.OnPolicyRunner):
                 f"iter={completed_iteration}, next_iter={next_iteration}"
             )
         self.current_learning_iteration = next_iteration
+        if gate is not None:
+            gate.load_state_dict(checkpoint['m1_learning_curriculum'])
+            # Restored stage must select the reset tile before any rollout.
+            self.env.reset()
         return checkpoint.get("infos")
 
 

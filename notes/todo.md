@@ -1,3 +1,24 @@
+## 2026-10-10 active: T306/pure-ppo-learning
+
+- diagnostic-wiring修复：正常恢复绑定/显式报错、真实轮底增量防刷分、真实顶部池化，212相关测试及4env原生通过；model_500边界部署。学习效果/严格跨越仍OPEN。[当前记录](log/2026-10-10-m1-recovery-prelift-pooling-repair.md)。
+
+- OPEN子节点 required-crossing/diagnostic-wiring：默认恢复路径robot未绑定，异常吞掉使recovery恒false；CPU反例确认。另有地图池化削弱/探索不足风险，尚无线上逐帧归因。本轮只诊断，未改生产或停训。[证据/下一步](log/2026-10-10-m1-perception-reward-diagnosis.md)。
+
+- required-crossing：134相关测试通过，滑蹭正收益屏蔽、真实单轮预抬/稳定恢复奖励、10x18cm交替障碍。旧8573停止，fresh长训待最终原生验证。[记录](log/2026-10-10-m1-required-crossing.md)。
+
+- 子节点flat-first：118测试/最终原生验证通过，旧6169已停；新7747从零2048平地训练，model_0已保存。纯PPO无强制动作，待实际前进达标及自动障碍晋级。[记录](log/2026-10-10-m1-flat-first-curriculum.md)。
+
+- 子节点585mm-stance：99测试/4环境5秒静立通过；用户改为从零，旧4930已停，新6169启动2048环境10000轮，不加载旧checkpoint。实际抬轮/跨越OPEN。[记录](log/2026-10-10-m1-585mm-stance.md)。
+
+- 子节点 narrow-probe-repair：严格5095次遭遇/0跨越；已复现奖励采样漏掉5cm窄障碍，7RED→117GREEN。只加密奖励查询，不改控制器/权重；model_300边界部署及2048两轮通过，model_302续训，PID4930，学习效果仍待验证。[记录](log/2026-10-10-m1-ppo-narrow-probe-repair.md)。
+
+- 新子节点 dense-forward-2048：8个10cm前向交替障碍/地块，背景避开落轮通道，固定出生/命令方向；108测试、真实几何和2048两轮更新通过，从model_102恢复9899轮，启动PID3886。实际跨越仍待验证。[记录](log/2026-10-10-m1-dense-forward-2048.md)。
+
+- 用户停用 MPC，只用 PPO；后续改动限奖励和地形。
+- 已隔离 teacher/模仿损失，修正代理指标计时依赖，限制原地抬轮刷分。
+- 待长训验证真实离地、净空、碰撞、落足与严格成功率。
+- [验证记录](log/2026-10-10-m1-pure-ppo.md)。旧 WBC 冻结，不再作为前置。
+
 ## 2026-10-09 upload snapshot: near-contact helpers
 
 - T306/contact-transition-consistency: retain unloaded near-contact geometry and

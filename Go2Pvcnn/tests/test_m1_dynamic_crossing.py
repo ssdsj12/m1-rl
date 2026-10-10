@@ -14,7 +14,8 @@ def scene(theta=0.):
         pos=torch.zeros(1,4,3)
         for i,side in enumerate((0.,1.,1.5,2.)):
             pos[0,i,:2]=center+x*e+side*v
-        pos[:,:,2]=z
+        pos[:,:,2]=.10
+        pos[:,0,2]=z  # one target wheel moves; the other three keep supporting
         return pos
     return course,e[None],frame
 
@@ -107,9 +108,10 @@ def test_grounded_uphill_motion_is_not_early_lift_and_airborne_uses_last_contact
     assert not t.early_lift.item()
     tick(t,c,d,f(-.27,.18),touch=True,grounded=grounded)
     assert not t.early_lift.item()
-    tick(t,c,d,f(-.22,.19),grounded=~grounded)
+    airborne=grounded.clone();airborne[:,0]=False
+    tick(t,c,d,f(-.22,.19),grounded=airborne)
     assert not t.early_lift.item()  # Only 1 cm above last loaded support.
-    tick(t,c,d,f(-.20,.21),grounded=~grounded)
+    tick(t,c,d,f(-.20,.21),grounded=airborne)
     assert t.early_lift.item()
 
 

@@ -115,3 +115,23 @@ def test_atomic_ame_save_uploads_only_the_final_checkpoint(tmp_path: Path):
     assert saved["ame_architecture_signature"] == AME_ARCHITECTURE_SIGNATURE
     assert uploads == [(checkpoint, 7)]
     assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_flat_first_checkpoint_preserves_course_and_rejects_missing_metadata(tmp_path):
+    from ame_baseline.m1_learning_curriculum import LearningCurriculumGate
+    gate=LearningCurriculumGate(2048,'cpu')
+    gate.stage=2
+    runner=_bare_runner()
+    resets=[]
+    runner.env=SimpleNamespace(unwrapped=SimpleNamespace(_m1_learning_gate=gate),reset=lambda:resets.append(True))
+    checkpoint=tmp_path/'new.pt'
+    runner.save(checkpoint)
+    state=torch.load(checkpoint,map_location='cpu')
+    assert state['m1_learning_curriculum']['stage']==2
+    gate.stage=0
+    runner.load(checkpoint)
+    assert gate.stage==2 and resets==[True]
+    del state['m1_learning_curriculum']
+    torch.save(state,checkpoint)
+    with pytest.raises(ValueError,match='curriculum'):
+        runner.load(checkpoint)
