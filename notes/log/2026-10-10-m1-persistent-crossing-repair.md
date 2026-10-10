@@ -134,6 +134,19 @@ matches the new run and scalar endpoint reports stage1 at601/602. Heartbeat
 m1-ppo updated ACTIVE/10min with current process, scope and unresolved learning
 checks; no unchanged-state notifications. No concurrent native probe remains.
 
+Last verified running iteration615/10000 (PID14800 Rsl), stage1/zone1.0,
+no new2cm prelift event yet. Actual learning remains unverified.
+
+Implementation and evidence committed locally as0286e95 on the dedicated
+upload mirror. Publishing to ssdsj12/m1-rl:m1-10-10 failed twice because local
+GitHub443 connection timed out (first also LFS lock verification endpoint).
+Last successfully queried remote ref before attempt was5af7a29; do not claim
+0286e95 is already online. A per-command locksverify=false retry did not
+change persistent Git/network configuration and also timed out. Server code,
+tests and resumed training are deployed independently and unaffected. Retry a
+normal non-force push when GitHub connectivity returns; exclude untracked
+old one-shot pause/restart scripts and do not upload PT files.
+
 Key files: m1_dynamic_crossing.py, m1_required_crossing.py,
 ame_env_wrapper.py, focused regression tests, contact replay/verifier scripts.
 Learning acceptance remains OPEN: real early single-wheel lift, every sampled
