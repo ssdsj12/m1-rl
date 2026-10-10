@@ -1,5 +1,7 @@
 # TestPvcnnWithIsaacsim Notes Index
 
+最新部署跟进：[model700与上传核实](log/2026-10-10-m1-model700-publication.md)。修复代码已上传m1-10-10并核实远端a7d1820；当前PID14800继续长训，model700可读且课程/optimizer完整。实际跨越仍未验收。
+
 最新已授权：[持久跨越奖励修复](log/2026-10-10-m1-persistent-crossing-repair.md)。未完成同侧前后轮严格恢复，绕过后仍屏蔽正奖励；实际单轮增量延伸到障碍顶+3cm。验证后从本次model600恢复，实际PID/run以部署记录为准。以下等待确认/旧PID均为历史。
 
 最新：[model600真实策略接触回放](log/2026-10-10-m1-model600-contact-replay.md)。修复后仍无2cm预抬，已在校验model600后暂停PID12707。4env均值/采样各1000步均无严格跨越；实测策略伸腿抬机身，关节/高度恢复门槛真实不满足。待奖励防绕过设计，勿按下文旧PID自动重启。

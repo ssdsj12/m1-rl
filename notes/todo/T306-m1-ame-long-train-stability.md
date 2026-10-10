@@ -2,6 +2,8 @@
 
 ## Current State
 
+最新publication已完成：远端m1-10-10独立ref核实a7d1820，包含0286e95实现；不要按旧网络失败记录重复发布。当前model700 CPU核实iter700/next701、optimizer、有限权重/std及stage1课程完整，训练PID14800继续到706，未证明真实跨越。[记录](../log/2026-10-10-m1-model700-publication.md)。
+
 只读跟进terminal-obstacle-space：stage2标称后轮严格远侧落足剩余root边界余量.411292m；stage3欠.488708m（+X、585mm标称水平姿态）。不能泛化为所有策略姿态不可能；stage2/3原probe摆放均越界不等于两者都不能跨。候选仅stage3整列后移.6m，仍需动态恢复余量验证，尚未改地形。当前stage1 PID14800继续；raw增量非零但2cm事件/严格成功0。[监控与静态审计](../log/2026-10-10-m1-persistent-monitor-2218.md)。
 
 OPEN同级子节点 terminal-obstacle-space：最终probe的stage2/3末slab外摆放触发现有tile包络timeout。不要放宽边界；需在stage3全程验收前核对最后10cm障碍后轮越障/恢复余量，必要时提出最小布局调整。本轮恢复当前stage1奖励学习不以此冒充8障碍全程通过。[证据](../log/2026-10-10-m1-persistent-crossing-repair.md)。

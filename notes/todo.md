@@ -1,5 +1,7 @@
 ## 2026-10-10 active: T306/pure-ppo-learning
 
+- publication已关闭：修复实现0286e95及记录已普通push，远端核实a7d1820；model700 CPU校验完整，PID14800继续，尚无严格跨越。[证据](log/2026-10-10-m1-model700-publication.md)。
+
 - terminal-obstacle-space只读收敛：stage3末障碍与标称+X后轮恢复位置冲突，stage2未证实不足；候选布局尚未实施。PID14800继续stage1，原始小增量非零但无2cm/严格成功；上传重试仍未确认。[监控记录](log/2026-10-10-m1-persistent-monitor-2218.md)。
 
 - policy-contact-stall/persistent-reward：用户批准修复并恢复model600；逐障碍同侧前后轮严格恢复凭据、防绕行持久门控、全目标高度增量奖励。真实旧轨迹及4env2000步奖励回放确认后区不再正收益；学习成功仍OPEN。[最终验证/部署](log/2026-10-10-m1-persistent-crossing-repair.md)。
