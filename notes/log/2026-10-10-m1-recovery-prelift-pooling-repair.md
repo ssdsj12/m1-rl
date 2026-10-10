@@ -88,6 +88,21 @@ Resuming from this run's model_500 with optimizer/std/curriculum preserved,
 next501 plus9499iterations to10000,2048env/GPU0/save100. New log:
 /tmp/m1-ppo-repaired-20261010.log. Actual PID/run verification follows startup.
 
+Verified live PID12707, run2026-10-10_20-54-20/bb57e7d. Actual2048x1589/1592,
+16actions, controllerPPO/teacherdisabled/imitation0; resume source model500,
+keep_std and optimizer restore enabled. Iterations501/502 completed, GPU0
+21900/24564MiB, noCUDA/OOM/traceback. Recovery-ready fraction501=.0098,
+502=0; do not confuse passing nominal4env recovery with all learned-policy
+poses being stable. Progressdelta printed0.0000 initially; strict rateNaN
+with no completed attempts is not success. Monitor actual learning next.
+
+Publication verified with git ls-remote:
+cd638f454e65ffe3ea07256ef0eb1862d0d618c6 on ssdsj12/m1-rl:m1-10-10.
+Existing2989eab history preserved; no force push. Server remains dirty worktree
+HEADbb57e7d, hence run folder retains that suffix; deployed repair files are
+the reviewed/published candidate. No reset of unrelated remote working changes.
+No checkpoint/PT or temporary one-shot process-control scripts published.
+
 Key Files: ame_env_wrapper.py, m1_dynamic_crossing.py, m1_required_crossing.py,
 ame_observations.py, corresponding regressions, probe_m1_flat_first.py.
 Result: CPU contracts and native step/map wiring verified; learned crossing remains OPEN.
