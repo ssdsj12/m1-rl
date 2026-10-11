@@ -1,5 +1,7 @@
 # M1 execution gates contract
 
+LATEST DESIGN ONLY: user confirms fixed forward wheel targets + true12dim leg PPO; no learned wheel/differential actions. Proposed0.30m/s and explicit16-to12 model300/optimizer/std conversion await written-spec review. FK has no independent wheel-yaw steering joint; leg/contact dynamic avoidance remains unverified, not guaranteed. [Design](../log/2026-10-11-m1-fixed-wheel-leg-only-design.md). No production edits or training stop.
+
 Latest implemented contract c7ed76f: per-row autonomous_lift for flat-first levels1–3/non-done only; independent flight/overlap state replaces2cm success prerequisite. Pre-obstacle safe retry preserves highwater/budget. True support/each-overlap3cm/far loaded touchdown/stable recovery remain. Legacy0/mixed4 and2cm telemetry unchanged.307CPU pass; deployment/newmodel300run/exactPT deletion evidence in [current record](../log/2026-10-11-m1-autonomous-lift-timing-deploy.md). Historical DESIGN ONLY below is superseded; no oldPID auto-restart.
 
 DESIGN ONLY: user clarifies horizontal2cm timing, not vertical2cm rise, and confirms autonomous lift/lower timing. [Specification state](../log/2026-10-11-m1-autonomous-lift-timing-design.md): stage1–3 proposed removal of vertical2cm precondition, independent measured support/overlap clearance/far landing/recovery, safe pre-obstacle retries without budget refresh. Existing2cm counter remains telemetry; `.3/.02m` remains a continuous reward scale. No runtime changes or pause in this turn; old deployed thresholds remain until verified deployment.

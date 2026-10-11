@@ -1,5 +1,9 @@
 ## 2026-10-11 active: T306/pure-ppo-learning
 
+- fixed-wheel-leg-only OPEN：[已确认方向/待审规格](log/2026-10-11-m1-fixed-wheel-leg-only-design.md)，12维腿PPO+固定轮驱动；子节点checkpoint-migration、steering-feasibility。无独立轮yaw关节，不偷加差速；未改生产或停训。
+
+- forward-progress-regression/autonomous-run-window OPEN：[新run500窗口](log/2026-10-11-m1-autonomous-model500-window.md)完整2048/pass0/1376attempt/0success。PID7960继续，先当前PT定位，不套旧轨迹原因、不自动停训。
+
 - autonomous-lift-timing 实现/307CPU/1280原生帧20terminal/新run初始容量CLOSED：[部署证据](log/2026-10-11-m1-autonomous-lift-timing-deploy.md)。PID7960从指定300完成301–304，2048/loss有限；5个已批准失败PT删除/日志保留，TB8190新run。学习/three-wheel-load-loss仍OPEN，不因移除2cm洗白失败；旧6507勿重启。
 
 - autonomous-lift-timing OPEN：用户确认不固定水平起抬距离；竖直2cm硬门槛拟与成功解耦。书面规格待审阅，运行源码/训练未动，支撑/3cm净空/落轮和奖励预算保留。[设计](log/2026-10-11-m1-autonomous-lift-timing-design.md)。

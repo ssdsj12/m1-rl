@@ -2,6 +2,10 @@
 
 ## Current State
 
+用户确认pure-ppo-learning/fixed-wheel-leg-only方向：固定四轮驱动，12腿PPO、小跨大绕。新增checkpoint-migration及steering-feasibility子节点，因为当前16维PT不兼容12维且模型无独立轮yaw转向关节。[设计核查/待审规格](../log/2026-10-11-m1-fixed-wheel-leg-only-design.md)。不得将固定前进命令冒充固定轮速；不得把腿侧摆直接说成汽车转向。未改生产/停训，Feature/Verified仍c7ed76f。
+
+08:57UTC新增forward-progress-regression/autonomous-run-window子节点OPEN：15-51-33新run500完整2048/pass0/1376attempt/0success，模型权重有限；至549仅321轮1次预抬、stable/strict全0。创建原因是完整窗口前进未通过，非部分均值；不认定与旧run同因。PID7960/2048保持长训，未改奖励/并发native。[证据](../log/2026-10-11-m1-autonomous-model500-window.md)。Feature/Verified仍c7ed76f。
+
 最新自主抬落实现c7ed76f/1fde9d1，307CPU/1280原生环境帧20terminal通过，独立审查无阻断。[部署证据](../log/2026-10-11-m1-autonomous-lift-timing-deploy.md)优先。autonomous-lift-timing/runtime-verification与新run初始2048容量CLOSED；mixed-stage-index-assertion已定位诊断==4误判，按原有随机>=4纠正并整套重跑CLOSED。PID7960/run15-51-33从指定300完成301–304/loss有限/GPU21868MiB；旧6507在800后停止，批准的5PT已删，300/其他run/全部日志保留。TB8190指新run，监控已更新。Last Feature/Verified c7ed76f；Current Work codex/m1-ppo-repair-upload。Key Files dynamic/wrapper/autonomous tests；真实学习与三轮失载仍OPEN。
 
 新增pure-ppo-learning/autonomous-lift-timing子节点OPEN：用户澄清“提前2cm”为水平距离并确认自主抬落；代码竖直2cm不是用户要求。[规格与核查](../log/2026-10-11-m1-autonomous-lift-timing-design.md)。拟解耦预抬统计/成功状态，障碍前安全抬落可探索，真实支撑/净空/远侧落轮与防刷奖励保留。目前仅设计，未改运行源码/未停训；下一步书面审阅后计划/TDD。关联three-wheel-load-loss但不声称解决；Last Feature/Verified Ref仍6960a4b。

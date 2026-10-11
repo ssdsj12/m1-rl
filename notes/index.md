@@ -1,5 +1,9 @@
 # TestPvcnnWithIsaacsim Notes Index
 
+最新[固定轮速/12腿动作设计](log/2026-10-11-m1-fixed-wheel-leg-only-design.md)：用户确认严格12维、不用差速；书面规格待审。0.30m/s为建议，旧300需显式转换。模型无独立车轮yaw转向关节，腿部动态避大障碍能力待验证，不承诺必然可行。尚未改生产/停训。
+
+最新[自主新run500窗口](log/2026-10-11-m1-autonomous-model500-window.md)：至548/TB549，loss有限；500完整2048回合pass0/1376attempt/0success。预抬仅321轮1次、stable/strict全0，具体动作原因未定。PID7960继续，未停训/改生产/并发probe。
+
 最新部署优先：[自主抬落时机修复与model300新训练](log/2026-10-11-m1-autonomous-lift-timing-deploy.md)。stage1–3解耦2cm统计与成功资格，保留三轮支撑/逐帧3cm/稳定落轮、防刷预算。307CPU/1280原生环境帧与20terminal通过；PID7960/run15-51-33从指定300完成301–304，2048/GPU21868MiB/loss有限。TB8190远程新run核实。旧6507已在800边界停止，用户确认的旧400/500/600/700及800共5PT已删除；指定300/其他历史/全部日志保留。以下设计待审批、700续训等为历史，勿据此重启旧进程。实际学习仍OPEN。
 
 最新用户确认自主抬落时机：“提前2cm”为水平距离而非竖直升高；拟取消2cm预抬硬前提，保留净空/支撑/落轮标准。[设计状态](log/2026-10-11-m1-autonomous-lift-timing-design.md)。仅书面规格，尚未实施/部署，不因此暂停训练。
