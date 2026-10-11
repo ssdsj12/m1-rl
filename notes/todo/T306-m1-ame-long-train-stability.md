@@ -2,6 +2,20 @@
 
 ## Current State
 
+最新自主抬落实现c7ed76f/1fde9d1，307CPU/1280原生环境帧20terminal通过，独立审查无阻断。[部署证据](../log/2026-10-11-m1-autonomous-lift-timing-deploy.md)优先。autonomous-lift-timing/runtime-verification与新run初始2048容量CLOSED；mixed-stage-index-assertion已定位诊断==4误判，按原有随机>=4纠正并整套重跑CLOSED。PID7960/run15-51-33从指定300完成301–304/loss有限/GPU21868MiB；旧6507在800后停止，批准的5PT已删，300/其他run/全部日志保留。TB8190指新run，监控已更新。Last Feature/Verified c7ed76f；Current Work codex/m1-ppo-repair-upload。Key Files dynamic/wrapper/autonomous tests；真实学习与三轮失载仍OPEN。
+
+新增pure-ppo-learning/autonomous-lift-timing子节点OPEN：用户澄清“提前2cm”为水平距离并确认自主抬落；代码竖直2cm不是用户要求。[规格与核查](../log/2026-10-11-m1-autonomous-lift-timing-design.md)。拟解耦预抬统计/成功状态，障碍前安全抬落可探索，真实支撑/净空/远侧落轮与防刷奖励保留。目前仅设计，未改运行源码/未停训；下一步书面审阅后计划/TDD。关联three-wheel-load-loss但不声称解决；Last Feature/Verified Ref仍6960a4b。
+
+07:18UTC续训首更新已验：PID6507/run15-16-31完成701–702，value.0358/.0204、surrogate.0084/.0026有限；2048/GPU21868MiB/optimizer1/std/course/save100保留。TB6661远程6006/logdir新run已核实，local16006未重验；6047/6254均退出，不并发native。下方“首更新待核实”已由此闭合。
+
+最新用户要求具体抬轮失败诊断已执行：[model700逐帧证据](../log/2026-10-11-m1-prelift-failure-trace700.md)。4921仅在700完整校验后SIGINT；64eval无预抬，另2048train-BN/无更新采样310attempt/1prelift/0success。env283左前22.032mm、3轮有载；20ms后全部轮载荷0，首先support_loss；80ms早落轮，未到障碍，预抬已偏离轮轨/增量奖励0。不能外推2281历史事件或断言四轮明显腾空。子节点attempt-failure-trace/three-wheel-load-loss和相关off-lane-prelift-telemetry OPEN，因已观察断链但物理失载根因未隔离。生产未改；probe退出/GPU1MiB后PID6507从同700续701+9299/2048/run15-16-31，首更新待核实；不重启旧4921。
+
+用户零跨越查询：新增pure-ppo-learning/forward-progress-regression/attempt-failure-trace OPEN，因汇总无法关联预抬与具体失败帧而创建。至651累计2281prelift/76373strict attempts/0crossings/0recoveries；低净空样本明确存在，暴露下降和轮轨cost升高提示回避/少前进但未证实具体动作。严格crossing先于姿态恢复计数，非仅恢复门槛卡0；50部署CPU通过，相关代码normalized hash一致。保持PID4921训练，不改生产，原生逐帧需安全边界且不能并发。[完整证据](../log/2026-10-11-m1-zero-crossing-diagnosis.md)。
+
+06:47UTC新子节点forward-progress-regression，与prelift-repeatability相关：raw301–640累计2251预抬/213轮非零，stable/strict全部0。当前run600 CPU39/33/16有限，stage1，last完整2048/pass0/3106attempt/0success，对比400的pass.1973退化；不凭汇总猜姿态原因，不混历史model600。PID4921/2048/GPU21868MiB继续，用户长训优先未变，无生产修改。若持续则安全边界获取当前策略轨迹，不并发native。[审计](../log/2026-10-11-m1-dense-model600-window.md)。
+
+05:46UTC prelift-repeatability新证据：当前run301–403有11轮合计18次>=2cm预抬，rawTB/stdout一致，stable/strict仍0。model400 CPU39/33/16有限、stage1、last完整2048/pass.197265625/7126attempt/0success；PID4921/2048/GPU21868MiB继续。未修改生产或手调std，不以稀疏信号宣称掌握。已通知，不重复同批事件。[记录](../log/2026-10-11-m1-dense-prelift-repeatability.md)。
+
 05:20UTC自主学习已实际完成301–304，PID4921/run13-17-21/bb57e7d，loss有限，2048env/GPU21868MiB。初始容量验证CLOSED，学习/动态越障OPEN。TB5109新run/remote6006核实，local16006拒绝连接且未改网络。Last Feature/Verified Ref6960a4b（233CPU/实际启动）；后续文档记录不改变运行源码。[证据](../log/2026-10-11-m1-lift-roll-self-learning.md)。
 
 用户最新“长训先，让它自己来折腿”覆盖旧静态夹具开训门槛。233CPU通过；四个地形/角色文件部署，flat-first selector为m1_lift_roll。model300新鲜CPU校验，PID4921从301+9699启动，2048/GPU0/save100/optimizer/std/stage1保留，无动作接管。首更新/容量待核实；学习仍OPEN，不把静态inconclusive改成通过。[自主学习部署](../log/2026-10-11-m1-lift-roll-self-learning.md)。

@@ -14,7 +14,7 @@
 
 - User2026-10-11 now overrides resume choice: new run from18-49-19/model300, preserving its optimizer/std/course,301+9699/exclusive10000/2048/save100. Do not resume latest failed model.
 - Preserve existing dirty notes and untracked watchers. No hotpatch, parallel native, control/std/contact threshold/terrain edits.
-- Failed PT deletion is separate: inventory done, exact range awaiting reply; protect selected300 and logs. Do not delete on an inferred broad scope.
+- Failed PT deletion user-confirmed: only13-17-21model400/500/600/700 plus15-16-31PTs before switching; protect selected300, allotherhistory andlogs. Delete onlyafternewrunverified.
 - Workspace CPU baseline uses existing deployment; candidate is isolated `/tmp/m1-autonomous-timing-20261011` with its own `Go2Pvcnn/ame_baseline` and tests. `PYTHONPATH` candidate first, production extension and rsl_rl fallback; `CUDA_VISIBLE_DEVICES=''` for pytest.
 - Relevant test command from candidate root: `PYTHONPATH=Go2Pvcnn:/root/quad/m1-rl/.worktrees/contact-recovery/Go2Pvcnn:/root/quad/m1-rl/.worktrees/contact-recovery/Go2Pvcnn/rsl_rl CUDA_VISIBLE_DEVICES='' /opt/conda/envs/env_issacsim/bin/python -m pytest -q Go2Pvcnn/tests/test_m1_autonomous_lift_timing.py Go2Pvcnn/tests/test_m1_dynamic_crossing.py Go2Pvcnn/tests/test_m1_required_crossing.py Go2Pvcnn/tests/test_m1_strict_crossing.py Go2Pvcnn/tests/test_m1_crossing_receipts.py Go2Pvcnn/tests/test_m1_persistent_crossing_reward.py`.
 

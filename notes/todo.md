@@ -1,5 +1,19 @@
 ## 2026-10-11 active: T306/pure-ppo-learning
 
+- autonomous-lift-timing 实现/307CPU/1280原生帧20terminal/新run初始容量CLOSED：[部署证据](log/2026-10-11-m1-autonomous-lift-timing-deploy.md)。PID7960从指定300完成301–304，2048/loss有限；5个已批准失败PT删除/日志保留，TB8190新run。学习/three-wheel-load-loss仍OPEN，不因移除2cm洗白失败；旧6507勿重启。
+
+- autonomous-lift-timing OPEN：用户确认不固定水平起抬距离；竖直2cm硬门槛拟与成功解耦。书面规格待审阅，运行源码/训练未动，支撑/3cm净空/落轮和奖励预算保留。[设计](log/2026-10-11-m1-autonomous-lift-timing-design.md)。
+
+- 07:18UTC诊断后续训已实际完成701–702，PID6507/run15-16-31/2048/GPU21868MiB/loss有限；TB6661远程新run核实，无并发probe。[诊断与续训](log/2026-10-11-m1-prelift-failure-trace700.md)。
+
+- attempt-failure-trace已取得同次预抬链；子节点three-wheel-load-loss/off-lane-prelift-telemetry仍OPEN：2048采样1例抬22mm后20ms失三轮载荷、80ms早落轮，预抬已出轮轨故增量奖0。保持标准/奖励，无生产修改；700后PID6507恢复启动。[逐帧证据](log/2026-10-11-m1-prelift-failure-trace700.md)。
+
+- forward-progress-regression/attempt-failure-trace OPEN：至651预抬2281但strict crossing0，排除仅恢复姿态门槛解释；需当前策略逐帧区分净空不足/失支撑/早落轮/绕行，未授权暂停则保持长训，禁止并发native。[诊断](log/2026-10-11-m1-zero-crossing-diagnosis.md)。
+
+- prelift-repeatability关联forward-progress-regression OPEN：至640累计2251预抬但stable/strict0，当前run600完整2048窗口pass0，非部分窗口误报；PID4921继续，无数值异常/未改奖励。[600审计](log/2026-10-11-m1-dense-model600-window.md)。
+
+- prelift-repeatability出现重复信号：301–403共11轮/18次>=2cm预抬，但stable/strict0；model400完整CPU核验，PID4921继续。未证明成功、不因此停训。[新证据](log/2026-10-11-m1-dense-prelift-repeatability.md)。
+
 - 自主学习初始运行已核实：PID4921/run13-17-21完成301–304，2048/约21.9GB/loss有限；prelift/strict0不是成功，继续观察，不再因静态夹具自动停训。TB5109/remote6006新run，local16006当前拒绝连接。[现场证据](log/2026-10-11-m1-lift-roll-self-learning.md)。
 
 - 用户明确长训优先、PPO自主折腿，静态夹具不再阻挡；统一8+70实物布局已部署，233CPU通过，model300/301+9699/2048已启动PID4921，待首更新验证。学习与动态验收仍OPEN。[新部署](log/2026-10-11-m1-lift-roll-self-learning.md)。
