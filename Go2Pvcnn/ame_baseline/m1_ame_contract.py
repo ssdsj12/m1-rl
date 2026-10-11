@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import torch
-from math import atan2, sin, cos
+from math import atan2, sin, cos, isfinite
 from extension.parallelism.m1_kinematics import (
     M1_ASSET_JOINT_NAMES, M1_PLANNER_JOINT_NAMES, M1_WHEEL_JOINT_NAMES,
     M1_WHEEL_RADIUS_M, M1_ABAD_LOWER, M1_ABAD_UPPER,
@@ -35,6 +35,11 @@ M1_TRAINING_ROOT_Z_M = 0.45600081145762916
 
 
 def m1_last_leg_action(env):
+    if getattr(env.cfg, 'm1_fixed_wheel_speed_m_s', None) is not None:
+        action = env.action_manager.action
+        if action.shape[-1] != 12:
+            raise ValueError('fixed-wheel policy must have 12 leg actions')
+        return action
     return select_named_joint_state(
         env.action_manager.action,
         source_names=env.cfg.asset_joint_names,
@@ -44,6 +49,9 @@ def m1_last_leg_action(env):
 
 def m1_last_action(env):
     """M1 policy history includes all 12 leg and 4 wheel commands."""
+    speed = getattr(env.cfg, 'm1_fixed_wheel_speed_m_s', None)
+    if speed is not None:
+        return expand_fixed_wheel_actions(env.action_manager.action, speed)
     return select_named_joint_state(
         env.action_manager.action,
         source_names=env.cfg.asset_joint_names,
@@ -59,6 +67,26 @@ def m1_wheel_surface_velocity(env):
         source_names=tuple(robot.joint_names),
         selected_names=M1_WHEEL_JOINT_NAMES,
     ) * M1_WHEEL_RADIUS_M
+
+
+def validate_fixed_wheel_speed(speed_m_s):
+    speed = float(speed_m_s)
+    if not isfinite(speed) or not 0.0 < speed <= 2.0:
+        raise ValueError('fixed wheel surface speed must be finite and in (0, 2] m/s')
+    return speed
+
+
+def expand_fixed_wheel_actions(actions, speed_m_s=.30):
+    """Executed 16-slot history/decoder input; never a PPO action distribution."""
+    if actions.ndim != 2 or actions.shape[-1] != 12:
+        raise ValueError('fixed-wheel policy actions must have shape [B,12]')
+    speed = validate_fixed_wheel_speed(speed_m_s)
+    legs = list(resolve_named_indices(M1_ASSET_JOINT_NAMES, M1_PLANNER_JOINT_NAMES))
+    wheels = list(resolve_named_indices(M1_ASSET_JOINT_NAMES, M1_WHEEL_JOINT_NAMES))
+    executed = actions.new_zeros((actions.shape[0], 16))
+    executed[:, legs] = actions
+    executed[:, wheels] = speed / (M1_WHEEL_RADIUS_M * M1_WHEEL_ACTION_SCALE_RAD_S)
+    return executed
 
 
 def m1_action_targets(actions, default_joint_pos):
