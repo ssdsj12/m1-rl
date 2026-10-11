@@ -4,6 +4,17 @@ Parent：[T306](../todo/T306-m1-ame-long-train-stability.md)。
 Spec：[已确认规格](../../docs/superpowers/specs/2026-10-11-m1-fixed-wheel-leg-only-design.md)。
 2026-10-11 UTC。当前为原生/部署前记录，后续追加现场结果优先。
 
+最新09:40UTC：隔离原生9259完整通过并退出/GPU1MiB后，11个runtime/入口文件按SHA备份部署；
+新训练进程9450已启动2048/cuda0，日志/tmp/m1-ppo-fixed-wheel-model300-20261011.log，首更新待核实。
+初始化PT另存生产logs/rsl_rl/m1_cross_large_complex_ame/fixed-wheel-initialization/model_300_fixed_wheel.pt，
+SHA同候选bffc5fbb；原300/旧700/所有历史run保留。备份/tmp/m1-fixed-wheel-production-backup/manifest.json。
+
+原生结果/tmp/m1-fixed-wheel-native-result.json：100空地控制步/400物理调用后4env实际前进
+0.4901047/0.4963684/0.4903412/0.4949799m，实测四轮各自正向；不是精确速度跟踪。
+再逐阶段0/1/2/3/mixed运行1600环境帧随机12维动作，20terminal，累计2000物理调用全部固定轮目标；
+12策略/16历史、1589/1592观测、实际奖励有限，mixed实际levels8/6/6/5。
+这证明接线/实际前进方向，不证明学会折腿跨越或绕过大障碍。
+
 用户确认固定轮面目标0.30m/s，PPO仅12腿动作，实际机身跟速允许偏差。
 不加差速/teacher/IK/swing/WBC，不更改轮PD、585mm姿态、std、地形或成功阈值。
 真实小障碍跨越及大障碍避让仍OPEN；固定驱动不等于实际恒速或必然会转向。
@@ -32,6 +43,11 @@ stage0/1/2/3/mixed、强制terminal与有限奖励。训练/probe不并发。
 候选接线通过不等于学会；原生未完前不部署、不宣称新训练运行。
 
 ## 审查裁定与限制
+
+09:37UTC本run700出现，CPU权重39/Adam33/std16正有限/stage1核验；
+SHA4a23caf90a1eee4c96020865a8216af46761e4b0b6052e677f09a6903e90faee。
+仅对重新验证cmdline/cwd/starttime的7960发SIGINT，退出/GPU空闲核实后启动9259原生。
+`/tmp/m1-fixed-wheel-pause-evidence.json`保存边界证据；旧训练停止，候选尚未部署。
 
 - Windows宿主测试使用显式tar/OpenSSH路径，避免Git Bash PATH误选GNU tar；不改全局设置。
 - 用现有实际测试文件名替代计划简写；runtime线性尺度测试动作限定在原关节范围，限位不变。
