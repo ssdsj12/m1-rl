@@ -11,6 +11,11 @@ from diagnostic placements. Explicit `m1_lift_roll` authoring uses20cm gaps,
 still selects `m1_progressive`. Candidate files only in the local mirror and
 remote `/tmp/m1-lift-roll-candidate-20261011`.
 
+![Exact candidate central corridor](artifacts/2026-10-11-m1-lift-roll-layout-candidate.png)
+
+Figure generated from `candidate_blocks(row,fill_gap=.20)` by the archived
+figure script; central corridor zoom only. Physical fill spans the full tile.
+
 ## Tests / review
 
 Authoring RED4→GREEN: exact shapes/roles/centers, unique paths, semantic-small,
