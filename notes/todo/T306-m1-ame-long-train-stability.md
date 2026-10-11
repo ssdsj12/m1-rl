@@ -2,7 +2,7 @@
 
 ## Current State
 
-2026-10-11 当前：用户明确确认修复后恢复，指出此前已确认，禁止反复追问。corridor-visibility已实现stage1--3未完成轮义务与实际轮迹投影宽度的max有界代价，替换原-1通道项；其他奖励/控制器/std/585mm/2048不改。173CPU回归、真实反事实、独立审查及4env原生接线/8000策略环境帧核对通过。新PID16830已核实cmdline/cwd，从22-09-27/model900恢复next901+9099，保留optimizer/std/course；首轮完成待核实。当前工作Ref为3cc82b3+本次diff；见[验证部署记录](../log/2026-10-11-m1-persistent-route-repair.md)。以下“待确认”均为历史。
+2026-10-11 当前：用户明确确认修复后恢复，禁止反复追问。corridor-visibility已实现stage1--3未完成轮义务与实际轮迹投影宽度的max有界代价，替换原-1通道项；其他奖励/控制器/std/585mm/2048不改。173CPU回归、真实反事实、独立审查及4env原生接线/8000策略环境帧核对通过。新PID16830已核实完成901--905，run2026-10-11_09-57-29/bb57e7d，从22-09-27/model900恢复next901+9099，optimizer/std/course保留，GPU0约21.9GB。TB16981指向新run、local16006核实。Last Feature/Verified Ref:a8923f2；GitHub首推443超时待上传，不影响训练；学习单轮跨越仍OPEN。[验证部署记录](../log/2026-10-11-m1-persistent-route-repair.md)。以下“待确认”均为历史。
 
 最新：model900完整校验后已SIGINT停止14800；15658回放也完成退出，GPU1MiB，无长训。mean7次遇障未预抬便低净空失败；sampled4env全部横向绕开，绕行惩罚0。OPEN子节点policy-contact-stall/corridor-visibility：瞬时扫描门控使绕行后方向惩罚消失。提出仅stage1--3固定通道持续惩罚的有界设计，待确认，不改std/姿态/控制器。后续恢复必须本900谱系next901+9099/2048env。[完整诊断](../log/2026-10-10-m1-model900-contact-replay.md)。
 

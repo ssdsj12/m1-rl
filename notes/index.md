@@ -1,6 +1,6 @@
 # TestPvcnnWithIsaacsim Notes Index
 
-最新状态：[持久轮轨处罚修复](log/2026-10-11-m1-persistent-route-repair.md)。用户已确认修复并恢复，不再重复请求授权。173CPU回归、真实轨迹反事实、独立审查及4env原生接线/策略回放均通过。新PID16830已启动，cmdline/cwd已核实，从model900同谱系恢复901起9099轮，2048env；首轮完成尚待核实。以下暂停待确认均为历史，实际跨越仍未验收。
+最新状态：[持久轮轨处罚修复](log/2026-10-11-m1-persistent-route-repair.md)。用户已确认修复并恢复，不再重复请求授权。173CPU回归、真实轨迹反事实、独立审查及4env原生接线/策略回放均通过。新PID16830已核实完成901--905，run2026-10-11_09-57-29/bb57e7d，2048env/GPU0约21.9GB，总10000/save100，model900同谱系optimizer/std/课程保留。TensorBoard16981已切换，local16006核实。实现a8923f2已本地提交，GitHub首推443超时待重试；服务器训练不受影响。实际跨越仍未验收，以下暂停待确认均为历史。
 
 历史部署：[model700与上传核实](log/2026-10-10-m1-model700-publication.md)。修复实现0286e95及文档已上传m1-10-10，远端随后核实3cc82b3；后续model900暂停状态以上方记录为准。
 

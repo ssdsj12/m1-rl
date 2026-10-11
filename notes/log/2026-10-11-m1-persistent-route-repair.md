@@ -122,8 +122,20 @@ At2026-10-11T01:57:24Z the one-shot guarded launcher verified no train/native
 process and GPU0<100MiB, then invoked existing kernel-flock training wrapper.
 New PID16830,log`/tmp/m1-ppo-persistent-route-20261011.log`,2048envGPU0,
 next901+9099,total10000/save100,M1_LOAD_OPTIMIZER=1,--keep_std,flat-first.
-Startup is in progress; first completed iterations and run path still to verify.
+Subsequently verified `/proc/16830/cmdline` and cwd match the exact2048 resume;
+live envM1_LOAD_OPTIMIZER=1,NUM_ENVS2048,MAX_ITERATIONS9099,COURSE_PROFILEflat-first,
+SAVE_INTERVAL100,DEVICEcuda:0. Runtime confirms controller=ppo,mpc_teacher=disabled,
+imitation_coef=0,policy[2048,1589],critic[2048,1592],loaded correctmodel900.
+Completed901--905/10000 observed; GPU0 21862MiB/24564MiB.
+Run:`logs/rsl_rl/m1_cross_large_complex_ame/2026-10-11_09-57-29/bb57e7d`.
+Early901--905no2cm/stablelanding; no learning claim, no immediate stop from
+these first pre-obstacle rollouts. Do not interpret four-decimal delta as raw0.
 The launcher is not a watcher and refuses to overwrite its existing log.
+
+TensorBoard14933 cmdline/logdir verified before SIGTERM; replaced only this
+task-owned process with16981 pointing09-57-29run,port6006host127.0.0.1.
+Both remote6006 and existing local127.0.0.1:16006 `/data/logdir` verify newrun.
+No display/tunnel/network/globalGit settings changed.
 
 ## Open follow-up / boundaries
 
@@ -139,9 +151,11 @@ The launcher is not a watcher and refuses to overwrite its existing log.
 ## Git refs / key files
 
 Baseline Ref / previous publication: `3cc82b349515223efc4e200a15a3aaba764b042b`.
-Candidate Ref: current local diff; remote worktree baseline`bb57e7d` plus
-historical deployed changes. Last Feature/Verified implementation before this
-patch:0286e95. Current Work Ref:`codex/m1-ppo-repair-upload` local,
-`codex/m1-contact-recovery` server. No new publication yet.
+Candidate / Last Feature / Last Verified implementation Ref:`a8923f2`.
+Remote worktree baseline`bb57e7d` plus historical and this deployed diff;
+no hot modification after training startup. Current Work Ref:
+`codex/m1-ppo-repair-upload` local,`codex/m1-contact-recovery` server.
+Normal non-force GitHub push ofa8923f2 to`m1-10-10` failed443 connect timeout
+after21s; initial publication not confirmed. This does not affect server runtime.
 Key files:`m1_required_crossing.py`, `ame_env_wrapper.py`, `m1_obstacle_rewards.py`,
 route/reward/runtime tests, native flat-first and contact probes.
