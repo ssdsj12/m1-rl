@@ -2,6 +2,8 @@
 
 ## Current State
 
+05:20UTC自主学习已实际完成301–304，PID4921/run13-17-21/bb57e7d，loss有限，2048env/GPU21868MiB。初始容量验证CLOSED，学习/动态越障OPEN。TB5109新run/remote6006核实，local16006拒绝连接且未改网络。Last Feature/Verified Ref6960a4b（233CPU/实际启动）；后续文档记录不改变运行源码。[证据](../log/2026-10-11-m1-lift-roll-self-learning.md)。
+
 用户最新“长训先，让它自己来折腿”覆盖旧静态夹具开训门槛。233CPU通过；四个地形/角色文件部署，flat-first selector为m1_lift_roll。model300新鲜CPU校验，PID4921从301+9699启动，2048/GPU0/save100/optimizer/std/stage1保留，无动作接管。首更新/容量待核实；学习仍OPEN，不把静态inconclusive改成通过。[自主学习部署](../log/2026-10-11-m1-lift-roll-self-learning.md)。
 
 诊断修复Last Feature/Verified Ref为6c82648，232CPU与最终12600tick原生测量完成（96恢复通过、fold控制无效），无训练/native进程/GPU1MiB。README/证据15文件与服务器逐字节匹配；生产源码、300/1400 PT hash不变。m1-10-11普通push与独立ls-remote均443超时，最新修复未上传，最后独立远端900f249；不改网络/全局Git。[发布与原生记录](../log/2026-10-11-m1-placement-diagnostic-repair.md)。

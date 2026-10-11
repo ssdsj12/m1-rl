@@ -1,5 +1,7 @@
 ## 2026-10-11 active: T306/pure-ppo-learning
 
+- 自主学习初始运行已核实：PID4921/run13-17-21完成301–304，2048/约21.9GB/loss有限；prelift/strict0不是成功，继续观察，不再因静态夹具自动停训。TB5109/remote6006新run，local16006当前拒绝连接。[现场证据](log/2026-10-11-m1-lift-roll-self-learning.md)。
+
 - 用户明确长训优先、PPO自主折腿，静态夹具不再阻挡；统一8+70实物布局已部署，233CPU通过，model300/301+9699/2048已启动PID4921，待首更新验证。学习与动态验收仍OPEN。[新部署](log/2026-10-11-m1-lift-roll-self-learning.md)。
 
 - placement-validity/common-loaded-pose误判已修复，232CPU/96恢复摆放通过；新子节点native-readiness/three-wheel-fixture OPEN：静态折腿在空地也失去三轮支撑，不能据此宣称布局不可行。保持未部署/未开训，选择model300待有效动态验证。[证据](log/2026-10-11-m1-placement-diagnostic-repair.md)。

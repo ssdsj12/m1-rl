@@ -36,6 +36,13 @@ Old4/6/8 rollback needs old mixed_course, not only selector.
 
 ## Launch evidence
 
+Confirmed running:05:20UTC completed301–304; value losses
+.1748/1.8018/1.2288/4.2866 and surrogate.0258/.0262/.0505/.0338 finite.
+GPU21868MiB, actual2048 observations verified. New run13-17-21/bb57e7d.
+Initial prelift_events/strict_successes0; not a learned crossing certificate.
+This completes initial full2048 update-capacity verification, not a guarantee
+against later numerical failure. No native probe alongside training.
+
 Host a21472797434572800304964; production contact-recovery worktree.
 User-selected18-49-19/bb57e7d/model300 freshly CPU checked:39finite weights,
 33finite optimizer states,16positive std,stage1,next301,architecture1589/1592.
@@ -59,8 +66,8 @@ remote6006/data/logdir independently matches. Local16006 actively refused;
 no network/tunnel changes made, do not claim old browser chart is live.
 Independent read-only review found noCritical/Important selector/launch issues.
 
-Full2048 update capacity/finite losses and selected layout require this run's
-runtime evidence. Learning requires video plus strict events, not start,
+Full2048 initial updates/finite losses and selector are now verified above.
+Learning requires video plus strict events, not start,
 forward pass, empty NaN or rounded-zero metrics. Static negative evidence stays.
 Base Work Ref5e60159; prior diagnostic implementation6c82648. GitHub target
 m1-10-11; last verified remote900f249, previouspush443failed.
