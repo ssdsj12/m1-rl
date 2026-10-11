@@ -2,6 +2,8 @@
 
 ## Current State
 
+用户最新“长训先，让它自己来折腿”覆盖旧静态夹具开训门槛。233CPU通过；四个地形/角色文件部署，flat-first selector为m1_lift_roll。model300新鲜CPU校验，PID4921从301+9699启动，2048/GPU0/save100/optimizer/std/stage1保留，无动作接管。首更新/容量待核实；学习仍OPEN，不把静态inconclusive改成通过。[自主学习部署](../log/2026-10-11-m1-lift-roll-self-learning.md)。
+
 诊断修复Last Feature/Verified Ref为6c82648，232CPU与最终12600tick原生测量完成（96恢复通过、fold控制无效），无训练/native进程/GPU1MiB。README/证据15文件与服务器逐字节匹配；生产源码、300/1400 PT hash不变。m1-10-11普通push与独立ls-remote均443超时，最新修复未上传，最后独立远端900f249；不改网络/全局Git。[发布与原生记录](../log/2026-10-11-m1-placement-diagnostic-repair.md)。
 
 最新诊断修复：common-loaded-pose误判已闭合，232CPU通过；三阶段96组恢复摆放与既有runtime readiness通过。独立审查的角稳定/四元数归一化问题已反例修复。新OPEN子节点lift-roll-layout/native-readiness/three-wheel-fixture：单腿固定折叠空地56tick末五帧三轮支撑仍不成立，判inconclusive_fixture，不判布局不可行。尚无有效三轮滚行动力学及2048容量验收，不部署/不启动；保持用户model300选择。Last Feature/Verified Ref:900f249+本次diagnostic-only diff；生产仍5a366ff。[修复证据](../log/2026-10-11-m1-placement-diagnostic-repair.md)。

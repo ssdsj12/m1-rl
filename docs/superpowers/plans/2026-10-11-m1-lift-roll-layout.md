@@ -1,5 +1,16 @@
 # M1 Lift-and-Roll Layout Implementation Plan
 
+## Latest execution override: PPO self-learning
+
+User explicitly requests long training first and autonomous folding/crossing.
+Static folded-leg fixture acceptance is no longer a pre-training gate; its
+inconclusive evidence stays. Geometry/roles/maps and96recovery placements have
+been checked,233CPU regressions pass, and equal8+70 is selected for flat-first.
+Start user-selectedmodel300,next301+9699,2048/save100, preserve optimizer/std/course.
+No swing/control takeover. Dynamic mastery remains OPEN. Independent review
+found noCritical/Important selector/launch issues.
+See [live deployment evidence](../../../notes/log/2026-10-11-m1-lift-roll-self-learning.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add safe target/fill separation and a dense alternating single-wheel layout without changing PPO control or strict success.

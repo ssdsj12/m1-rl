@@ -93,7 +93,7 @@ def configure_flat_first_terrain(cfg):
     counts.plane_counts = tuple(SemanticObstacleCount(progressive_row(i)[0],progressive_row(i)[2]) for i in range(10))
     counts.non_plane_counts = tuple(SemanticObstacleCount(progressive_row(i)[0],0) if i<4 else counts.non_plane_counts[i] for i in range(10))
     cfg.scene.terrain.semantic_course_layout_cfg = replace(
-        cfg.scene.terrain.semantic_course_layout_cfg, placement_strategy='m1_progressive')
+        cfg.scene.terrain.semantic_course_layout_cfg, placement_strategy='m1_lift_roll')
     cfg.curriculum.terrain_levels = CurriculumTermCfg(func=curriculum_reset)
     cfg.curriculum.lin_vel_cmd_levels = None
     cfg.rewards.track_lin_vel_xy.func = track_velocity_and_accumulate

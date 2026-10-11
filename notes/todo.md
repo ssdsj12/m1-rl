@@ -1,5 +1,7 @@
 ## 2026-10-11 active: T306/pure-ppo-learning
 
+- 用户明确长训优先、PPO自主折腿，静态夹具不再阻挡；统一8+70实物布局已部署，233CPU通过，model300/301+9699/2048已启动PID4921，待首更新验证。学习与动态验收仍OPEN。[新部署](log/2026-10-11-m1-lift-roll-self-learning.md)。
+
 - placement-validity/common-loaded-pose误判已修复，232CPU/96恢复摆放通过；新子节点native-readiness/three-wheel-fixture OPEN：静态折腿在空地也失去三轮支撑，不能据此宣称布局不可行。保持未部署/未开训，选择model300待有效动态验证。[证据](log/2026-10-11-m1-placement-diagnostic-repair.md)。
 
 - 恢复点由用户改为当前谱系model300，已CPU校验，stage1/完整2048窗口pass1.0；next301+9699/2048env，保留optimizer/std/course。1400备份不删，新布局native门槛不变，尚未启动。[记录](log/2026-10-11-m1-model300-restart-selection.md)。

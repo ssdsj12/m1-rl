@@ -1,5 +1,7 @@
 # TestPvcnnWithIsaacsim Notes Index
 
+最新用户要求“长训先，让它自己来折腿”，静态折腿夹具不再作为开训条件；已部署统一8目标+70填充并切换训练selector，233CPU通过，从所选model300启动PID4921，2048env/optimizer/std/course保留。实际更新/容量以[自主学习部署记录](log/2026-10-11-m1-lift-roll-self-learning.md)现场核验为准。下方未部署/夹具阻挡开训均历史，严格跨越标准不变。
+
 最新[诊断修复](log/2026-10-11-m1-placement-diagnostic-repair.md)：承重空地逐帧对照替代未承重标称误判；232CPU通过，96恢复摆放/原有runtime readiness通过。静态折单腿空地56tick仍失去三轮支撑，单列inconclusive_fixture，不能当布局不可行。生产未改、未开训；恢复点仍用户所选300。后续OPEN为有效三轮动态夹具，不再重复首点共同下沉诊断。
 
 用户最新恢复点选择优先：[model300前进基础](log/2026-10-11-m1-model300-restart-selection.md)。已核实当前谱系18-49-19/model300完整，stage1、上一2048回合pass1.0但strict0；后续选择next301+9699，保留optimizer/std/course，覆盖旧“只从1400恢复”。model1400保留备份；新布局native门槛未解除，目前未开训。

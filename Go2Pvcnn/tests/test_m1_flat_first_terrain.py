@@ -70,6 +70,16 @@ def test_flat_first_profile_selected_before_environment_creation():
     assert src.index('configure_flat_first_terrain(env_cfg)') < src.index('env = gym.make(')
 
 
+def test_flat_first_training_selects_physical_lift_roll_fill_layout():
+    import ast
+    import inspect
+    from ame_baseline.m1_mixed_course import configure_flat_first_terrain
+    tree = ast.parse(inspect.getsource(configure_flat_first_terrain))
+    strategies = [kw.value.value for node in ast.walk(tree) if isinstance(node, ast.Call)
+                  for kw in node.keywords if kw.arg == 'placement_strategy']
+    assert strategies == ['m1_lift_roll']
+
+
 def test_strict_gate_counters_do_not_count_reset_pose_events():
     import torch
     from types import SimpleNamespace
