@@ -71,3 +71,11 @@ Learning requires video plus strict events, not start,
 forward pass, empty NaN or rounded-zero metrics. Static negative evidence stays.
 Base Work Ref5e60159; prior diagnostic implementation6c82648. GitHub target
 m1-10-11; last verified remote900f249, previouspush443failed.
+
+Final follow-up: actual309 completed,stage1/value loss2.0644/surrogate.0026,
+prelift/stable/strict0, GPU21868MiB; PID4921 andTB5109 freshly verified.
+Last Feature/Verified Ref6960a4b, runtime documentationc5d01fb.
+README/notes/spec/plan/test archiveSHAba95dd7ae1aba61ec8767b7c439eee7a72798ce1fcfdcc1fd1d32977ee80c373
+matched at destination and tar-diff exited0; no runtime source hot-edits.
+This turn's ordinary GitHub push failed443duringLFSlock verification;
+no network/global config/hook changes. New implementation not claimed uploaded.
