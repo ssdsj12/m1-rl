@@ -1,5 +1,7 @@
 ## 2026-10-11 active: T306/pure-ppo-learning
 
+- 当前lift-roll-layout/native-readiness/placement-validity OPEN：统一8/8/8只变高度，214CPU通过；model1400边界已停948。原生首摆放与空出生区对照均geometry/support通过、pose不通过，生产未切换；不可自动重启候选。[证据](log/2026-10-11-m1-lift-roll-native-screen.md)。以下运行/等待1400叙述为历史。
+
 - Task3/native-screen准备：213CPU通过；候选仅隔离目录，生产未切换。单次helper等待1400校验后暂停948，禁止并发native。[记录](log/2026-10-11-m1-lift-roll-native-screen.md)。
 
 - lift-roll-layout/native-readiness OPEN：20cm候选完成56配置层有界反例搜索与2988源mesh抬轮空间检查，可推进隔离原生筛选；2cm候选拒绝。当前生产仍旧布局，真实支撑/碰撞/接线和2048部署尚未通过。[后续证据](log/2026-10-11-m1-fullbody-candidate-search.md)。

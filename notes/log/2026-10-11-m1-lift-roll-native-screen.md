@@ -1,5 +1,62 @@
 # Dense lift-roll: isolated native screening
 
+## Native outcome: diagnostic fixture unresolved, production withheld
+
+CandidateRef447d0b8; production baseline5a366ff. Exact equal8 manifest in
+all3rows, realUSD centers/sizes/roles across all columns verified before
+the first placement. Only stage1 live scan/support was reached; do not
+claim all3rows live scan, all-target native recovery or2048capacity pass.
+
+First recovery placement:56physics ticks, geometry_verified=true,
+support_verified=true, pose_verified=false. First pose failuretick21;
+maxrooterror.0215689447m,maxjointerror.0575752258rad,nonwheelforce0,
+minhorizontalmargin.007877864m. Probe stopped without completion marker;
+PID3310 exited,GPU1MiB. Log `/tmp/m1-lift-roll-native-20261011.log`.
+
+Single-variable control uses exactly the same probe/settings/criteria,
+changing only recovery rootX to the empty spawn location. Same56ticks,
+same geometry/support pass,pose false firsttick21;
+maxrooterror.0215764400m,maxjointerror.0576834679rad,nonwheelforce0,
+minmargin.218631089m. PID3458 exited,GPU1MiB. Log
+`/tmp/m1-lift-roll-spawn-control-20261011.log`. Both diagnostics were
+exclusive under the production flock, no training concurrent.
+
+Conclusion: obstacle contact is not needed to reproduce this pose-validity
+failure. Loaded settling under existing actuators is a plausible mechanism,
+not fully isolated from all fixture effects. Do not call layout impossible,
+erase transient evidence, increase stiffness, add a controller, or relax
+runtime3cm success. Task3 remains incomplete until a valid dynamic/support
+diagnostic establishes acceptance; production is NOT changed or resumed.
+
+Equal8 amendment independent review found no Critical/Important; rollback
+requires old shared m1_mixed_course.py as well as selector. Reviewer did
+not certify native/dynamics/2048capacity/all-pose bypass/learned skill.
+Fresh17-file CPU regression214passed4.63s (CUDA hidden, no GPU test overlap).
+Paired contracts/dashboard/index updated. No need to reapprove count/action.
+
+Final read-only check:948/2750/3310/3458 absent,GPU0=1MiB. Production
+mixed_course/semantic_course/registry hashes still match the pre-probe
+backup; no deployment occurred. Native log SHA256
+`13e3eb01349137d09cbd1edacb68db14b8c5bf8370da4fdc923b05b62da9c234`;
+spawn-control log SHA256
+`0e2679b87cdb4be4affca3012a24a5ec78b4b4626802b14d9794a09ed62b528b`.
+Reproduction source/summary helper archived alongside equal8 CPU JSONs.
+
+## 04:40UTC checkpoint boundary reached
+
+One-shot helper validatedmodel1400 and SIGINTed onlyPID948. Both exited;
+GPU01MiB verified before native launch. model1400 independent CPU validation:
+SHA256 `485352c9280e28288f0f39243b59553a344a1f8cf87ec620f01266147734e3c1`,
+iter1400/next1401,39finite weights/33finite optimizer states/16positive std,
+stage1/streak0,pending0. PT.last2069completedepisodes/pass.1014983084,
+2630strictattempts/0success. Next resume boundary1401, not historical1000/1300.
+
+Equal8 reruns: all3rows96nominal recovery samples each,minXYmargin.010792m,
+terminal margin.166292m; fullbody56-layer search again no exit within bounds
+(maxX.51/.50/-.61m);3984 hypothetical fold/translate/recover positions no
+source-convex obstacle intersections. Archived equal8 JSONs under artifacts.
+These authorize isolated screening, not policy mastery or all-pose proof.
+
 ## User amendment: identical counts/layout, height only
 
 User explicitly corrected the candidate to identical obstacle counts, changing

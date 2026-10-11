@@ -1,5 +1,7 @@
 # M1 execution gates contract
 
+Current override: stages1–3 share8targets+70fills, identical XY/footprints, height only3/6/10cm;214CPU pass. Training safely paused at complete model1400; production unchanged. Recovery placement and empty-spawn control both pass measured geometry/support but fail diagnostic pose validity with nearly identical drift. Not proof of physical impossibility and not a native pass. Do not change controller/std/initial stance/runtime thresholds to satisfy diagnostic. See [current evidence](../log/2026-10-11-m1-lift-roll-native-screen.md); earlier4/6/8 preparation is historical.
+
 2026-10-11 [native-screen preparation](../log/2026-10-11-m1-lift-roll-native-screen.md):20cm candidate explicitly selectable only in isolated probe,70physical fills plus4/6/8targets; production stays progressive.213CPU pass; all-tick collision/pose evidence and upward-force+floor-height+all-geometry support checks replace ambiguous final-force-only native measurements. No controller/std/success changes. Static fixture failure is not dynamic impossibility.
 
 2026-10-11 UNDEPLOYED [target/fill roles and candidate gates](../log/2026-10-11-m1-lift-roll-candidate-gates.md):

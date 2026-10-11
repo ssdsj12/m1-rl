@@ -2,6 +2,8 @@
 
 ## Current State
 
+优先：lift-roll-layout/native-readiness/placement-validity OPEN。model1400已完整CPU核验，948在该边界SIGINT退出。候选447d0b8统一8/8/8目标+70填充，214CPU通过；原生首个恢复摆放56帧geometry/support通过，pose失败（root最大21.569mm、joint57.575mrad）；空出生区对照几乎相同（21.576mm/57.683mrad），二者均tick21首次失败、非轮接触0。应修正诊断方法与力学解释，不放宽运行成功/控制器/std/585mm。原生未完成，生产不替换、不自动重训。后续只能从同谱系model1400/next1401恢复。[证据](../log/2026-10-11-m1-lift-roll-native-screen.md)。旧PID已失效；全列动态/2048容量仍待验证。
+
 用户中途明确数量一致只变高度：新候选stage1–3均8目标+70填充、同XY/足迹，仅高度3/6/10cm；214CPU通过但仍未部署。4/6/8版原生准备作废，新的全机/原生检查重跑；1400边界保护不变。[更新](../log/2026-10-11-m1-lift-roll-native-screen.md)。
 
 Task3隔离原生筛选准备：[记录](../log/2026-10-11-m1-lift-roll-native-screen.md)。Authoring/measurement213CPU通过，生产未切换；有界单次helper2750等待1400校验后仅停948，保留新更新。原生未开始，GPU训练占用中。后续部署以实际原生结果为门槛，不再请求已确认授权。
