@@ -71,4 +71,4 @@ stage1/2 原起点为 `0.9 m`、间距为 `1.8 m`；间距缩至 `1.2 m`，沿�
 - [M1 执行与验收边界](notes/human/human-17-m1-execution-gates.md)：物理指标和证据要求。
 - [Go2 / PVCNN 历史说明](Go2Pvcnn/README.md)：历史安装与实验背景，不作为当前 M1 主线入口。
 
-本次修改提交 `5a366ff` 已普通推送并独立核实在 `m1-10-11` 分支，包含源码、测试、README 和 notes。训练 checkpoint（`.pt`）、运行日志和机器凭据不纳入本次上传。后续部署文档核实见 [本次记录](notes/log/2026-10-11-m1-density-resume.md)。
+统一8目标及密填候选代码、测试、README和证据已普通推送至 `m1-10-11`，独立ref确认 `ffe9ed8`（含实现 `447d0b8`）；这是候选发布，不是生产部署。历史4/6/8密度实现为 `5a366ff`。训练checkpoint（`.pt`）、原始运行日志和机器凭据不纳入上传。当前暂停/未通过项见[原生筛选记录](notes/log/2026-10-11-m1-lift-roll-native-screen.md)。

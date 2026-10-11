@@ -42,6 +42,13 @@ spawn-control log SHA256
 `0e2679b87cdb4be4affca3012a24a5ec78b4b4626802b14d9794a09ed62b528b`.
 Reproduction source/summary helper archived alongside equal8 CPU JSONs.
 
+Publication: normal non-force push completed; independent ls-remote matched
+`ffe9ed8ad32de7fc253ecf5702fd9514e362cdd7` on GitHub `m1-10-11`, including
+equal8 implementation447d0b8, role/candidate code,README and evidence.
+This publishes an explicitly unaccepted candidate, not production readiness.
+Old untracked watcher scripts and PT files were not staged. Production source
+remains unchanged; only current notes/README are synchronized to production.
+
 ## 04:40UTC checkpoint boundary reached
 
 One-shot helper validatedmodel1400 and SIGINTed onlyPID948. Both exited;
