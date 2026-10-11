@@ -38,16 +38,22 @@ try:
     stage=omni.usd.get_context().get_stage()
     bbox=UsdGeom.BBoxCache(Usd.TimeCode.Default(),[UsdGeom.Tokens.default_])
     measured={}
+    positions={}
     for row in (1,2,3):
         objects=[r for r in records if r.row==row and r.col==0 and r.semantic_class=='small']
         assert len(objects)==progressive_row(row)[0]
+        start,pitch = (-1.2,1.1) if row==3 else (-.6,1.2)
+        assert all(abs(obj.local_xy[0]-(start+pitch*i))<1e-6 for i,obj in enumerate(objects))
         heights=[]
         for obj in objects:
             bounds=bbox.ComputeWorldBound(stage.GetPrimAtPath(obj.prim_path)).ComputeAlignedRange()
             height=float(bounds.GetMax()[2]-bounds.GetMin()[2])
             assert abs(height-progressive_row(row)[1])<1e-4
+            center_x=float((bounds.GetMax()[0]+bounds.GetMin()[0])/2)
+            assert abs(center_x-obj.world_center[0])<1e-4
             heights.append(height)
         measured[row]=heights
+        positions[row]=[list(obj.local_xy) for obj in objects]
     zeros=torch.zeros((4,16),device=args.device)
     # Real settled no-debug steps must produce measured recovery readiness.
     recovery_checks=[]
@@ -63,6 +69,7 @@ try:
     scan_checks=[]
     bypass_checks=[]
     route_checks=[]
+    terminal_checks=[]
     for curriculum_stage in (1,2,3,4,0):
         # Diagnostic-only state assignment to test every reset path; no checkpoint.
         env._m1_learning_gate.stage=curriculum_stage
@@ -128,21 +135,18 @@ try:
             raw_top=scanner.data.ray_hits_w[:,:,2].masked_fill(~raw_small,-torch.inf).amax(-1)
             assert torch.allclose(encoded_top,raw_top,atol=1e-4), 'Pooling diluted real block height'
             scan_checks.append({'stage':curriculum_stage,'raw_top':raw_top.tolist(),'encoded_top':encoded_top.tolist()})
-            # The last stage2/3 slabs reach the tile boundary. A placement
-            # after it is an intentional out-of-bounds timeout, not a usable
-            # reward check. Keep the boundary; test post-slab stage1 here.
-            if curriculum_stage!=1:
-                continue
             # Diagnostic placement after the last slab tests reward wiring,
-            # not locomotion or crossing. No receipt is manufactured.
+            # not locomotion or crossing. Use the nominal rear-wheel far
+            # position plus five-frame travel budget, not last+1.1m (out of
+            # bounds for stage3). No receipt is manufactured by this placement.
             pose=robot.data.root_state_w[:,:7].clone()
             last=torch.where(course['valid'],course['centers_top'][...,0]+course['half_extents'][...,0],
                              torch.full_like(course['half_extents'][...,0],-torch.inf)).amax(-1)
-            pose[:,0]=last+1.1
+            pose[:,0]=last+.119208+.04+.3295+5*env.step_dt*.45
             pose[:,1]=env.scene.env_origins[:,1]+.4
             robot.write_root_pose_to_sim(pose)
             robot.write_root_velocity_to_sim(torch.zeros((4,6),device=args.device))
-            for _ in range(4):
+            for _ in range(6):
                 _,reward,done,extra=wrapper.step(zeros)
                 log=extra['log']
                 assert not done.any(), ('post_slab_placement',curriculum_stage,pose[:,0].tolist())
@@ -154,13 +158,19 @@ try:
                 stage_mask,route_cost=env._m1_required_route_snapshot
                 assert stage_mask.all() and (route_cost>0).all()
                 assert torch.allclose(env.reward_manager._step_reward[:,term_id],-route_cost,atol=1e-6)
+            tile_centers=terrain.terrain_origins[terrain.terrain_levels,terrain.terrain_types]
+            margin=7.25-(robot.data.root_pos_w[:,0]-tile_centers[:,0])
+            assert (margin>.1).all(), ('terminal_margin',curriculum_stage,margin.tolist())
+            terminal_checks.append({'stage':curriculum_stage,'measured_root_margin':margin.tolist(),
+                'frames':6,'scope':'placed_nominal_pose_not_learned_crossing'})
             bypass_checks.append({'stage':curriculum_stage,'reward':reward.tolist(),'blocked':1.,'recovered':0})
             route_checks.append({'stage':curriculum_stage,'post_slab_off_lane_cost':route_cost.tolist()})
     print('M1_FLAT_FIRST_RESULT '+json.dumps({'scope':'geometry_and_reset_integration_not_learning',
-        'initial_obstacles':0,'stage_heights':measured,'reset_checks':reset_checks,
+        'initial_obstacles':0,'stage_heights':measured,'stage_positions':positions,'reset_checks':reset_checks,
         'policy_shape':list(obs.shape),'metrics':env._m1_learning_gate.metrics(),
         'reward_checks':reward_checks,'recovery_ready_last20':recovery_checks[-20:],
-        'live_scan_checks':scan_checks,'post_slab_checks':bypass_checks,'route_checks':route_checks}),flush=True)
+        'live_scan_checks':scan_checks,'post_slab_checks':bypass_checks,'route_checks':route_checks,
+        'terminal_checks':terminal_checks}),flush=True)
 except BaseException:
     traceback.print_exc()
     raise

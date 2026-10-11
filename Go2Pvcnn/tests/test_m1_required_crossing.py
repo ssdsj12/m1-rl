@@ -102,7 +102,7 @@ def test_progressive_target_covers_lane_drift_without_blocking_opposite_support(
     anchors = build_course_anchors([[[16.*i,0.,0.]] for i in range(4)], tile_size=(16.,16.),
         terrain_names=('flat',),
         semantic_curriculum_cfg=SemanticObstacleCurriculumCfg(
-            plane_counts=tuple(SemanticObstacleCount(n,0) for n in (0,2,4,8)), min_spacing_clearance_m=(.45,)),
+            plane_counts=tuple(SemanticObstacleCount(n,0) for n in (0,4,6,8)), min_spacing_clearance_m=(.45,)),
         layout_cfg=SemanticCourseLayoutCfg(placement_strategy='m1_progressive', small_shape_pool=('cuboid','cylinder')),
         scale_profile_overrides={'small':(.05,.10),'large':(.45,.55)})
     for a in anchors:

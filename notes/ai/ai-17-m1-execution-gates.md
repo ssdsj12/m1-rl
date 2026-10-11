@@ -1,5 +1,13 @@
 # M1 execution gates contract
 
+2026-10-11 [deployed density](../log/2026-10-11-m1-density-resume.md): stage1/2
+counts4/6 atX=-.6+1.2i;stage3 eight atX=-1.2+1.1i;Yalternates+/-.215.
+Stage0/mixed4+,16m tile,spawn-2,585mm,strict metrics unchanged. Stage1/2
+along-track density+50%;stage3 instead opens nominal all-wheel landing room.
+Current policy/optimizer/std/curriculum retained on checkpoint-boundary restart;
+173CPU/native4env passed,1001 resumed from model1000. Nominal positive margins
+and placed-pose native checks do not prove dynamic recovery or learned crossing.
+
 2026-10-11 [persistent route cost](../log/2026-10-11-m1-persistent-route-repair.md):
 stages1--3 use started, valid, per-wheel unrecovered obligations. Cost is max
 over wheel/block pairs of clamp((abs(world_y-block_y)+projected_wheel_half_width

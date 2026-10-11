@@ -1,5 +1,7 @@
 # TestPvcnnWithIsaacsim Notes Index
 
+当前用户变更：[加密课程并保留策略续训](log/2026-10-11-m1-density-resume.md)。3/6cm阶段改4/6个、pitch1.2m；10cm保留8个并调整落轮空间。173CPU回归/4env原生验证通过，独立审查无阻断。已在校验model1000后停止16830、部署，PID17722实际完成1001，run10-28-16/bb57e7d，2048GPU0约21.9GB，optimizer/std/stage1保留；TB17849/local16006核实。用户指定上传m1-10-11并更新README，取代旧m1-10-10待上传指令。以下16830为历史，最终部署状态以新记录为准。
+
 最新状态：[持久轮轨处罚修复](log/2026-10-11-m1-persistent-route-repair.md)。用户已确认修复并恢复，不再重复请求授权。173CPU回归、真实轨迹反事实、独立审查及4env原生接线/策略回放均通过。新PID16830已核实完成901--905，run2026-10-11_09-57-29/bb57e7d，2048env/GPU0约21.9GB，总10000/save100，model900同谱系optimizer/std/课程保留。TensorBoard16981已切换，local16006核实。实现a8923f2已本地提交，GitHub首推443超时待重试；服务器训练不受影响。实际跨越仍未验收，以下暂停待确认均为历史。
 
 历史部署：[model700与上传核实](log/2026-10-10-m1-model700-publication.md)。修复实现0286e95及文档已上传m1-10-10，远端随后核实3cc82b3；后续model900暂停状态以上方记录为准。

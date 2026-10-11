@@ -1,5 +1,7 @@
 # Go2 PVCNN Locomotion
 
+> 当前 M1 纯 PPO 主线请先阅读 [仓库根目录 README](../README.md) 与 [2026-10-11 密度调整及续训记录](../notes/log/2026-10-11-m1-density-resume.md)。入口为 `scripts/train_m1_cross_large_complex_ame.py` / `scripts/run_m1_pure_ppo.sh`。下文保留 Go2 / PVCNN / teacher 历史实验说明，其中“当前默认主线”不代表当前 M1 训练配置。
+
 ## Status Update
 
 当前仓库已经不再只有最早的 PVCNN 训练链。

@@ -1,5 +1,7 @@
 ## 2026-10-11 active: T306/pure-ppo-learning
 
+- density-exposure接线已验证：173CPU/4env原生通过，model1000边界后PID17722从1001续训，2048GPU0，总10000/save100，TB17849已切10-28-16run。保留policy/optimizer/std/stage1；m1-10-11/README待最终发布核实。terminal-obstacle-space名义预算与摆放边界通过，真实动态恢复仍OPEN。[当前记录](log/2026-10-11-m1-density-resume.md)。
+
 - policy-contact-stall/corridor-visibility修复接线通过：173CPU回归/真实反事实/独立审查/原生8000环境帧奖励核对；新PID16830已完成901--905，run09-57-29/bb57e7d，model900同谱系2048GPU0续至10000/save100。TB16981和local16006已切换；实现a8923f2本地提交、首推443超时待上传。实际单轮学习仍OPEN；不重复授权/启动，不并发native。[当前记录](log/2026-10-11-m1-persistent-route-repair.md)。以下为历史。
 
 - 最新policy-contact-stall/corridor-visibility：14800已暂停，900回放15658完成退出。mean7次低净空失败，sampled全绕行且通道惩罚0；有界固定通道惩罚设计待确认，尚未改生产或恢复训练。不要按历史“继续运行”误启动。[完整证据](log/2026-10-10-m1-model900-contact-replay.md)。
