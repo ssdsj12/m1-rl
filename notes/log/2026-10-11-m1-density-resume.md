@@ -95,14 +95,23 @@ No old watchers/restarts and no concurrent native probe during22GB training.
 ## Publication / refs
 
 Baseline Ref: `ec484c71badf562e42eaaf36ff70903c16aa4249`.
-Candidate Ref: working diff, not yet committed/deployed/published.
-Last Verified Ref: baseline plus candidate CPU-only geometry diff.
+Candidate / Last Feature / Last Verified Ref: `5a366ff5c932b36afc8a7b9b2598ad1eb94e28d6`.
 Key Files: `m1_mixed_course.py`, flat-first/required-crossing tests,
 `probe_m1_flat_first.py`, root README and linked Go2 README, paired ai/human17.
 GitHub branchm1-10-11 freshly fetched at2989eabbe09aae7b30e69eb127c130c4d088e445;
 it is an ancestor of localHEAD (11ahead/0behind). Non-force publication is
-possible without rewriting remote work. Old pendingm1-10-10 upload instructions
-are superseded by the user's explicitm1-10-11 destination.
+possible without rewriting remote work. Normal push succeeded, and an independent
+`ls-remote` verifiedm1-10-11 at5a366ff5c932b36afc8a7b9b2598ad1eb94e28d6.
+This includes the previous unuploaded route fixa8923f2 and new root README.
+The one existing121MB LFS object is `m1/ZJ_V3_URDF_V1_0/configuration/ZJ_V3_URDF_V1_0_base.usd`,
+not a checkpoint. Neither old untracked watcher nor any PT was staged.
+Old pendingm1-10-10 instructions are superseded by explicitm1-10-11 destination.
+
+At2026-10-11T02:31:54Z trainingPID17722 andTB17849 identities were rechecked;
+stdout completed1008--1010 and localTB raw scalars reached1010/stage1.
+Value loss.01591112837,surrogate-.00085644110;latest prelift delta/events/
+stable landings0. GPU021862MiB; deployed geometry hash still matches.
+This is ten real PPO updates after resume, not evidence of learned crossing.
 
 ## Follow-up
 
