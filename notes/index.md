@@ -1,5 +1,9 @@
 # TestPvcnnWithIsaacsim Notes Index
 
+最新[诊断修复](log/2026-10-11-m1-placement-diagnostic-repair.md)：承重空地逐帧对照替代未承重标称误判；232CPU通过，96恢复摆放/原有runtime readiness通过。静态折单腿空地56tick仍失去三轮支撑，单列inconclusive_fixture，不能当布局不可行。生产未改、未开训；恢复点仍用户所选300。后续OPEN为有效三轮动态夹具，不再重复首点共同下沉诊断。
+
+用户最新恢复点选择优先：[model300前进基础](log/2026-10-11-m1-model300-restart-selection.md)。已核实当前谱系18-49-19/model300完整，stage1、上一2048回合pass1.0但strict0；后续选择next301+9699，保留optimizer/std/course，覆盖旧“只从1400恢复”。model1400保留备份；新布局native门槛未解除，目前未开训。
+
 现场状态优先：model1400完整校验后PID948/边界helper已退出；训练暂停，生产未切换。统一8目标+70填充只变高度，214CPU通过。首个原生恢复摆放和同设置空出生区对照均geometry/support通过、pose漂移超诊断界限；整套native未通过，不可把无障碍也复现的失败当布局不可行，也不可自动恢复候选。[结果](log/2026-10-11-m1-lift-roll-native-screen.md)。以下“等待1400/训练运行”均历史。
 
 用户最新修订优先：stage1–3统一8目标+70填充、完全相同XY/水平尺寸，只变3/6/10cm高度；stage0/mixed4不变。214相关CPU通过，候选仅隔离目录，旧4/6/8图不部署。[当前记录/图](log/2026-10-11-m1-lift-roll-native-screen.md)。1400边界暂停保护仍有效。

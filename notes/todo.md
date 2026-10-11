@@ -1,5 +1,9 @@
 ## 2026-10-11 active: T306/pure-ppo-learning
 
+- placement-validity/common-loaded-pose误判已修复，232CPU/96恢复摆放通过；新子节点native-readiness/three-wheel-fixture OPEN：静态折腿在空地也失去三轮支撑，不能据此宣称布局不可行。保持未部署/未开训，选择model300待有效动态验证。[证据](log/2026-10-11-m1-placement-diagnostic-repair.md)。
+
+- 恢复点由用户改为当前谱系model300，已CPU校验，stage1/完整2048窗口pass1.0；next301+9699/2048env，保留optimizer/std/course。1400备份不删，新布局native门槛不变，尚未启动。[记录](log/2026-10-11-m1-model300-restart-selection.md)。
+
 - 当前lift-roll-layout/native-readiness/placement-validity OPEN：统一8/8/8只变高度，214CPU通过；model1400边界已停948。原生首摆放与空出生区对照均geometry/support通过、pose不通过，生产未切换；不可自动重启候选。[证据](log/2026-10-11-m1-lift-roll-native-screen.md)。以下运行/等待1400叙述为历史。
 
 - Task3/native-screen准备：213CPU通过；候选仅隔离目录，生产未切换。单次helper等待1400校验后暂停948，禁止并发native。[记录](log/2026-10-11-m1-lift-roll-native-screen.md)。

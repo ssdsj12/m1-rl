@@ -2,6 +2,10 @@
 
 ## Current State
 
+最新诊断修复：common-loaded-pose误判已闭合，232CPU通过；三阶段96组恢复摆放与既有runtime readiness通过。独立审查的角稳定/四元数归一化问题已反例修复。新OPEN子节点lift-roll-layout/native-readiness/three-wheel-fixture：单腿固定折叠空地56tick末五帧三轮支撑仍不成立，判inconclusive_fixture，不判布局不可行。尚无有效三轮滚行动力学及2048容量验收，不部署/不启动；保持用户model300选择。Last Feature/Verified Ref:900f249+本次diagnostic-only diff；生产仍5a366ff。[修复证据](../log/2026-10-11-m1-placement-diagnostic-repair.md)。
+
+最新用户指定恢复model300稳定前进基础，已CPU核实当前fresh谱系18-49-19/model300 SHA4437ed42、39/33/16有限/stage1、PT.last2048/pass1.0/strict0。后续从301+9699、2048env/save100，保留optimizer/std/course；覆盖下方“只从1400恢复”。1400仍保留，新布局原生诊断阻断尚在，无进程启动。[选择记录](../log/2026-10-11-m1-model300-restart-selection.md)。
+
 优先：lift-roll-layout/native-readiness/placement-validity OPEN。model1400已完整CPU核验，948在该边界SIGINT退出。候选447d0b8统一8/8/8目标+70填充，214CPU通过；原生首个恢复摆放56帧geometry/support通过，pose失败（root最大21.569mm、joint57.575mrad）；空出生区对照几乎相同（21.576mm/57.683mrad），二者均tick21首次失败、非轮接触0。应修正诊断方法与力学解释，不放宽运行成功/控制器/std/585mm。原生未完成，生产不替换、不自动重训。后续只能从同谱系model1400/next1401恢复。[证据](../log/2026-10-11-m1-lift-roll-native-screen.md)。旧PID已失效；全列动态/2048容量仍待验证。
 
 用户中途明确数量一致只变高度：新候选stage1–3均8目标+70填充、同XY/足迹，仅高度3/6/10cm；214CPU通过但仍未部署。4/6/8版原生准备作废，新的全机/原生检查重跑；1400边界保护不变。[更新](../log/2026-10-11-m1-lift-roll-native-screen.md)。
