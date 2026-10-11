@@ -77,3 +77,45 @@ def test_runner_rejects_wrong_contract_before_model_mutation(tmp_path,mutation):
     before=deepcopy(new.state_dict()); path=tmp_path/'wrong.pt'; torch.save(checkpoint,path)
     with pytest.raises(ValueError,match='contract'): runner.load(path)
     for k,v in before.items(): torch.testing.assert_close(v,new.state_dict()[k])
+
+
+@pytest.mark.parametrize('corruption', ['model_nan','std_zero','adam_nan','adam_shape'])
+def test_fixed_resume_rejects_bad_state_without_mutation(tmp_path,corruption):
+    mod=migration_module();old,new=actors()
+    checkpoint=mod.convert_fixed_wheel_checkpoint(source_checkpoint(old),old,new,.3,'a'*64)
+    if corruption=='model_nan': checkpoint['model_state_dict']['std'][0]=float('nan')
+    if corruption=='std_zero': checkpoint['model_state_dict']['std'][0]=0
+    if corruption=='adam_nan': checkpoint['optimizer_state_dict']['state'][0]['exp_avg'][0]=float('nan')
+    if corruption=='adam_shape': checkpoint['optimizer_state_dict']['state'][0]['exp_avg']=torch.zeros(3)
+    runner=object.__new__(AmeOnPolicyRunner);runner.device='cpu'
+    runner.alg=NS(actor_critic=new,optimizer=torch.optim.Adam(new.parameters()))
+    runner.env=NS(unwrapped=NS(cfg=NS(m1_fixed_wheel_speed_m_s=.3)))
+    before=deepcopy(new.state_dict());path=tmp_path/'bad.pt';torch.save(checkpoint,path)
+    with pytest.raises(ValueError):runner.load(path)
+    for k,v in before.items():torch.testing.assert_close(v,new.state_dict()[k])
+    assert not runner.alg.optimizer.state
+
+
+def test_evaluation_entry_uses_runtime_action_contract(monkeypatch):
+    import importlib.util,sys
+    from pathlib import Path
+    scripts=Path(__file__).parents[1]/'scripts'
+    monkeypatch.syspath_prepend(str(scripts))
+    spec=importlib.util.spec_from_file_location('m1_fixed_eval_test',scripts/'evaluate_m1_ame.py')
+    evaluation=importlib.util.module_from_spec(spec);spec.loader.exec_module(evaluation)
+    assert hasattr(evaluation,'configure_evaluation_command')
+    cfg=NS(m1_fixed_wheel_speed_m_s=.3,commands=NS(base_velocity=NS(ranges=NS(),limit_ranges=NS())))
+    evaluation.configure_evaluation_command(cfg)
+    assert cfg.commands.base_velocity.ranges.lin_vel_x==(.3,.3)
+    mod=migration_module();old,new=actors()
+    checkpoint=mod.convert_fixed_wheel_checkpoint(source_checkpoint(old),old,new,.3,'a'*64)
+    evaluation.validate_evaluation_checkpoint(checkpoint,(1589,1592,12),.3)
+    with pytest.raises(ValueError,match='contract'):
+        evaluation.validate_evaluation_checkpoint(checkpoint,(1589,1592,12),.4)
+
+
+def test_training_header_reports_configured_action_dimension():
+    from pathlib import Path
+    source=(Path(__file__).parents[1]/'scripts/train_m1_cross_large_complex_ame.py').read_text()
+    assert 'action_dim={env_cfg.action_dim}' in source
+    assert 'fixed_wheel_speed_m_s=' in source

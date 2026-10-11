@@ -2,6 +2,8 @@
 
 ## Current State
 
+fixed-wheel-leg-only动作/迁移CPU已闭合，native/deploy OPEN：[实施证据](../log/2026-10-11-m1-fixed-wheel-deploy.md)。344相关CPU通过、真实300转换33Adam/12std/stage1，原模型不变；审查发现eval入口与NaN恢复反例已修。09:36UTC旧7960至697，待700完整校验安全切换；不热改、不重复审批。
+
 用户确认pure-ppo-learning/fixed-wheel-leg-only方向：固定四轮驱动，12腿PPO、小跨大绕。新增checkpoint-migration及steering-feasibility子节点，因为当前16维PT不兼容12维且模型无独立轮yaw转向关节。[设计核查/待审规格](../log/2026-10-11-m1-fixed-wheel-leg-only-design.md)。不得将固定前进命令冒充固定轮速；不得把腿侧摆直接说成汽车转向。未改生产/停训，Feature/Verified仍c7ed76f。
 
 08:57UTC新增forward-progress-regression/autonomous-run-window子节点OPEN：15-51-33新run500完整2048/pass0/1376attempt/0success，模型权重有限；至549仅321轮1次预抬、stable/strict全0。创建原因是完整窗口前进未通过，非部分均值；不认定与旧run同因。PID7960/2048保持长训，未改奖励/并发native。[证据](../log/2026-10-11-m1-autonomous-model500-window.md)。Feature/Verified仍c7ed76f。

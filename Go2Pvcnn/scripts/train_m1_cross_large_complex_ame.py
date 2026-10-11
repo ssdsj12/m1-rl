@@ -119,7 +119,7 @@ def main() -> int:
         elif args.course_profile == "flat-first":
             from ame_baseline.m1_mixed_course import configure_flat_first_terrain
             configure_flat_first_terrain(env_cfg)
-        print(f"[M1] course_profile={args.course_profile}; robot=m1; action_dim=16", flush=True)
+        print(f"[M1] course_profile={args.course_profile}; robot=m1; action_dim={env_cfg.action_dim}; fixed_wheel_speed_m_s={env_cfg.m1_fixed_wheel_speed_m_s}", flush=True)
         env_cfg.scene.num_envs = args.num_envs
         env_cfg.sim.device = device
         env_cfg.seed = args.seed
@@ -141,6 +141,9 @@ def main() -> int:
         if env.unwrapped.scene["robot"].is_fixed_base:
             raise RuntimeError("M1 locomotion requires a floating base; check USD root_joint")
         wrapped_env = AmeRslRlEnvWrapper(env, clip_actions=100.0)
+        if wrapped_env.num_actions != env_cfg.action_dim:
+            raise RuntimeError('Runtime action manager does not match configured action contract')
+        print(f"[M1] runtime_actions={wrapped_env.num_actions}; fixed_wheel_speed_m_s={env_cfg.m1_fixed_wheel_speed_m_s}", flush=True)
         if args.course_profile == "flat-first" and not args.resume:
             terrain = env.unwrapped.scene.terrain
             from extension.semantic_course import terrain_column_names_from_generator

@@ -28,6 +28,36 @@ def _finite(tensor, label):
         raise ValueError(f'Non-finite or invalid tensor: {label}')
 
 
+def validate_checkpoint_state(checkpoint, actor=None, *, load_optimizer=False):
+    """Check state before mutating any live model/optimizer."""
+    state=checkpoint['model_state_dict']
+    for name,value in state.items():
+        _finite(value,name)
+    if 'std' not in state or not bool((state['std']>0).all()):
+        raise ValueError('Invalid checkpoint std')
+    if actor is not None:
+        expected=actor.state_dict()
+        if state.keys()!=expected.keys() or any(state[k].shape!=v.shape for k,v in expected.items()):
+            raise ValueError('Checkpoint model state shape/key mismatch')
+    if load_optimizer:
+        params=list(actor.parameters());opt=checkpoint['optimizer_state_dict']
+        if len(opt['param_groups'])!=1 or opt['param_groups'][0]['params']!=list(range(len(params))):
+            raise ValueError('Checkpoint optimizer parameter identities mismatch')
+        for pid,values in opt['state'].items():
+            if pid not in range(len(params)):
+                raise ValueError('Unknown optimizer parameter')
+            for name,value in values.items():
+                _finite(value,f'optimizer.{pid}.{name}')
+                if (name=='step' and (value.numel()!=1 or float(value)<0)) or (name!='step' and value.shape!=params[pid].shape):
+                    raise ValueError('Checkpoint optimizer state shape mismatch')
+        if checkpoint.get('m1_action_contract') is not None:
+            if set(opt['state'])!=set(range(len(params))):
+                raise ValueError('Missing fixed-wheel optimizer states')
+            allowed={'step','exp_avg','exp_avg_sq'} | ({'max_exp_avg_sq'} if opt['param_groups'][0].get('amsgrad',False) else set())
+            if any(set(v)!=allowed for v in opt['state'].values()):
+                raise ValueError('Unsupported fixed-wheel optimizer state')
+
+
 def convert_fixed_wheel_checkpoint(source, old_actor, new_actor, speed_m_s, source_sha):
     from .ame_runner import AME_ARCHITECTURE_SIGNATURE
     contract = fixed_wheel_contract(speed_m_s)

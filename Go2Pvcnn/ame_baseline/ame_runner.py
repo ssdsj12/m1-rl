@@ -111,6 +111,12 @@ class AmeOnPolicyRunner(on_policy_runner.OnPolicyRunner):
         )
         if saved_dims != expected_dims:
             raise ValueError(f"AME checkpoint dimensions {saved_dims} do not match runtime {expected_dims}")
+        from .m1_fixed_wheel_checkpoint import validate_checkpoint_state
+        validate_checkpoint_state(checkpoint, self.alg.actor_critic, load_optimizer=load_optimizer)
+        completed_iteration = int(checkpoint['iter'])
+        next_iteration = int(checkpoint.get('next_iter', completed_iteration + 1))
+        if next_iteration != completed_iteration + 1:
+            raise ValueError('Invalid AME checkpoint next_iter metadata')
         if 'm1_action_conversion' in checkpoint:
             self._m1_action_conversion = checkpoint['m1_action_conversion']
         state_dict = dict(checkpoint["model_state_dict"])
@@ -121,13 +127,6 @@ class AmeOnPolicyRunner(on_policy_runner.OnPolicyRunner):
             raise RuntimeError(f"Unexpected AME checkpoint incompatibility: {incompatible}")
         if load_optimizer:
             self.alg.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-        completed_iteration = int(checkpoint["iter"])
-        next_iteration = int(checkpoint.get("next_iter", completed_iteration + 1))
-        if next_iteration != completed_iteration + 1:
-            raise ValueError(
-                "Invalid AME checkpoint iteration metadata: "
-                f"iter={completed_iteration}, next_iter={next_iteration}"
-            )
         self.current_learning_iteration = next_iteration
         if gate is not None:
             gate.load_state_dict(checkpoint['m1_learning_curriculum'])

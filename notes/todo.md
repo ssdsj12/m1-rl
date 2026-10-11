@@ -1,5 +1,7 @@
 ## 2026-10-11 active: T306/pure-ppo-learning
 
+- fixed-wheel-leg-only CPU/300转换CLOSED、原生/部署OPEN：[344CPU与审查修复](log/2026-10-11-m1-fixed-wheel-deploy.md)。已确认0.30m/s，非待审批；待旧run700安全边界切换，原PT保留。
+
 - fixed-wheel-leg-only OPEN：[已确认方向/待审规格](log/2026-10-11-m1-fixed-wheel-leg-only-design.md)，12维腿PPO+固定轮驱动；子节点checkpoint-migration、steering-feasibility。无独立轮yaw关节，不偷加差速；未改生产或停训。
 
 - forward-progress-regression/autonomous-run-window OPEN：[新run500窗口](log/2026-10-11-m1-autonomous-model500-window.md)完整2048/pass0/1376attempt/0success。PID7960继续，先当前PT定位，不套旧轨迹原因、不自动停训。

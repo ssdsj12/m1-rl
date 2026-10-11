@@ -9,6 +9,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from train_m1_cross_large_complex_ame import _parse_args
 
 
+def configure_evaluation_command(cfg):
+    speed = getattr(cfg, 'm1_fixed_wheel_speed_m_s', None)
+    command = cfg.commands.base_velocity
+    command.ranges.lin_vel_x = (.35,.35) if speed is None else (speed,speed)
+    if speed is not None:
+        command.limit_ranges.lin_vel_x = (speed,speed)
+
+
+def validate_evaluation_checkpoint(checkpoint, expected, speed):
+    from ame_baseline.ame_runner import AME_ARCHITECTURE_SIGNATURE
+    from ame_baseline.m1_fixed_wheel_checkpoint import validate_action_contract, validate_checkpoint_state
+    validate_action_contract(checkpoint,expected[2],speed)
+    saved=tuple(checkpoint.get(k) for k in ('ame_num_actor_obs','ame_num_critic_obs','ame_num_actions'))
+    if saved!=expected or checkpoint.get('ame_architecture_signature')!=AME_ARCHITECTURE_SIGNATURE:
+        raise ValueError(f'Checkpoint {saved} incompatible with M1 evaluation {expected}')
+    validate_checkpoint_state(checkpoint)
+
+
 def main():
     args = _parse_args()
     if not args.checkpoint:
@@ -43,7 +61,7 @@ def main():
         cfg.events.push_robot = None
         cfg.events.reset_base.params["pose_range"] = {"x": (0., 0.), "y": (0., 0.), "yaw": (0., 0.)}
         cfg.events.reset_robot_joints.params["velocity_range"] = (0., 0.)
-        cfg.commands.base_velocity.ranges.lin_vel_x = (.35, .35)
+        configure_evaluation_command(cfg)
         cfg.commands.base_velocity.ranges.lin_vel_y = (0., 0.)
         cfg.commands.base_velocity.ranges.ang_vel_z = (0., 0.)
         cfg.commands.base_velocity.rel_standing_envs = 0.
@@ -109,10 +127,8 @@ def main():
         assert not robot.is_fixed_base
         obs, extras = wrapped.get_observations()
         checkpoint = torch.load(args.checkpoint, map_location=args.device, weights_only=False)
-        expected = (obs.shape[-1], extras["observations"]["critic"].shape[-1], 16)
-        saved = tuple(checkpoint.get(key) for key in ("ame_num_actor_obs", "ame_num_critic_obs", "ame_num_actions"))
-        if saved != expected:
-            raise ValueError(f"Checkpoint {saved} incompatible with M1 evaluation {expected}")
+        expected = (obs.shape[-1], extras["observations"]["critic"].shape[-1], wrapped.num_actions)
+        validate_evaluation_checkpoint(checkpoint, expected, cfg.m1_fixed_wheel_speed_m_s)
         model = ActorCriticAME(*expected).to(args.device)
         model.load_state_dict(checkpoint["model_state_dict"])
         model.eval()

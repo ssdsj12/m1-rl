@@ -1,5 +1,7 @@
 # TestPvcnnWithIsaacsim Notes Index
 
+最新[固定轮速12腿实施](log/2026-10-11-m1-fixed-wheel-deploy.md)：用户已确认0.30m/s及宽松机身跟速；344CPU/真实300显式转换通过，审查反例修复。等待本run700安全边界及隔离原生，尚未改生产；以下“待审”已失效。
+
 最新[固定轮速/12腿动作设计](log/2026-10-11-m1-fixed-wheel-leg-only-design.md)：用户确认严格12维、不用差速；书面规格待审。0.30m/s为建议，旧300需显式转换。模型无独立车轮yaw转向关节，腿部动态避大障碍能力待验证，不承诺必然可行。尚未改生产/停训。
 
 最新[自主新run500窗口](log/2026-10-11-m1-autonomous-model500-window.md)：至548/TB549，loss有限；500完整2048回合pass0/1376attempt/0success。预抬仅321轮1次、stable/strict全0，具体动作原因未定。PID7960继续，未停训/改生产/并发probe。
