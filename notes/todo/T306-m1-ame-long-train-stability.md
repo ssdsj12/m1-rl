@@ -2,6 +2,8 @@
 
 ## Current State
 
+fixed-wheel-leg-only/native/deploy/initial2048容量CLOSED：[最终部署](../log/2026-10-11-m1-fixed-wheel-deploy.md)，Feature aea3b32；344CPU+2000原生物理调用/1600环境帧20terminal。9450/run17-40-08完成301–304/loss有限/2048/GPU22026MiB/实际12dim。旧7960仅700校验后停，PT均保留；转换300/33Adam/12std/stage1保留。GitHub d7625ba普通push独立确认。学习/动态大障碍避让仍OPEN，非已学会。
+
 fixed-wheel-leg-only动作/迁移CPU已闭合，native/deploy OPEN：[实施证据](../log/2026-10-11-m1-fixed-wheel-deploy.md)。344相关CPU通过、真实300转换33Adam/12std/stage1，原模型不变；审查发现eval入口与NaN恢复反例已修。09:36UTC旧7960至697，待700完整校验安全切换；不热改、不重复审批。
 
 用户确认pure-ppo-learning/fixed-wheel-leg-only方向：固定四轮驱动，12腿PPO、小跨大绕。新增checkpoint-migration及steering-feasibility子节点，因为当前16维PT不兼容12维且模型无独立轮yaw转向关节。[设计核查/待审规格](../log/2026-10-11-m1-fixed-wheel-leg-only-design.md)。不得将固定前进命令冒充固定轮速；不得把腿侧摆直接说成汽车转向。未改生产/停训，Feature/Verified仍c7ed76f。

@@ -1,5 +1,7 @@
 # M1 execution gates contract
 
+CURRENT DEPLOYED aea3b32 fixed-wheel .30m/s/true12leg PPO:344CPU/native2000physics calls1600frames20terminal pass;9450/run17-40-08 actual301–304 finite/2048/GPU22026MiB. Source300 explicitly converted preserving33Adam/12std/stage1; original300 and700 retained. Old7960 stopped only after700validation; no oldwatcher restart. TB9685 newrun;GitHub d7625ba verified. Dynamic learning/avoidance OPEN. [Evidence](../log/2026-10-11-m1-fixed-wheel-deploy.md).
+
 LATEST approved fixed-wheel .30m/s/true12leg PPO:344CPU/real300 explicit conversion passed; original300 preserved. Old7960 safely SIGINT after currentrun700 SHA4a23caf9/CPU validation; isolated native9259 running, no training concurrent. No production deployment yet. [Live evidence](../log/2026-10-11-m1-fixed-wheel-deploy.md). Do not re-ask prior approvals or restart7960/watchers.
 
 LATEST DESIGN ONLY: user confirms fixed forward wheel targets + true12dim leg PPO; no learned wheel/differential actions. Proposed0.30m/s and explicit16-to12 model300/optimizer/std conversion await written-spec review. FK has no independent wheel-yaw steering joint; leg/contact dynamic avoidance remains unverified, not guaranteed. [Design](../log/2026-10-11-m1-fixed-wheel-leg-only-design.md). No production edits or training stop.

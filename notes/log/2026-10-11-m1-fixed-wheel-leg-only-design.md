@@ -1,5 +1,7 @@
 # 固定轮速与12维腿PPO：设计核查
 
+历史设计记录；用户已确认0.30m/s与宽松机身跟速，当前已实施并从转换300开新12维训练。[最终部署](2026-10-11-m1-fixed-wheel-deploy.md)优先于下文待审/未实施文字。
+
 Parent [T306](../todo/T306-m1-ame-long-train-stability.md)，
 pure-ppo-learning/fixed-wheel-leg-only OPEN，关联steering-feasibility/checkpoint-migration。
 

@@ -1,5 +1,7 @@
 ## 2026-10-11 active: T306/pure-ppo-learning
 
+- fixed-wheel-leg-only实现/原生/2048开训CLOSED：[部署](log/2026-10-11-m1-fixed-wheel-deploy.md)9450/run17-40-08实际301–304/12action/.30m/s/finite；344CPU通过，GitHub d7625ba上传核实。学习与避让能力仍OPEN；旧7960勿重启，PT保留。
+
 - fixed-wheel-leg-only CPU/300转换CLOSED、原生/部署OPEN：[344CPU与审查修复](log/2026-10-11-m1-fixed-wheel-deploy.md)。已确认0.30m/s，非待审批；待旧run700安全边界切换，原PT保留。
 
 - fixed-wheel-leg-only OPEN：[已确认方向/待审规格](log/2026-10-11-m1-fixed-wheel-leg-only-design.md)，12维腿PPO+固定轮驱动；子节点checkpoint-migration、steering-feasibility。无独立轮yaw关节，不偷加差速；未改生产或停训。

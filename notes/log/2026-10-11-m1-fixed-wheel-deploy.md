@@ -4,6 +4,16 @@ Parent：[T306](../todo/T306-m1-ame-long-train-stability.md)。
 Spec：[已确认规格](../../docs/superpowers/specs/2026-10-11-m1-fixed-wheel-leg-only-design.md)。
 2026-10-11 UTC。当前为原生/部署前记录，后续追加现场结果优先。
 
+最终运行核实优先：9450新run2026-10-11_17-40-08/bb57e7d实际完成301–304，
+value loss .1509/.9735/1.9651/.8342，surrogate .0238/.0203/.0034/.0426，均有限；
+实际2048env/cuda0，GPU22026MiB，12actions、policy1589/critic1592，速度合同.30。
+cmdline/cwd/environ/env_cfg/train_cfg均核实；next301+9699到exclusive10000/save100，
+M1_LOAD_OPTIMIZER1/keep_std/stage1保留。TB9685替换已验证旧8190，远端6006/data/logdir已独立核实新run，
+local16006未改/未重验。runtime实际Feature aea3b32；生产目录旧bb57e7d不代表部署代码版本。
+最终344CPU重跑通过6.09s；不宣称裸pytest全部通过（pxr依赖限制）。
+GitHub d7625bafaaa5857f101ec89a6d15dceac97c170c普通push并独立ref核实，包含此前未上传改动和README。
+本节最终运行文档将另提交推送；无未处理Critical/Important，未宣称学习成功。
+
 最新09:40UTC：隔离原生9259完整通过并退出/GPU1MiB后，11个runtime/入口文件按SHA备份部署；
 新训练进程9450已启动2048/cuda0，日志/tmp/m1-ppo-fixed-wheel-model300-20261011.log，首更新待核实。
 初始化PT另存生产logs/rsl_rl/m1_cross_large_complex_ame/fixed-wheel-initialization/model_300_fixed_wheel.pt，
