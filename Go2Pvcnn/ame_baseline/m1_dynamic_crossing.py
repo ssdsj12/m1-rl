@@ -8,6 +8,14 @@ import torch
 from .m1_strict_crossing import StrictCrossingTracker, m1_wheel_lateral_half_width_from_quat
 
 
+def autonomous_lift_stage_mask(levels, done, *, flat_first):
+    """Select current progressive rows, never an auto-reset terminal pose."""
+    if (levels.ndim != 1 or levels.shape != done.shape or done.dtype != torch.bool
+            or levels.device != done.device or levels.dtype not in (torch.int32, torch.int64)):
+        raise ValueError('levels/done must be aligned integer/bool [B] on the same device')
+    return ((levels >= 1) & (levels <= 3) & ~done) if flat_first else torch.zeros_like(done)
+
+
 class EncounterCrossingTracker:
     def __init__(self,num_envs,device,*,obstacle_count):
         self.inner=StrictCrossingTracker(num_envs,device,obstacle_count=1)

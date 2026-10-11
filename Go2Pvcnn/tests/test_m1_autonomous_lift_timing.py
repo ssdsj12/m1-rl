@@ -197,3 +197,53 @@ def test_mode_change_clears_existing_recovery_receipt():
     f.modes[:] = False
     f.step(.30, 0., touch=True)
     assert not f.tracker.recovered_for_course(f.course).any()
+
+
+@pytest.mark.parametrize('flat_first', [True, False])
+def test_stage_selection_excludes_flat_mixed_and_done(flat_first):
+    import ame_baseline.m1_dynamic_crossing as module
+    assert hasattr(module, 'autonomous_lift_stage_mask'), 'missing explicit stage mask'
+    levels = torch.tensor([0, 1, 2, 3, 4, 1, 3])
+    done = torch.tensor([False]*5 + [True, True])
+    actual = module.autonomous_lift_stage_mask(levels, done, flat_first=flat_first)
+    assert actual.tolist() == ([False, True, True, True, False, False, False]
+                              if flat_first else [False]*7)
+
+
+def test_wrapper_wires_live_poststep_stage_not_pre_reset_snapshot():
+    import ast
+    from pathlib import Path
+    source = (Path(__file__).parents[1]/'ame_baseline/ame_env_wrapper.py').read_text()
+    tree = ast.parse(source)
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+             and any(k.arg == 'autonomous_lift' for k in node.keywords)]
+    assert len(calls) == 1, 'wrapper must wire autonomous_lift exactly once'
+    call = calls[0]
+    value = next(k.value for k in call.keywords if k.arg == 'autonomous_lift')
+    assert isinstance(value, ast.Call) and ast.unparse(value.func) == 'autonomous_lift_stage_mask'
+    assert [ast.unparse(a) for a in value.args] == ['self.unwrapped.scene.terrain.terrain_levels', 'done']
+    assert ast.unparse(next(k.value for k in value.keywords if k.arg == 'flat_first')) == "getattr(self.unwrapped.cfg, 'm1_flat_first', False)"
+    reset = source.index('self._m1_strict_crossing.reset(done)')
+    assert source.index('obs_dict, rewards, terminated, truncated, extras = self.env.step(actions)') < reset
+    assert reset < source.index('autonomous_lift=')
+
+
+@pytest.mark.parametrize('mask', [torch.tensor([1.]), torch.tensor([[True]]), torch.tensor([True, False])])
+def test_malformed_autonomous_mask_fails_closed(mask):
+    f = Frames()
+    f.modes = mask
+    with pytest.raises(ValueError, match='autonomous_lift'):
+        f.step(-.32, 0.)
+
+
+@pytest.mark.parametrize('levels,done', [
+    (torch.tensor([[1]]), torch.tensor([[False]])),
+    (torch.tensor([1]), torch.tensor([0.])),
+    (torch.tensor([float('nan')]), torch.tensor([False])),
+    (torch.tensor([1.5]), torch.tensor([False])),
+])
+def test_stage_mask_rejects_invalid_inputs(levels, done):
+    import ame_baseline.m1_dynamic_crossing as module
+    assert hasattr(module, 'autonomous_lift_stage_mask'), 'missing explicit stage mask'
+    with pytest.raises(ValueError):
+        module.autonomous_lift_stage_mask(levels, done, flat_first=True)

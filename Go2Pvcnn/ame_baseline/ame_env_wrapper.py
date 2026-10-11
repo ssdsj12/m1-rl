@@ -1328,10 +1328,14 @@ class AmeRslRlEnvWrapper(VecEnv):
                 command = self.unwrapped.command_manager.get_command('base_velocity')[:, :2]
                 direction = torch.stack((command[:,0]*yaw.cos()-command[:,1]*yaw.sin(),
                                          command[:,0]*yaw.sin()+command[:,1]*yaw.cos()), dim=-1)
+                from .m1_dynamic_crossing import autonomous_lift_stage_mask
                 strict_result = self._m1_strict_crossing.update(
                     wheel_pos_w=robot.data.body_pos_w[:, wheel_ids],
                     wheel_quat_w=robot.data.body_quat_w[:, wheel_ids],
                     course=course, direction_w=direction, wheel_bottom_z_w=wheel_bottom_z_w,
+                    autonomous_lift=autonomous_lift_stage_mask(
+                        self.unwrapped.scene.terrain.terrain_levels, done,
+                        flat_first=getattr(self.unwrapped.cfg, 'm1_flat_first', False)),
                     wheel_grounded=support_contact,
                     support_safe=recovery_balance_safe, touchdown_safe=strict_crossing_touchdown,
                     collision=collision, wheel_horizontal_radius=float(M1_WHEEL_HORIZONTAL_ENVELOPE_M),
@@ -1392,6 +1396,8 @@ class AmeRslRlEnvWrapper(VecEnv):
             log['RequiredCrossing/event_bonus'] = event_bonus.mean()
             log['RequiredCrossing/zone_fraction'] = required_zone.float().mean()
             log['RequiredCrossing/route_penalty_rate'] = route_penalty.mean()
+            # Historical vertical >=2cm counter: telemetry, not an autonomous
+            # crossing prerequisite and not a horizontal start-lifting trigger.
             log['RequiredCrossing/prelift_events'] = strict_result.get('single_prelift_event', torch.zeros_like(done)).sum()
             log['RequiredCrossing/prelift_progress_delta'] = strict_result.get('prelift_progress_delta', torch.zeros_like(rewards)).mean()
             log['RequiredCrossing/loaded_touchdown_fraction'] = touchdown_safe.float().mean()
