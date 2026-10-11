@@ -1,5 +1,13 @@
 # M1 execution gates contract
 
+2026-10-11 UNDEPLOYED [target/fill roles and candidate gates](../log/2026-10-11-m1-lift-roll-candidate-gates.md):
+required_crossing True=target, False=physical fill, None/missing=legacy.
+Both grounding paths preserve role; only encounter/mandatory registry excludes
+explicit fill. Semantic class, colliders, perception and all-geometry landing
+registry stay intact.47CPU pass. Candidate geometry is not production-selected:
+2cm seams form an elevated tire-bridge corridor;20cm seams admit optimistic
+ground-disk paths. Neither is whole-robot/native accepted; no deployment.
+
 2026-10-11 [deployed density](../log/2026-10-11-m1-density-resume.md): stage1/2
 counts4/6 atX=-.6+1.2i;stage3 eight atX=-1.2+1.1i;Yalternates+/-.215.
 Stage0/mixed4+,16m tile,spawn-2,585mm,strict metrics unchanged. Stage1/2

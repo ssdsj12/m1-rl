@@ -2,6 +2,16 @@
 
 ## Current State
 
+2026-10-11 lift-roll-layout/top-bridge-conflict OPEN（fill-role-contract后继）：角色确认已完成、局部实现267d882/47CPU通过。候选15单测通过；96填充块/2cm缝虽有10.792mm名义落轮余量与2mm地面搜索无出口，却有轮胎仅下沉0.522mm的顶面搭桥走廊；70块/20cm对照则有潜在地面绕行，非整机动态证明。保留负证据，不部署候选、不改奖励/控制器/std；03:54UTC PID948已1226、未动训练。下一步重排并验证整机/顶面连通性；Task3原生切换/发布仍未完成。[检查记录](../log/2026-10-11-m1-lift-roll-candidate-gates.md)。原动作/规格/角色不再待审批。Candidate/CurrentWork:本记录提交；Production LastFeature/Verified:5a366ff。
+
+2026-10-11 用户再次确认书面规格，原动作与规格批准有效。规划新增子节点 lift-roll-layout/fill-role-contract：CPU对照只有y=.215目标时成功，加入y=1填充时progressive_required_wheels报无轮轨错误，CUDA未初始化。建议显式required_crossing角色而不修改semantic class或安全几何；仅该新增合同需决策，按规格约定暂停实施计划，不重复审批动作。生产/训练未动。[复现与合同](../log/2026-10-11-m1-fill-role-contract.md)。
+
+2026-10-11 新子节点 density-exposure/lift-roll-layout：用户确认无 swing 的单轮抬升/三轮滚行、同侧前后轮依次完成后左右交替。书面规格已记录，旧横贯两轮轨障碍链图不适用；不得把此确认变为控制器/teacher授权。背景填充必须同时满足防绕行和所有轮的落轮净空。03:37UTC现场PID948仍运行，model1100已存在但本轮未CPU校验，后续stdout1160；未停训/未改生产。[规格与只读证据](../log/2026-10-11-m1-lift-roll-design.md)。
+
+2026-10-11 03:09UTC 新学习信号：PID948已1045/TB1047；1030首次原始prelift_events1，定义/聚合及部署hash核对，不是打印精度假象。stable0/strict0，1030同rollout还有collision8/minclearance-.0314，不能关联为同一env，也不证明成功。新增子节点prelift-repeatability，继续看重复性/严格恢复，不停训/不改奖励。[证据](../log/2026-10-11-m1-first-prelift-event.md)。
+
+2026-10-11 host-resume子节点：用户新host a21472797434572800304964保留数据但无进程，明确要求接着训后，从完整校验model1000恢复PID948/run10-56-34，2048/optimizer/std/stage1保留；173CPU通过。旧run最后1024无新PT，恢复从1001重跑。TB1081/newrun；旧PID均历史。[现场记录](../log/2026-10-11-m1-host-resume.md)。
+
 Publication CLOSED：GitHub m1-10-11普通push/独立ref核实5a366ff（当前Last Feature/Verified Commit），包含README和此前未发布route修复。2026-10-11T02:31:54Z PID17722已1010，GPU21862MiB，TB17849/local16006指10-28-16run。stage1/loss有限，仍无2cm/严格恢复；学习与动态末端余量继续OPEN。[证据](../log/2026-10-11-m1-density-resume.md)。
 
 2026-10-11 当前density-exposure接线完成：用户确认保留策略并加密/重启、上传m1-10-11/README。stage1/2数量4/6、start-.6/pitch1.2；stage3八个start-1.2/pitch1.1。173CPU/4env原生通过、独立审查无阻断；model1000校验后停止16830，PID17722已实际1001，run10-28-16/bb57e7d，1001+8999/2048GPU0/save100，optimizer/std/stage1保留，TB17849/local16006核实。终端名义预算与摆放通过，但stage3动态恢复仍OPEN；不改严格门槛/2048/std/控制器。最终发布见[实施与部署](../log/2026-10-11-m1-density-resume.md)。

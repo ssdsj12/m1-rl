@@ -1,5 +1,15 @@
 ## 2026-10-11 active: T306/pure-ppo-learning
 
+- lift-roll-layout/top-bridge-conflict OPEN：角色已批准并47CPU通过；候选15单测通过但2cm缝可轮胎搭桥，20cm对照出现潜在地面绕行，尚无整机可接受布局。当前生产未改；Task3部署被几何门槛阻断。[证据](log/2026-10-11-m1-lift-roll-candidate-gates.md)。以下角色待批文字为历史。
+
+- lift-roll-layout/fill-role-contract OPEN：书面规格已批准；CPU反例证明轮轨外填充small触发必跨轨道断言。需明确目标/填充角色，保留全部安全几何，不偷偷删除断言或障碍。实施计划停在该新增合同，原动作无需重审。[证据](log/2026-10-11-m1-fill-role-contract.md)。
+
+- density-exposure/lift-roll-layout OPEN：用户已确认单轮抬升、三轮滚行；同侧前后轮依次跨越，再换侧。书面设计完成，旧横障碍链图作废；尚未生产修改。验证防绕行时必须同时留出全部支撑/恢复空间。[设计记录](log/2026-10-11-m1-lift-roll-design.md)。
+
+- prelift-repeatability OPEN（host-resume学习子节点）：1030首次原始预抬计数1；stable/strict仍0，需重复性及逐帧净空/恢复证据，保持训练。[只读证据](log/2026-10-11-m1-first-prelift-event.md)。
+
+- host-resume：新host a21472797434572800304964；用户确认续训，173CPU/同谱系model1000核验通过，PID948/run10-56-34恢复1001+8999，TB1081。旧日志1024未保存，不可冒充恢复点。[记录](log/2026-10-11-m1-host-resume.md)。
+
 - density-exposure接线已验证：173CPU/4env原生通过，model1000边界后PID17722从1001续训、已1010，2048GPU0，总10000/save100，TB17849已切10-28-16run。保留policy/optimizer/std/stage1；m1-10-11已独立ref核实5a366ff，包含README。terminal-obstacle-space名义预算与摆放边界通过，真实动态恢复仍OPEN。[当前记录](log/2026-10-11-m1-density-resume.md)。
 
 - policy-contact-stall/corridor-visibility修复接线通过：173CPU回归/真实反事实/独立审查/原生8000环境帧奖励核对；新PID16830已完成901--905，run09-57-29/bb57e7d，model900同谱系2048GPU0续至10000/save100。TB16981和local16006已切换；实现a8923f2本地提交、首推443超时待上传。实际单轮学习仍OPEN；不重复授权/启动，不并发native。[当前记录](log/2026-10-11-m1-persistent-route-repair.md)。以下为历史。
