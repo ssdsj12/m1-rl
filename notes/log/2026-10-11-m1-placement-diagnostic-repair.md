@@ -138,3 +138,23 @@ the selected model. No swing/controller/IK/teacher/servo was added.
 
 Key files: `m1_lift_roll_probe_checks.py`, `probe_m1_lift_roll_layout.py`,
 `test_m1_lift_roll_probe_checks.py`, README and paired execution-gate notes.
+
+## Publication / final read-only state (2026-10-11 05:11 UTC)
+
+Implementation/evidence committed locally as
+`6c82648b188b13c290000f1c7f266272b8fa788f` (18 scoped files; old untracked
+watchers preserved and not staged). README plus14 documentation/artifact files
+were synchronized to production; exact archive-to-destination byte comparison
+confirmed15/15 matches, archive SHA
+`feb873131b8d11ad2b9629be5fd50292fd38035f7be97c459787a5e74937ea5e`.
+The diagnostic code remains only in the isolated candidate, not production.
+
+Fresh production semantic_course/registry/mixed_course hashes remain
+45b4f02b/8568a814/7cdfff00, matching the pre-probe backup. model300 SHA4437ed42
+and1400 SHA485352c9 unchanged. No train/native process, GPU0=1MiB.
+
+Normal non-force push to GitHub `m1-10-11` failed: HTTPS443 connection timed out
+during Git LFS lock verification; the following independent ls-remote also
+failed443. No LFS hook bypass, network or global Git changes. Publication is
+**pending**, not complete; last independently confirmed remote remains900f249.
+Future retry is authorized, but must verify the remote ref and report honestly.

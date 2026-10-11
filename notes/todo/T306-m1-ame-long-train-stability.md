@@ -2,6 +2,8 @@
 
 ## Current State
 
+诊断修复Last Feature/Verified Ref为6c82648，232CPU与最终12600tick原生测量完成（96恢复通过、fold控制无效），无训练/native进程/GPU1MiB。README/证据15文件与服务器逐字节匹配；生产源码、300/1400 PT hash不变。m1-10-11普通push与独立ls-remote均443超时，最新修复未上传，最后独立远端900f249；不改网络/全局Git。[发布与原生记录](../log/2026-10-11-m1-placement-diagnostic-repair.md)。
+
 最新诊断修复：common-loaded-pose误判已闭合，232CPU通过；三阶段96组恢复摆放与既有runtime readiness通过。独立审查的角稳定/四元数归一化问题已反例修复。新OPEN子节点lift-roll-layout/native-readiness/three-wheel-fixture：单腿固定折叠空地56tick末五帧三轮支撑仍不成立，判inconclusive_fixture，不判布局不可行。尚无有效三轮滚行动力学及2048容量验收，不部署/不启动；保持用户model300选择。Last Feature/Verified Ref:900f249+本次diagnostic-only diff；生产仍5a366ff。[修复证据](../log/2026-10-11-m1-placement-diagnostic-repair.md)。
 
 最新用户指定恢复model300稳定前进基础，已CPU核实当前fresh谱系18-49-19/model300 SHA4437ed42、39/33/16有限/stage1、PT.last2048/pass1.0/strict0。后续从301+9699、2048env/save100，保留optimizer/std/course；覆盖下方“只从1400恢复”。1400仍保留，新布局原生诊断阻断尚在，无进程启动。[选择记录](../log/2026-10-11-m1-model300-restart-selection.md)。
