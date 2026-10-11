@@ -14,6 +14,18 @@ def get_layout():
     return importlib.import_module(name)
 
 
+def test_all_obstacle_stages_identical_in_count_and_xy_only_height_changes():
+    layout = get_layout()
+    stages = [layout.candidate_blocks(row,fill_gap=.20) for row in (1,2,3)]
+    horizontal = lambda bs: [(b.x,b.y,b.length,b.width,b.required_crossing) for b in bs]
+    assert [progressive_row(row)[0] for row in (1,2,3)] == [8,8,8]
+    assert all(len(bs)==78 for bs in stages)
+    assert horizontal(stages[0]) == horizontal(stages[1]) == horizontal(stages[2])
+    for bs,height in zip(stages,(.03,.06,.10)):
+        assert all(b.height==height for b in bs)
+    assert [(b.x,b.y) for b in stages[0][:8]] == [(-1.2+1.1*i,.215 if i%2==0 else -.215) for i in range(8)]
+
+
 def overlaps(a, b):
     return (abs(a.x-b.x) < (a.length+b.length)/2-1e-10
             and abs(a.y-b.y) < (a.width+b.width)/2-1e-10)

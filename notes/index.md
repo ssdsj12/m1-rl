@@ -1,5 +1,7 @@
 # TestPvcnnWithIsaacsim Notes Index
 
+用户最新修订优先：stage1–3统一8目标+70填充、完全相同XY/水平尺寸，只变3/6/10cm高度；stage0/mixed4不变。214相关CPU通过，候选仅隔离目录，旧4/6/8图不部署。[当前记录/图](log/2026-10-11-m1-lift-roll-native-screen.md)。1400边界暂停保护仍有效。
+
 当前实施优先：[原生筛选准备](log/2026-10-11-m1-lift-roll-native-screen.md)。213CPU回归通过，早期碰撞/侧壁假支撑测量问题已修复；生产未切换。单次有界helper等待model1400校验后仅暂停PID948，再核实GPU释放；禁止并发probe/重复启动，不重审已确认方案。
 
 后续证据优先：[整机转向/轮距与抬轮包络检查](log/2026-10-11-m1-fullbody-candidate-search.md)。20cm候选在56个配置层的有界搜索未找到完整地面绕行，2988个源mesh假想折腿/平移/恢复位置未发现障碍相交；可进入隔离authoring/原生筛选，尚未部署，不宣称全姿态不可绕行。2cm版仍拒绝。用户审批已完成。

@@ -10,7 +10,7 @@ def setup_course(monkeypatch):
     from extension.semantic_course import SemanticCourseLayoutCfg, build_course_anchors
     from extension.semantic_curriculum import SemanticObstacleCurriculumCfg, SemanticObstacleCount
     cfg = SemanticObstacleCurriculumCfg(
-        plane_counts=tuple(SemanticObstacleCount(n,large) for n,large in ((0,0),(4,0),(6,0),(8,0),(90,1))),
+        plane_counts=tuple(SemanticObstacleCount(n,large) for n,large in ((0,0),(8,0),(8,0),(8,0),(90,1))),
         min_spacing_clearance_m=(.45,))
     kwargs = dict(terrain_origins=[[[16.*r,16.*c,0.] for c in range(2)] for r in range(5)],
         tile_size=(16.,16.), terrain_names=('flat',), semantic_curriculum_cfg=cfg,
@@ -48,8 +48,8 @@ def test_explicit_candidate_authors_exact_manifest_roles_and_legacy_rows(monkeyp
         grounding_cfg=SemanticCourseGroundingCfg(embed_depth_m=0.))
     registry = CourseRegistry(records,rows=5,cols=2,device='cpu')
     tables = registry.for_envs(torch.tensor([1,2,3]),torch.zeros(3,dtype=torch.long))
-    assert tables['valid'].sum(-1).tolist()==[4,6,8]
-    assert tables['landing_valid'].sum(-1).tolist()==[74,76,78]
+    assert tables['valid'].sum(-1).tolist()==[8,8,8]
+    assert tables['landing_valid'].sum(-1).tolist()==[78,78,78]
 
 
 @pytest.mark.parametrize('bad', ['tile','fixed','counts'])

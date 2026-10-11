@@ -1,5 +1,17 @@
 # Dense lift-roll: isolated native screening
 
+## User amendment: identical counts/layout, height only
+
+User explicitly corrected the candidate to identical obstacle counts, changing
+only height. All three stages now use8targets atX=-1.2+1.1i/Yalternating±.215,
+same horizontal shapes and70fills; only3/6/10cm heights differ. Stage0/mixed4+
+unchanged. New equality test observedRED([4,6,8]!=[8,8,8]), then full17-file
+regression **214passed4.31s**. Only isolated candidate was synced, not production.
+New bounded CPU/native checks use this manifest; earlier4/6/8 evidence below
+is historical, not deployment authorization for the amended layout.
+
+![Current equal-count candidate](artifacts/2026-10-11-m1-lift-roll-layout-equal8.png)
+
 ## Scope / method
 
 T306 `lift-roll-layout/native-readiness`, following the approved

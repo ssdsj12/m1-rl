@@ -76,7 +76,7 @@ def progressive_row(row):
     """Flat-column counts/height; row0 is genuinely free of obstacle colliders."""
     row = _integer(row, 'row')
     if row < 4:
-        return ((0,0.,0),(4,.03,0),(6,.06,0),(8,.10,0))[row]
+        return ((0,0.,0),(8,.03,0),(8,.06,0),(8,.10,0))[row]
     small, large = flat_counts(row)
     return small, .10, large
 
@@ -107,11 +107,10 @@ def progressive_positions(small_count, large_count, *, row, **kwargs):
     expected = progressive_row(row)
     if (small_count,large_count) != (expected[0],0):
         raise ValueError('progressive stage count mismatch')
-    # Stages1/2: 50% greater along-track density, with earlier encounters.
-    # Stage3 keeps eight blocks but opens the all-wheel landing window and
-    # moves the final block inside the unchanged root/tire termination bounds.
+    # Stages1--3 share exactly eight alternating targets and horizontal layout;
+    # only height changes. Preserve stage3's all-wheel landing/terminal room.
     # Nominal 585mm +X budgets are tested; actual dynamic recovery is not proven.
-    start, pitch = (-1.2, 1.1) if row == 3 else (-.6, 1.2)
+    start, pitch = -1.2, 1.1
     return {'small':tuple((start+pitch*i,.215 if i%2==0 else -.215) for i in range(small_count)), 'large':()}
 
 

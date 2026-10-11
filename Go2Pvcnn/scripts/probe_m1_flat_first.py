@@ -42,7 +42,7 @@ try:
     for row in (1,2,3):
         objects=[r for r in records if r.row==row and r.col==0 and r.semantic_class=='small']
         assert len(objects)==progressive_row(row)[0]
-        start,pitch = (-1.2,1.1) if row==3 else (-.6,1.2)
+        start,pitch = -1.2,1.1
         assert all(abs(obj.local_xy[0]-(start+pitch*i))<1e-6 for i,obj in enumerate(objects))
         heights=[]
         for obj in objects:

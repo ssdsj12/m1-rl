@@ -1,9 +1,9 @@
 import pytest
 
 
-def test_progressive_rows_begin_empty_and_increase_height_and_exposure():
+def test_progressive_rows_begin_empty_then_only_increase_height():
     from ame_baseline.m1_mixed_course import progressive_row
-    assert [progressive_row(i) for i in range(4)] == [(0, 0., 0), (4,.03,0), (6,.06,0), (8,.10,0)]
+    assert [progressive_row(i) for i in range(4)] == [(0, 0., 0), (8,.03,0), (8,.06,0), (8,.10,0)]
     assert progressive_row(4) == (90,.10,1)
     with pytest.raises(ValueError):
         progressive_row(-1)
@@ -14,14 +14,14 @@ def test_progressive_anchors_have_true_empty_row_and_correct_mesh_parameters(mon
     _install_fake_isaaclab(monkeypatch)
     from extension.semantic_course import SemanticCourseLayoutCfg, build_course_anchors
     from extension.semantic_curriculum import SemanticObstacleCurriculumCfg, SemanticObstacleCount
-    cfg = SemanticObstacleCurriculumCfg(plane_counts=tuple(SemanticObstacleCount(n,0) for n in (0,4,6,8)),
+    cfg = SemanticObstacleCurriculumCfg(plane_counts=tuple(SemanticObstacleCount(n,0) for n in (0,8,8,8)),
         min_spacing_clearance_m=(.45,))
     anchors = build_course_anchors([[[16.*i,0.,0.]] for i in range(4)],tile_size=(16.,16.),
         terrain_names=('flat',),semantic_curriculum_cfg=cfg,
         layout_cfg=SemanticCourseLayoutCfg(placement_strategy='m1_progressive',small_shape_pool=('cuboid','cylinder')),
         scale_profile_overrides={'small':(.05,.10),'large':(.45,.55)})
     assert not any(a.row == 0 for a in anchors)
-    for row,n,height in ((1,4,.03),(2,6,.06),(3,8,.10)):
+    for row,n,height in ((1,8,.03),(2,8,.06),(3,8,.10)):
         selected = [a for a in anchors if a.row==row]
         assert len(selected)==n
         assert all(a.target_height==height for a in selected)
@@ -29,7 +29,7 @@ def test_progressive_anchors_have_true_empty_row_and_correct_mesh_parameters(mon
         assert all(selected[i+1].local_xy[0]-selected[i].local_xy[0]>=.89 for i in range(n-1))
 
 
-@pytest.mark.parametrize('row,count,start,pitch', [(1,4,-.6,1.2),(2,6,-.6,1.2),(3,8,-1.2,1.1)])
+@pytest.mark.parametrize('row,count,start,pitch', [(1,8,-1.2,1.1),(2,8,-1.2,1.1),(3,8,-1.2,1.1)])
 def test_progressive_density_leaves_nominal_spawn_landing_and_terminal_room(row,count,start,pitch):
     from ame_baseline.m1_mixed_course import progressive_positions
     import torch

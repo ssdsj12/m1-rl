@@ -83,3 +83,6 @@ Review role flag validation before filtering; both grounding paths; stable uniqu
 ## Planning review
 
 Task1 establishes role contracts consumed by Task3. Task2 provides geometry/negative-witness evidence consumed by Task3; it is intentionally a falsifiable candidate, not an assumed proof. Task3 cannot start if Task2 fails. Exact native probe extensions and production authoring changes must be red/green developed from the accepted candidate manifest; if no candidate survives, record the failed acceptance criterion instead of writing speculative deployment code.
+## 实施中用户修订（优先于上文历史数量）
+
+三个障碍高度阶段统一8个目标、相同X=-1.2+1.1*i/Y±.215及相同70填充，只变3/6/10cm高度。Task3先加等数量/等XY/等足迹反例，修改progressive_row/positions并同步authoring fixture/native清单；保留stage0/mixed4。旧4/6/8图与原生准备不部署。完整回归、有界全机/单轮空间及原生筛选须对新清单重核，1400边界暂停保护不变。

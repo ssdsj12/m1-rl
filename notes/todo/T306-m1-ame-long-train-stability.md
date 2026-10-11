@@ -2,6 +2,8 @@
 
 ## Current State
 
+用户中途明确数量一致只变高度：新候选stage1–3均8目标+70填充、同XY/足迹，仅高度3/6/10cm；214CPU通过但仍未部署。4/6/8版原生准备作废，新的全机/原生检查重跑；1400边界保护不变。[更新](../log/2026-10-11-m1-lift-roll-native-screen.md)。
+
 Task3隔离原生筛选准备：[记录](../log/2026-10-11-m1-lift-roll-native-screen.md)。Authoring/measurement213CPU通过，生产未切换；有界单次helper2750等待1400校验后仅停948，保留新更新。原生未开始，GPU训练占用中。后续部署以实际原生结果为门槛，不再请求已确认授权。
 
 2026-10-11 lift-roll-layout/native-readiness OPEN（top-bridge-conflict后继）：20cm候选的56层转向/轮距有界搜索未找到出口，2988个源mesh抬轮/平移/恢复位置未发现障碍相交；允许进入隔离authoring与原生候选筛选，尚未部署或上传。全姿态绕行、无滑移/重心稳定/原生接线仍未证明，2cm候选仍拒绝。LastFeature/VerifiedProduction保持5a366ff；Candidate基线497e22e；KeyFiles与复现见[整机搜索](../log/2026-10-11-m1-fullbody-candidate-search.md)。后续不得把下方旧“Task3停止”当作新审批要求。
