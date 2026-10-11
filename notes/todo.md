@@ -1,4 +1,12 @@
-## 2026-10-10 active: T306/pure-ppo-learning
+## 2026-10-11 active: T306/pure-ppo-learning
+
+- policy-contact-stall/corridor-visibility：用户已确认修复并恢复；173CPU回归、真实反事实、独立审查、原生接线和8000策略环境帧奖励核对通过。固定轮轨实际轮宽代价不依赖瞬时扫描；新PID16830已核实从model900续训2048，首轮完成待核实。不要重复请求授权或启动第二训练；学习仍OPEN。[当前记录](log/2026-10-11-m1-persistent-route-repair.md)。以下为历史。
+
+- 最新policy-contact-stall/corridor-visibility：14800已暂停，900回放15658完成退出。mean7次低净空失败，sampled全绕行且通道惩罚0；有界固定通道惩罚设计待确认，尚未改生产或恢复训练。不要按历史“继续运行”误启动。[完整证据](log/2026-10-10-m1-model900-contact-replay.md)。
+
+- model800完整窗口前进通过.9121、严格1030尝试/0恢复；无2cm事件 through824。PT/optimizer/课程完整，继续当前训练，持续停滞时在保存边界做当前模型接触诊断。[检查](log/2026-10-10-m1-model800-window.md)。
+
+- OPEN curriculum-telemetry-window：runner均值混合未完成/已完成窗口，sample_count小数及pass_rate骤低不能当完整窗口退化；实际晋级判断不受影响。下一次必要部署再拆分日志，不因此停训。[只读接线证据](log/2026-10-10-m1-curriculum-metric-window.md)。
 
 - publication已关闭：修复实现0286e95及记录已普通push，远端核实a7d1820；model700 CPU校验完整，PID14800继续，尚无严格跨越。[证据](log/2026-10-10-m1-model700-publication.md)。
 

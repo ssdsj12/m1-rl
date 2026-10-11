@@ -1,6 +1,8 @@
 # TestPvcnnWithIsaacsim Notes Index
 
-最新部署跟进：[model700与上传核实](log/2026-10-10-m1-model700-publication.md)。修复代码已上传m1-10-10并核实远端a7d1820；当前PID14800继续长训，model700可读且课程/optimizer完整。实际跨越仍未验收。
+最新状态：[持久轮轨处罚修复](log/2026-10-11-m1-persistent-route-repair.md)。用户已确认修复并恢复，不再重复请求授权。173CPU回归、真实轨迹反事实、独立审查及4env原生接线/策略回放均通过。新PID16830已启动，cmdline/cwd已核实，从model900同谱系恢复901起9099轮，2048env；首轮完成尚待核实。以下暂停待确认均为历史，实际跨越仍未验收。
+
+历史部署：[model700与上传核实](log/2026-10-10-m1-model700-publication.md)。修复实现0286e95及文档已上传m1-10-10，远端随后核实3cc82b3；后续model900暂停状态以上方记录为准。
 
 最新已授权：[持久跨越奖励修复](log/2026-10-10-m1-persistent-crossing-repair.md)。未完成同侧前后轮严格恢复，绕过后仍屏蔽正奖励；实际单轮增量延伸到障碍顶+3cm。验证后从本次model600恢复，实际PID/run以部署记录为准。以下等待确认/旧PID均为历史。
 

@@ -405,9 +405,9 @@ def m1_small_obstacle_corridor_penalty(env, command_name='base_velocity') -> Ten
     The M1 course puts small obstacles on the forward centerline.  Without a
     route constraint, PPO can obtain forward-velocity reward by walking a
     metre or more around the block, which is collision-free but is not a
-    crossing.  Keep a 22 cm center corridor (enough for the 8 cm lateral
-    command band and wheel envelope) and leave the large-obstacle branch free
-    to perform the required side-step avoidance.
+    crossing. Progressive stages 1--3 consume the wrapper's persistent,
+    pre-step wheel-footprint route cost. Other courses retain the legacy
+    scanner-gated 22 cm center corridor and free large-obstacle avoidance.
     """
     small, large = m1_obstacle_presence(env, command_name)
     root = env.scene["robot"].data.root_pos_w
@@ -417,7 +417,12 @@ def m1_small_obstacle_corridor_penalty(env, command_name='base_velocity') -> Ten
     else:
         local_y = (root - origins)[:, 1]
     overflow = (local_y.abs() - 0.22).clamp_min(0.0) / 0.30
-    return torch.where(small & ~large, overflow.clamp_max(1.0), torch.zeros_like(overflow))
+    legacy = torch.where(small & ~large, overflow.clamp_max(1.0), torch.zeros_like(overflow))
+    snapshot = getattr(env, '_m1_required_route_snapshot', None)
+    if snapshot is not None:
+        progressive_stage, route_penalty = snapshot
+        return torch.where(progressive_stage, route_penalty, legacy)
+    return legacy
 
 
 def m1_small_obstacle_clearance(env, command_name='base_velocity') -> Tensor:

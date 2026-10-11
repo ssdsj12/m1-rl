@@ -7,6 +7,15 @@ from types import SimpleNamespace
 from ame_baseline import m1_required_crossing as reward_module
 
 
+def route_robot(roots):
+    from ame_baseline.m1_ame_rewards import M1_SUPPORT_BODY_NAMES
+    wheels = roots[:, None, :].repeat(1, 4, 1)
+    wheels[:, :, 1] += torch.tensor([.215, -.215, .215, -.215])
+    quat = torch.tensor([1., 0., 0., 0.]).repeat(roots.shape[0], 4, 1)
+    return SimpleNamespace(body_names=M1_SUPPORT_BODY_NAMES, data=SimpleNamespace(
+        root_pos_w=roots, body_pos_w=wheels, body_quat_w=quat))
+
+
 def course():
     return dict(centers_top=torch.tensor([[[2.9, .215, .03], [4.7, -.215, .03]]]),
                 half_extents=torch.tensor([[[.05, .09], [.05, .09]]]),
@@ -111,7 +120,7 @@ def test_actual_wrapper_pre_step_gate_keeps_failed_bypass_blocked():
     class Scene(dict):
         env_origins = torch.zeros(1, 3)
         terrain = SimpleNamespace(terrain_levels=torch.ones(1, dtype=torch.long))
-    scene = Scene(robot=SimpleNamespace(data=SimpleNamespace(root_pos_w=torch.tensor([[6., -1., .537]]))))
+    scene = Scene(robot=route_robot(torch.tensor([[6., -1., .537]])))
     gate = reward_module.RequiredCrossingRewardGate(1, 2, 'cpu')
     wrapper = SimpleNamespace(num_envs=1, device='cpu',
         unwrapped=SimpleNamespace(cfg=SimpleNamespace(m1_flat_first=True), scene=scene),
@@ -120,6 +129,8 @@ def test_actual_wrapper_pre_step_gate_keeps_failed_bypass_blocked():
     scope = dict(self=wrapper, torch=torch, __package__='ame_baseline')
     pre_step(scope)
     assert scope['required_zone'].item(), 'actual wrapper must consume strict receipts after the slab'
+    active, penalty = wrapper.unwrapped._m1_required_route_snapshot
+    assert active.item() and penalty.item() == 1.
 
 
 def test_wrapper_mixed_stages_terminal_snapshot_and_next_episode_do_not_leak():
@@ -130,7 +141,7 @@ def test_wrapper_mixed_stages_terminal_snapshot_and_next_episode_do_not_leak():
         env_origins = torch.zeros(3, 3)
         terrain = SimpleNamespace(terrain_levels=torch.tensor([0, 1, 4]))
     roots = torch.tensor([[6., -1., .537]]).repeat(3, 1)
-    scene = Scene(robot=SimpleNamespace(data=SimpleNamespace(root_pos_w=roots)))
+    scene = Scene(robot=route_robot(roots))
     gate = reward_module.RequiredCrossingRewardGate(3, 2, 'cpu')
     wrapper = SimpleNamespace(num_envs=3, device='cpu',
         unwrapped=SimpleNamespace(cfg=SimpleNamespace(m1_flat_first=True), scene=scene),
@@ -140,14 +151,19 @@ def test_wrapper_mixed_stages_terminal_snapshot_and_next_episode_do_not_leak():
     pre_step(scope)
     snapshot = scope['required_zone']
     assert snapshot.tolist() == [False, True, False]
+    route_snapshot = wrapper.unwrapped._m1_required_route_snapshot
+    assert route_snapshot[0].tolist() == [False, True, False]
+    assert route_snapshot[1].tolist() == [0., 1., 0.]
     assert registry['valid'].all()  # stage masking must not alter the registry
     # Isaac auto-reset happens between the snapshot and reward calculation.
     roots[:, 0] = 0.
     scope['done'] = torch.tensor([False, True, False])
     terminal_reset(scope)
     assert snapshot.tolist() == [False, True, False]
+    assert route_snapshot[1].tolist() == [0., 1., 0.]
     pre_step(scope)
     assert not scope['required_zone'].any()
+    assert not wrapper.unwrapped._m1_required_route_snapshot[1].any()
     roots[:, 0] = 6.
     pre_step(scope)
     assert scope['required_zone'].tolist() == [False, True, False]

@@ -1,5 +1,15 @@
 # M1 execution gates contract
 
+2026-10-11 [persistent route cost](../log/2026-10-11-m1-persistent-route-repair.md):
+stages1--3 use started, valid, per-wheel unrecovered obligations. Cost is max
+over wheel/block pairs of clamp((abs(world_y-block_y)+projected_wheel_half_width
+-block_half_width)/.30,0,1), replacing the existing -1 corridor term without
+stacking. Actual wheel quaternion determines width. Scanner disappearance,
+far exit and retreat do not clear cost; strict per-wheel receipt, done and
+registry identity do. Wrapper pre-step snapshot protects terminal accounting.
+Stage0/mixed4 keep legacy reward. No pose, std, action or controller changes.
+User approved same-model900 resume after native verification; ability OPEN.
+
 Latest [persistent reward](../log/2026-10-10-m1-persistent-crossing-repair.md)
 supersedes the finite slab and .3-per-encounter cap. Stages1--3 latch approached
 obligations until identity-matched strict recovered receipts for both authored

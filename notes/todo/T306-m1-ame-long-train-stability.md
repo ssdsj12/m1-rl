@@ -2,6 +2,14 @@
 
 ## Current State
 
+2026-10-11 当前：用户明确确认修复后恢复，指出此前已确认，禁止反复追问。corridor-visibility已实现stage1--3未完成轮义务与实际轮迹投影宽度的max有界代价，替换原-1通道项；其他奖励/控制器/std/585mm/2048不改。173CPU回归、真实反事实、独立审查及4env原生接线/8000策略环境帧核对通过。新PID16830已核实cmdline/cwd，从22-09-27/model900恢复next901+9099，保留optimizer/std/course；首轮完成待核实。当前工作Ref为3cc82b3+本次diff；见[验证部署记录](../log/2026-10-11-m1-persistent-route-repair.md)。以下“待确认”均为历史。
+
+最新：model900完整校验后已SIGINT停止14800；15658回放也完成退出，GPU1MiB，无长训。mean7次遇障未预抬便低净空失败；sampled4env全部横向绕开，绕行惩罚0。OPEN子节点policy-contact-stall/corridor-visibility：瞬时扫描门控使绕行后方向惩罚消失。提出仅stage1--3固定通道持续惩罚的有界设计，待确认，不改std/姿态/控制器。后续恢复必须本900谱系next901+9099/2048env。[完整诊断](../log/2026-10-10-m1-model900-contact-replay.md)。
+
+最新model800已CPU验证完整；PT last完整2048回合前进/完整回合通过率.9121，但1030严格尝试/0恢复，601--824全部无2cm预抬。不要把前进改善当跨越、不要因部分窗口图表停训。若继续停滞，下一保存边界优先当前PT真实接触/姿态回放，不盲改奖励或并发native。[核实](../log/2026-10-10-m1-model800-window.md)。
+
+OPEN同级curriculum-telemetry-window：迭代743日志sample_count904.9/pass.0949不是完整窗口；metrics()报告正在累计窗口，runner再对rollout快照平均。gate仍以整数>=2048完整窗口决定晋级，不修改阈值、不因图表小数停训。后续必要部署时拆分pending/completed与窗口ID；当前用PT curriculum.last核实完整窗口。[诊断](../log/2026-10-10-m1-curriculum-metric-window.md)。
+
 最新publication已完成：远端m1-10-10独立ref核实a7d1820，包含0286e95实现；不要按旧网络失败记录重复发布。当前model700 CPU核实iter700/next701、optimizer、有限权重/std及stage1课程完整，训练PID14800继续到706，未证明真实跨越。[记录](../log/2026-10-10-m1-model700-publication.md)。
 
 只读跟进terminal-obstacle-space：stage2标称后轮严格远侧落足剩余root边界余量.411292m；stage3欠.488708m（+X、585mm标称水平姿态）。不能泛化为所有策略姿态不可能；stage2/3原probe摆放均越界不等于两者都不能跨。候选仅stage3整列后移.6m，仍需动态恢复余量验证，尚未改地形。当前stage1 PID14800继续；raw增量非零但2cm事件/严格成功0。[监控与静态审计](../log/2026-10-10-m1-persistent-monitor-2218.md)。

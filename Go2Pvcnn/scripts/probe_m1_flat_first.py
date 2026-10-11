@@ -62,6 +62,7 @@ try:
     reward_checks=[]
     scan_checks=[]
     bypass_checks=[]
+    route_checks=[]
     for curriculum_stage in (1,2,3,4,0):
         # Diagnostic-only state assignment to test every reset path; no checkpoint.
         env._m1_learning_gate.stage=curriculum_stage
@@ -77,6 +78,18 @@ try:
             assert (terrain.terrain_levels>=4).all()
         assert (env._m1_learning_gate.steps==0).all()
         reset_checks.append({'stage':curriculum_stage,'counts':count.tolist()})
+        if curriculum_stage in (0,4):
+            from ame_baseline.m1_obstacle_rewards import m1_obstacle_presence
+            _,_,done,_=wrapper.step(zeros)
+            assert not done.any()
+            stage_mask,cost=env._m1_required_route_snapshot
+            assert not stage_mask.any() and not cost.any()
+            small,large=m1_obstacle_presence(env)
+            local_y=(env.scene['robot'].data.root_pos_w-env.scene.env_origins)[:,1]
+            legacy=torch.where(small & ~large,((local_y.abs()-.22).clamp_min(0)/.30).clamp_max(1),0.)
+            term_id=list(env.reward_manager.active_terms).index('small_obstacle_corridor')
+            assert torch.allclose(env.reward_manager._step_reward[:,term_id],-legacy,atol=1e-6)
+            route_checks.append({'stage':curriculum_stage,'legacy_unchanged':True})
         if curriculum_stage in (1,2,3):
             # Diagnostic placement near the first block, never used by train.
             robot=env.scene['robot']
@@ -89,6 +102,10 @@ try:
                 assert torch.isfinite(obs).all() and torch.isfinite(reward).all()
                 raw=env.reward_manager._step_reward.sum(-1)*env.step_dt
                 log=extra['log']
+                stage_mask,route_cost=env._m1_required_route_snapshot
+                term_id=list(env.reward_manager.active_terms).index('small_obstacle_corridor')
+                assert stage_mask.all()
+                assert torch.allclose(env.reward_manager._step_reward[:,term_id],-route_cost,atol=1e-6)
                 removed=log['RequiredCrossing/removed_positive_reward']
                 bonus=log['RequiredCrossing/event_bonus']
                 assert torch.allclose(reward.mean(),raw.mean()-removed+bonus,atol=1e-5)
@@ -122,6 +139,7 @@ try:
             last=torch.where(course['valid'],course['centers_top'][...,0]+course['half_extents'][...,0],
                              torch.full_like(course['half_extents'][...,0],-torch.inf)).amax(-1)
             pose[:,0]=last+1.1
+            pose[:,1]=env.scene.env_origins[:,1]+.4
             robot.write_root_pose_to_sim(pose)
             robot.write_root_velocity_to_sim(torch.zeros((4,6),device=args.device))
             for _ in range(4):
@@ -133,12 +151,16 @@ try:
                 assert float(log['RequiredCrossing/event_bonus'])==0.
                 assert (reward<=1e-6).all()
                 assert torch.allclose(reward,env.reward_manager._step_reward.clamp_max(0).sum(-1)*env.step_dt,atol=1e-5)
+                stage_mask,route_cost=env._m1_required_route_snapshot
+                assert stage_mask.all() and (route_cost>0).all()
+                assert torch.allclose(env.reward_manager._step_reward[:,term_id],-route_cost,atol=1e-6)
             bypass_checks.append({'stage':curriculum_stage,'reward':reward.tolist(),'blocked':1.,'recovered':0})
+            route_checks.append({'stage':curriculum_stage,'post_slab_off_lane_cost':route_cost.tolist()})
     print('M1_FLAT_FIRST_RESULT '+json.dumps({'scope':'geometry_and_reset_integration_not_learning',
         'initial_obstacles':0,'stage_heights':measured,'reset_checks':reset_checks,
         'policy_shape':list(obs.shape),'metrics':env._m1_learning_gate.metrics(),
         'reward_checks':reward_checks,'recovery_ready_last20':recovery_checks[-20:],
-        'live_scan_checks':scan_checks,'post_slab_checks':bypass_checks}),flush=True)
+        'live_scan_checks':scan_checks,'post_slab_checks':bypass_checks,'route_checks':route_checks}),flush=True)
 except BaseException:
     traceback.print_exc()
     raise

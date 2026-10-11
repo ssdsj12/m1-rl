@@ -100,7 +100,7 @@ def test_wrapper_pays_real_subthreshold_progress_without_prelift_event():
     scope = dict(torch=torch, required_crossing_reward=required_crossing_reward,
         self=SimpleNamespace(unwrapped=SimpleNamespace(cfg=SimpleNamespace(m1_flat_first=True),
             step_dt=.02, reward_manager=SimpleNamespace(_step_reward=torch.zeros(1, 1)))),
-        rewards=torch.zeros(1), required_zone=~flag, collision=flag, done=flag,
+        rewards=torch.zeros(1), required_zone=~flag, route_penalty=torch.zeros(1), collision=flag, done=flag,
         touchdown_safe=~flag, recovery_balance_safe=~flag,
         strict_result={"single_prelift_event": flag, "prelift_progress_delta": torch.tensor([.15]),
                        "recovery_complete": flag}, extras={})

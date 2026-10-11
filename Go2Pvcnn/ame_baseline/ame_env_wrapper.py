@@ -1098,11 +1098,28 @@ class AmeRslRlEnvWrapper(VecEnv):
         if getattr(self.unwrapped.cfg, 'm1_flat_first', False):
             levels = self.unwrapped.scene.terrain.terrain_levels
             course = self._m1_current_course()
-            course['valid'] &= ((levels >= 1) & (levels <= 3))[:, None]
+            required_stage = (levels >= 1) & (levels <= 3)
+            course['valid'] &= required_stage[:, None]
+            required_wheels = progressive_required_wheels(course, self.unwrapped.scene.env_origins[:, 1])
+            recovered_wheels = self._m1_strict_crossing.recovered_for_course(course)
             required_zone = self._m1_required_gate.update(
                 self.unwrapped.scene['robot'].data.root_pos_w, course,
-                progressive_required_wheels(course, self.unwrapped.scene.env_origins[:, 1]),
-                self._m1_strict_crossing.recovered_for_course(course))
+                required_wheels, recovered_wheels)
+            from .m1_ame_rewards import M1_SUPPORT_BODY_NAMES
+            from extension.parallelism.rl_adapter import resolve_named_indices
+            from extension.parallelism.m1_kinematics import M1_WHEEL_RADIUS_M, M1_WHEEL_THICKNESS_M
+            from .m1_strict_crossing import m1_wheel_lateral_half_width_from_quat
+            route_robot = self.unwrapped.scene['robot']
+            route_wheel_ids = list(resolve_named_indices(tuple(route_robot.body_names), M1_SUPPORT_BODY_NAMES))
+            route_width = m1_wheel_lateral_half_width_from_quat(
+                route_robot.data.body_quat_w[:, route_wheel_ids],
+                wheel_radius=float(M1_WHEEL_RADIUS_M), wheel_thickness=float(M1_WHEEL_THICKNESS_M))
+            route_penalty = self._m1_required_gate.route_penalty(
+                route_robot.data.body_pos_w[:, route_wheel_ids], route_width,
+                course, required_wheels, recovered_wheels)
+            # RewardManager consumes this during env.step. Pre-step values
+            # preserve the old episode's cost across Isaac's automatic reset.
+            self.unwrapped._m1_required_route_snapshot = (required_stage.clone(), route_penalty)
         obs_dict, rewards, terminated, truncated, extras = self.env.step(actions)
         small_candidate, large_candidate = self.get_obstacle_presence()
         if self._m1_step_debug:
@@ -1374,6 +1391,7 @@ class AmeRslRlEnvWrapper(VecEnv):
             log['RequiredCrossing/removed_positive_reward'] = removed.mean()
             log['RequiredCrossing/event_bonus'] = event_bonus.mean()
             log['RequiredCrossing/zone_fraction'] = required_zone.float().mean()
+            log['RequiredCrossing/route_penalty_rate'] = route_penalty.mean()
             log['RequiredCrossing/prelift_events'] = strict_result.get('single_prelift_event', torch.zeros_like(done)).sum()
             log['RequiredCrossing/prelift_progress_delta'] = strict_result.get('prelift_progress_delta', torch.zeros_like(rewards)).mean()
             log['RequiredCrossing/loaded_touchdown_fraction'] = touchdown_safe.float().mean()

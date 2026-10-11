@@ -58,6 +58,23 @@ class RequiredCrossingRewardGate:
         complete = required_wheels.any(-1) & (recovered | ~required_wheels).all(-1)
         return (self.started & course['valid'] & ~complete).any(-1)
 
+    @torch.no_grad()
+    def route_penalty(self, wheel_pos, lateral_half_width, course, required_wheels, recovered):
+        """Soft lateral footprint cost for each still-unrecovered route wheel.
+
+        Call after update with the same pre-step course/receipts. The normal
+        .18m block and .0465m wheel leave .06675m lateral center freedom.
+        Actual orientation changes the footprint, not the authored route.
+        Max reduction preserves the existing [0,1] rate and -1 reward weight;
+        many obstacles or two required wheels do not multiply the penalty.
+        Neither scanner visibility, retreat nor passing a slab clears debt.
+        """
+        pending = (self.started & course['valid'])[..., None] & required_wheels & ~recovered
+        overhang = ((wheel_pos[:, None, :, 1] - course['centers_top'][..., 1, None]).abs()
+                    + lateral_half_width[:, None, :] - course['half_extents'][..., 1, None])
+        costs = (overhang.clamp_min(0.) / .30).clamp_max(1.)
+        return torch.where(pending, costs, torch.zeros_like(costs)).amax(dim=(1, 2))
+
 
 def required_crossing_reward(reward, step_terms, dt, *, blocked, collision,
                              done, prelift, recovery, prelift_progress_delta=None):

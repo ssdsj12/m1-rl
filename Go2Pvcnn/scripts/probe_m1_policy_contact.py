@@ -103,6 +103,8 @@ try:
                     'action':serial(action),'command':serial(env.command_manager.get_command('base_velocity')),
                     'reward':serial(reward),'reward_names':list(env.reward_manager.active_terms),
                     'reward_terms':serial(env.reward_manager._step_reward*env.step_dt),
+                    'route_snapshot':{'stage_mask':serial(env._m1_required_route_snapshot[0]),
+                        'cost':serial(env._m1_required_route_snapshot[1])},
                     'crossing':dict(capture),
                     'log':{k:serial(v) for k,v in log.items() if k.startswith('RequiredCrossing/')}}
                 output.write(json.dumps(record)+'\n')
