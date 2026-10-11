@@ -130,6 +130,7 @@ class M1AmeRewardsCfg(CrossLargeComplexPpoRewardsCfg):
 class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
     robot_name: str = "m1"
     action_dim: int = 16
+    m1_fixed_wheel_speed_m_s: float | None = None
     asset_joint_names: tuple[str, ...] = M1_ASSET_JOINT_NAMES
     planner_joint_names: tuple[str, ...] = M1_PLANNER_JOINT_NAMES
     wheel_joint_names: tuple[str, ...] = M1_WHEEL_JOINT_NAMES
@@ -426,6 +427,10 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
         self.planner_owned_reference_cache = False
         self.use_batched_reference_trajectory = False
         self.planner_backend = None
+        fixed_speed = os.environ.get("M1_FIXED_WHEEL_SPEED_M_S")
+        if fixed_speed is not None:
+            from .m1_ame_actions import configure_fixed_wheel_control
+            configure_fixed_wheel_control(self, float(fixed_speed))
 
 __all__ = [
     "M1AmeCrossLargeComplexEnvCfg",

@@ -290,6 +290,8 @@ class AmeRslRlEnvWrapper(VecEnv):
 
     def get_mpc_teacher_action(self):
         """Return the current M1 MPC action and validity mask when attached."""
+        if getattr(self.unwrapped.cfg, 'm1_fixed_wheel_speed_m_s', None) is not None:
+            raise RuntimeError('Fixed-wheel leg-only PPO does not permit teacher action ownership')
         manager = getattr(self.unwrapped, "_trajectory_manager", None)
         if manager is None or not callable(getattr(manager, "current_reference", None)):
             return None, None
@@ -1087,7 +1089,8 @@ class AmeRslRlEnvWrapper(VecEnv):
                     "default": term._default_pos[idx].tolist(),
                     "training_default": list(M1_TRAINING_JOINT_POS),
                     "action": actions[idx].tolist(),
-                    "target": m1_action_targets(actions, term._default_pos)[idx].tolist(),
+                    "target": (term.targets_for_actions(actions) if hasattr(term, 'targets_for_actions')
+                               else m1_action_targets(actions, term._default_pos))[idx].tolist(),
                     "short_trigger": bool(m1_teacher_obstacle_presence(self.unwrapped)[0][idx]),
                 }
                 print("M1_CONTROL_TRACE " + json.dumps(row), flush=True)
