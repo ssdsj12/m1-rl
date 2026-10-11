@@ -1,5 +1,7 @@
 ## 2026-10-11 active: T306/pure-ppo-learning
 
+- lift-roll-layout/native-readiness OPEN：20cm候选完成56配置层有界反例搜索与2988源mesh抬轮空间检查，可推进隔离原生筛选；2cm候选拒绝。当前生产仍旧布局，真实支撑/碰撞/接线和2048部署尚未通过。[后续证据](log/2026-10-11-m1-fullbody-candidate-search.md)。
+
 - lift-roll-layout/top-bridge-conflict OPEN：角色已批准并47CPU通过；候选15单测通过但2cm缝可轮胎搭桥，20cm对照出现潜在地面绕行，尚无整机可接受布局。当前生产未改；Task3部署被几何门槛阻断。[证据](log/2026-10-11-m1-lift-roll-candidate-gates.md)。以下角色待批文字为历史。
 
 - lift-roll-layout/fill-role-contract OPEN：书面规格已批准；CPU反例证明轮轨外填充small触发必跨轨道断言。需明确目标/填充角色，保留全部安全几何，不偷偷删除断言或障碍。实施计划停在该新增合同，原动作无需重审。[证据](log/2026-10-11-m1-fill-role-contract.md)。
