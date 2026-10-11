@@ -36,7 +36,12 @@ class CourseRegistry:
         grouped={}
         seen=set()
         for obj in obstacles:
-            if not _all_geometry and obj.semantic_class!='small':
+            role = getattr(obj, 'required_crossing', None)
+            if role is not None and type(role) is not bool:
+                raise ValueError('required_crossing must be bool or None')
+            # Fill remains in landing_registry, native colliders and perception.
+            # Only the encounter/mandatory-target table excludes explicit fill.
+            if not _all_geometry and (obj.semantic_class!='small' or role is False):
                 continue
             if not (0<=obj.row<rows and 0<=obj.col<cols):
                 raise ValueError('obstacle tile index outside registry')

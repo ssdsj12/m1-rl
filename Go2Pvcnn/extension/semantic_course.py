@@ -100,6 +100,8 @@ class CourseAnchor:
     world_xy: tuple[float, float]
     prim_path: str
     layout_fallback_used: bool = False
+    # None preserves legacy encounter semantics; False is physical fill only.
+    required_crossing: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -117,6 +119,7 @@ class GroundedCourseObstacle:
     local_xy: tuple[float, float]
     world_center: tuple[float, float, float]
     prim_path: str
+    required_crossing: bool | None = None
 
 
 _STAGE_LAYOUTS: dict[SemanticCourseStage, dict[str, int]] = {
@@ -807,6 +810,7 @@ def ground_course_anchors(
                 local_xy=anchor.local_xy,
                 world_center=(world_x, world_y, center_z),
                 prim_path=anchor.prim_path,
+                required_crossing=anchor.required_crossing,
             )
         )
     return obstacles
@@ -1068,6 +1072,7 @@ def _ground_with_runtime_terrain_sampler(
                     robust_ground_z - grounding_cfg.embed_depth_m + anchor.ground_offset,
                 ),
                 prim_path=anchor.prim_path,
+                required_crossing=anchor.required_crossing,
             )
         )
     return obstacles
