@@ -14,6 +14,12 @@ local16006未改/未重验。runtime实际Feature aea3b32；生产目录旧bb57e
 GitHub d7625bafaaa5857f101ec89a6d15dceac97c170c普通push并独立ref核实，包含此前未上传改动和README。
 本节最终运行文档将另提交推送；无未处理Critical/Important，未宣称学习成功。
 
+发布收尾回执：最终运行文档71ef770两次普通push分别连接reset/443超时，未完成补推；
+已独立确认发布的实现/README仍为d7625ba，不能说实现未上传。当前训练已至310/loss有限。
+14项docs/tests服务器tar-diff与归档SHA d471fa14b82f0c8af02baf04617e224f637338b769e6f5583d71a5a9d2c0d1e4核实；
+本条收尾回执另同步本日志。新监控已更新9450/12维/固定轮速，不再用旧7960合同。
+仅最后运行记录发布受外部连接阻断；保留分支和执行记录待后续补推，不新建PR或合并。
+
 最新09:40UTC：隔离原生9259完整通过并退出/GPU1MiB后，11个runtime/入口文件按SHA备份部署；
 新训练进程9450已启动2048/cuda0，日志/tmp/m1-ppo-fixed-wheel-model300-20261011.log，首更新待核实。
 初始化PT另存生产logs/rsl_rl/m1_cross_large_complex_ame/fixed-wheel-initialization/model_300_fixed_wheel.pt，
