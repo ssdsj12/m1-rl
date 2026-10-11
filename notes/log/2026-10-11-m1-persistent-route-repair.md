@@ -137,6 +137,13 @@ task-owned process with16981 pointing09-57-29run,port6006host127.0.0.1.
 Both remote6006 and existing local127.0.0.1:16006 `/data/logdir` verify newrun.
 No display/tunnel/network/globalGit settings changed.
 
+TensorBoard raw scalars subsequently reached912:stage1,route penalty rate
+.9915155768,value loss.0568097346,surrogate loss-.0009396112,mean std.0706738532,
+prelift delta/events/stable landing0. Thus live training reached the new
+route-cost phase, not just its zero-cost initial approach. Losses finite;
+learning remains unverified. Existing10-minute monitor updated with real new
+PID/run and explicit approved status, not stale “awaiting confirmation”.
+
 ## Open follow-up / boundaries
 
 - Learning single-wheel prelift / three-wheel support and strict10cm crossing
@@ -157,5 +164,10 @@ no hot modification after training startup. Current Work Ref:
 `codex/m1-ppo-repair-upload` local,`codex/m1-contact-recovery` server.
 Normal non-force GitHub push ofa8923f2 to`m1-10-10` failed443 connect timeout
 after21s; initial publication not confirmed. This does not affect server runtime.
+Deployment docs commit7e0d6e9; a second normal push including this commit also
+failed443 after21s. No force-push/network changes. Current implementation and
+docs remain local+server; last confirmed GitHub publication is3cc82b3. A future
+heartbeat may retry normal push under existing authorization after checking
+the actual local committed ref. Do not claim new code uploaded until verified.
 Key files:`m1_required_crossing.py`, `ame_env_wrapper.py`, `m1_obstacle_rewards.py`,
 route/reward/runtime tests, native flat-first and contact probes.
