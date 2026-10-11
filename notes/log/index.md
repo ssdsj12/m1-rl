@@ -1036,3 +1036,4 @@ This page indexes verification evidence. Keep it short enough to scan.
 - [M1 oriented wheel-bottom measurement](2026-10-09-m1-oriented-wheel-bottom.md):52tests, source USD/full-mesh extrema agree, cached2259vs194634vertices; no physical crossing/Climb pose claim, no training.
 - [Replacement-host resume](2026-10-11-m1-host-resume.md): host a21472797434572800304964; model1000/173CPU verified, PID948/run10-56-34,2048env retained optimizer/std/course,TB1081. No production behavior change.
 - [First prelift event](2026-10-11-m1-first-prelift-event.md):1030 rawcount1,stage1;definition/aggregation verified,stable/strict0. Continue PID948, no production changes or native probe.
+- [Isolated native-screen preparation](2026-10-11-m1-lift-roll-native-screen.md):213CPU pass; early-contact/side-support measurement findings fixed. Await1400 validated boundary before4env native, no production switch.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 import hashlib
 import math
@@ -702,6 +702,15 @@ def build_course_anchors(
             semantic_curriculum_cfg,
             row,
         )
+        lift_roll = resolved_layout_cfg.placement_strategy == 'm1_lift_roll'
+        if lift_roll:
+            if resolved_tile_size != (16., 16.):
+                raise ValueError('lift-roll requires the validated 16m tile')
+            if (resolved_layout_cfg.fixed_small_obstacle_local_xy
+                    or resolved_layout_cfg.fixed_large_obstacle_local_xy):
+                raise ValueError('lift-roll cannot be combined with fixed obstacle overrides')
+            # Empty/mixed rows use the exact legacy progressive authoring path.
+            resolved_layout_cfg = replace(resolved_layout_cfg, placement_strategy='m1_progressive')
         for col in range(num_cols):
             origin = terrain_origins[row][col]
             origin_x = _origin_component(origin, 0)
@@ -714,6 +723,27 @@ def build_course_anchors(
                 fallback_stage=stage,
                 terrain_generator=terrain_generator,
             )
+            if lift_roll and 1 <= row <= 3:
+                from ame_baseline.m1_lift_roll_layout import candidate_blocks
+                from ame_baseline.m1_mixed_course import progressive_row
+                if stage_counts != {'small': progressive_row(row)[0], 'large': 0}:
+                    raise ValueError('lift-roll target counts must match the progressive stage')
+                # Explicit20cm candidate only. The original2cm audit candidate
+                # is never selected here. Native/deployment gates still apply.
+                for index, block in enumerate(candidate_blocks(row, fill_gap=.20)):
+                    params = {'size': (block.length, block.width, block.height)}
+                    anchors.append(CourseAnchor(
+                        row=row, col=col, stage=stage, semantic_class='small',
+                        slot_index=index, shape_kind='cuboid', shape_params=params,
+                        target_diameter=max(block.length, block.width),
+                        target_height=block.height,
+                        ground_offset=bottom_to_center_offset('cuboid', params),
+                        local_xy=(block.x, block.y),
+                        world_xy=(origin_x+block.x, origin_y+block.y),
+                        prim_path=f'{SEMANTIC_COURSE_SMALL_ROOT}/row_{row:02d}/col_{col:02d}/slot_{index:02d}',
+                        layout_fallback_used=False, required_crossing=block.required_crossing,
+                    ))
+                continue
             for slot in _stage_slots(
                 stage=stage,
                 stage_counts=stage_counts,

@@ -2,6 +2,8 @@
 
 ## Current State
 
+Task3隔离原生筛选准备：[记录](../log/2026-10-11-m1-lift-roll-native-screen.md)。Authoring/measurement213CPU通过，生产未切换；有界单次helper2750等待1400校验后仅停948，保留新更新。原生未开始，GPU训练占用中。后续部署以实际原生结果为门槛，不再请求已确认授权。
+
 2026-10-11 lift-roll-layout/native-readiness OPEN（top-bridge-conflict后继）：20cm候选的56层转向/轮距有界搜索未找到出口，2988个源mesh抬轮/平移/恢复位置未发现障碍相交；允许进入隔离authoring与原生候选筛选，尚未部署或上传。全姿态绕行、无滑移/重心稳定/原生接线仍未证明，2cm候选仍拒绝。LastFeature/VerifiedProduction保持5a366ff；Candidate基线497e22e；KeyFiles与复现见[整机搜索](../log/2026-10-11-m1-fullbody-candidate-search.md)。后续不得把下方旧“Task3停止”当作新审批要求。
 
 2026-10-11 lift-roll-layout/top-bridge-conflict OPEN（fill-role-contract后继）：角色确认已完成、局部实现267d882/47CPU通过。候选15单测通过；96填充块/2cm缝虽有10.792mm名义落轮余量与2mm地面搜索无出口，却有轮胎仅下沉0.522mm的顶面搭桥走廊；70块/20cm对照则有潜在地面绕行，非整机动态证明。保留负证据，不部署候选、不改奖励/控制器/std；03:54UTC PID948已1226、未动训练。下一步重排并验证整机/顶面连通性；Task3原生切换/发布仍未完成。[检查记录](../log/2026-10-11-m1-lift-roll-candidate-gates.md)。原动作/规格/角色不再待审批。Candidate/CurrentWork:本记录提交；Production LastFeature/Verified:5a366ff。

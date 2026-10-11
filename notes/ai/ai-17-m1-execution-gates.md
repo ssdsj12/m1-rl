@@ -1,5 +1,7 @@
 # M1 execution gates contract
 
+2026-10-11 [native-screen preparation](../log/2026-10-11-m1-lift-roll-native-screen.md):20cm candidate explicitly selectable only in isolated probe,70physical fills plus4/6/8targets; production stays progressive.213CPU pass; all-tick collision/pose evidence and upward-force+floor-height+all-geometry support checks replace ambiguous final-force-only native measurements. No controller/std/success changes. Static fixture failure is not dynamic impossibility.
+
 2026-10-11 UNDEPLOYED [target/fill roles and candidate gates](../log/2026-10-11-m1-lift-roll-candidate-gates.md):
 required_crossing True=target, False=physical fill, None/missing=legacy.
 Both grounding paths preserve role; only encounter/mandatory registry excludes
