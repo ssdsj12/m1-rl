@@ -106,8 +106,11 @@ manifest `/tmp/m1-autonomous-failed-pt-deleted.json`已复制到本地ignored
 README/notes/human-ai合同和监控已更新；服务器文档/19测试文件共34项归档同步，
 archive SHA dc6a1b56cf1229c54f9725735328a51bb128b02dfa23fe6cf4d038229954ee7c，
 两端一致且tar-diff通过，没有热改runtime。实际训练已至314/loss有限，PID7960仍运行。
-本轮实现和README/记录本地提交233d68b；首轮GitHub普通push因443连接超时失败，
-不声称该次已上传。最后独立确认远端仍900f249；后续上传回执优先，禁止据旧失败重复发布。
+本轮实现和README/记录本地提交233d68b，后续同步说明04b10ef；两次GitHub普通push
+均因443连接超时失败（约21s），当前实现尚未上传，不改网络/全局Git/force。
+最后独立确认远端仍900f249；后续上传回执优先，禁止据旧失败重复发布。
+最终现场训练已至317，value loss1.8334/surrogate约0有限，strict success仍0；
+不将初始有限更新或移除2cm门槛宣称学会。待上传是外部连接问题，不阻止本地已部署训练。
 307相关CPU和原生接线通过；真实跨越/三轮支撑学习、动态10cm视频验收仍OPEN。
 
 ## 证据路径与保留事项
