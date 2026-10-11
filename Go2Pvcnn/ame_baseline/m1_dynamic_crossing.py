@@ -17,6 +17,12 @@ class EncounterCrossingTracker:
         self.target_obstacle_id=torch.full_like(self.slot,-1)
         self.heading=torch.zeros(num_envs,2,device=device);self.heading[:,0]=1
         self.early_lift=torch.zeros(num_envs,device=device,dtype=torch.bool)
+        # Autonomous timing is opt-in per row. Historical 2cm telemetry must
+        # not serve as the flight/overlap lifecycle for progressive stages.
+        self.flight_active=torch.zeros_like(self.early_lift)
+        self.crossing_started=torch.zeros_like(self.early_lift)
+        self.autonomous_mode=torch.zeros_like(self.early_lift)
+        self.mode_known=torch.zeros_like(self.early_lift)
         self.prelift_rewarded=torch.zeros_like(self.early_lift)
         self.prelift_high_water=torch.zeros(num_envs,device=device)
         self.last_contact_bottom=torch.full((num_envs,),float('nan'),device=device)
@@ -35,6 +41,8 @@ class EncounterCrossingTracker:
         self.inner.reset(rows)
         self.slot[rows]=-1;self.target_obstacle_id[rows]=-1
         self.early_lift[rows]=False;self.used[rows]=False
+        self.flight_active[rows]=False;self.crossing_started[rows]=False
+        self.autonomous_mode[rows]=False;self.mode_known[rows]=False
         self.recovered[rows]=False
         self.prelift_rewarded[rows]=False
         self.prelift_high_water[rows]=0
@@ -61,8 +69,14 @@ class EncounterCrossingTracker:
     def update(self,*,wheel_pos_w,wheel_quat_w,course,direction_w,wheel_bottom_z_w,wheel_grounded,
                support_safe,touchdown_safe,collision,wheel_horizontal_radius,
                wheel_vertical_radius,wheel_thickness,required_clearance=.03,
-               required_far_margin=.04,stable_frames=5,approach_distance=.25):
+               required_far_margin=.04,stable_frames=5,approach_distance=.25,
+               autonomous_lift=None):
         b=wheel_pos_w.shape[0];rows=torch.arange(b,device=self.device)
+        mode = torch.zeros(b, device=self.device, dtype=torch.bool) if autonomous_lift is None else autonomous_lift
+        if (not isinstance(mode, torch.Tensor) or mode.shape != (b,)
+                or mode.dtype != torch.bool or mode.device != self.device):
+            raise ValueError('autonomous_lift must be bool [B] on tracker device')
+        mode_changed = self.mode_known & (mode != self.autonomous_mode)
         centers=course['centers_top'];extents=course['half_extents'];valid=course['valid'];ids=course['ids']
         if wheel_grounded.shape!=(b,4) or wheel_grounded.dtype!=torch.bool:
             raise ValueError('wheel_grounded must be measured bool [B,4]')
@@ -75,8 +89,10 @@ class EncounterCrossingTracker:
                 or (extents[valid]<=0).any()):
             raise ValueError('invalid actual course geometry/direction')
         changed=(self.known_ids!=-2).any(-1)&(self.known_ids!=ids).any(-1)
+        changed |= mode_changed
         if changed.any(): self.reset(changed)
         self.known_ids.copy_(ids)
+        self.autonomous_mode.copy_(mode);self.mode_known[:]=True
         norm=torch.linalg.vector_norm(direction_w,dim=-1)
         direction=direction_w/norm.clamp_min(1e-9)[:,None]
         idle=self.slot<0
@@ -145,21 +161,37 @@ class EncounterCrossingTracker:
                 & (bottom>=self.last_contact_bottom+.02))
         single_support = wheel_grounded.sum(-1) == 3
         self.early_lift |= enabled&before&lifted&single_support
-        self.inner.failed |= enabled & self.early_lift & ~grounded & ~single_support
+        self.inner.failed |= enabled & ~mode & self.early_lift & ~grounded & ~single_support
         single_prelift = (enabled & before & lifted & (wheel_grounded.sum(-1) == 3)
                           & ~self.inner.failed & ~collision & ~self.prelift_rewarded)
         self.prelift_rewarded |= single_prelift
         overlap = (enabled & (local_pos[rows,selected,0]+wheel_horizontal_radius >= near)
             & (local_pos[rows,selected,0]-wheel_horizontal_radius <= hx[rows,slot])
             & (local_pos[rows,selected,1].abs() <= hy[rows,slot]+widths[rows,selected]))
+        # Observe flight without an arbitrary minimum rise. A wheel already
+        # unloaded at encounter entry has no loaded reference; it still needs
+        # the other three contacts, but cannot earn unmeasured height credit.
+        observed_flight=(~grounded & torch.isfinite(bottom)
+            & (~torch.isfinite(self.last_contact_bottom) | (bottom>self.last_contact_bottom)))
+        self.flight_active = enabled & mode & ~grounded & (self.flight_active | observed_flight)
+        self.crossing_started |= mode & overlap & ~self.inner.awaiting_recovery
+        self.inner.failed |= enabled & mode & (
+            ((self.flight_active | self.crossing_started) & ~grounded & ~single_support)
+            | (overlap & grounded))
         bottom_clearance = bottom-selected_center[:,2]
         # Every sampled overlap must clear the top, not merely one lucky frame.
         self.inner.failed |= overlap & (~torch.isfinite(bottom_clearance)
                                         | (bottom_clearance < required_clearance))
-        self.inner.failed |= enabled&~before&~self.early_lift
+        self.inner.failed |= enabled&~mode&~before&~self.early_lift
         fully_past=(local_pos[rows,selected,0]-wheel_horizontal_radius
                     >=hx[rows,slot]+required_far_margin)
-        self.inner.failed |= (enabled&self.early_lift&grounded&~fully_past
+        matches_lane=local_pos[rows,selected,1].abs()<=hy[rows,slot]+widths[rows,selected]
+        # One valid edge sample is not permission to divert around the block
+        # and rejoin on the far side using stale clearance evidence.
+        self.inner.failed |= (enabled & mode & self.crossing_started & ~fully_past
+                              & ~matches_lane & ~self.inner.awaiting_recovery)
+        landing_phase=torch.where(mode,self.crossing_started,self.early_lift)
+        self.inner.failed |= (enabled&landing_phase&grounded&~fully_past
                               &~self.inner.awaiting_recovery)
         obstacle=wheel_pos_w.new_zeros(b,1,3);obstacle[:,0,2]=selected_center[:,2]
         projected=torch.stack((hx[rows,slot],hy[rows,slot]),-1).clamp_min(1e-6)
@@ -171,8 +203,10 @@ class EncounterCrossingTracker:
         offset=(wheel_pos_w[:,:,None,:2]-landing_centers[:,None,:,:2]).abs()-landing_extents[:,None]
         distance=torch.linalg.vector_norm(offset.clamp_min(0),dim=-1)
         landing_free=~((distance<wheel_horizontal_radius)&landing_valid[:,None]).any(-1).any(-1)
+        touchdown_eligible=torch.where(mode,
+            self.crossing_started & grounded & wheel_grounded.all(-1),self.early_lift)
         out=self.inner.update(wheel_pos_w=local_pos,obstacle_centers_top_w=obstacle,
-            support_safe=support_safe&enabled,touchdown_safe=touchdown_safe&enabled&self.early_lift&landing_free,
+            support_safe=support_safe&enabled,touchdown_safe=touchdown_safe&enabled&touchdown_eligible&landing_free,
             collision=collision&enabled,wheel_horizontal_radius=wheel_horizontal_radius,
             wheel_vertical_radius=wheel_vertical_radius,wheel_lateral_half_width=widths,
             wheel_bottom_z_w=wheel_bottom_z_w,obstacle_half_extents=projected,
@@ -197,11 +231,10 @@ class EncounterCrossingTracker:
         abandoned=enabled&outside&~self.inner.awaiting_recovery
         out['failed'] |= abandoned
         # Reward newly measured rise before the obstacle, while retaining the
-        # >=2cm event as telemetry and as a separate strict crossing gate.
+        # >=2cm event as telemetry (and a gate only for legacy-mode rows).
         # The world-bottom high-water mark survives bobbing and lower loaded
         # references. Loaded and unsafe motion advances it without reward. The
         # same 2cm units continue only up to the actual top+clearance target.
-        matches_lane=local_pos[rows,selected,1].abs()<=hy[rows,slot]+widths[rows,selected]
         progress_safe=(enabled & before & matches_lane & ~grounded & single_support
                        & ~out['failed'] & ~collision & torch.isfinite(bottom)
                        & torch.isfinite(self.last_contact_bottom)
@@ -225,6 +258,7 @@ class EncounterCrossingTracker:
         if released.any():
             self.inner.reset(released)
             self.slot[released]=-1;self.target_obstacle_id[released]=-1;self.early_lift[released]=False
+            self.flight_active[released]=False;self.crossing_started[released]=False
             self.prelift_rewarded[released]=False
             self.prelift_high_water[released]=0
             self.last_contact_bottom[released]=float('nan')
