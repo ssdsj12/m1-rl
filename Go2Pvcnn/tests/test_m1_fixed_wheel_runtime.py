@@ -88,3 +88,19 @@ def test_fixed_mode_rejects_planner_owner(runtime):
     assert hasattr(runtime, 'configure_fixed_wheel_control')
     with pytest.raises(ValueError, match='planner'):
         runtime.configure_fixed_wheel_control(NS(planner_owned_reference_cache=True), .3)
+
+
+def test_terrain_profile_preserves_fixed_speed(monkeypatch):
+    from test_semantic_course_curriculum_layout import _install_fake_isaaclab
+    _install_fake_isaaclab(monkeypatch)
+    parent = ModuleType('go2_pvcnn.tasks.teacher_elevation_trajectory_mpc_semantic_env_cfg')
+    parent.SEMANTIC_TERRAIN_CFG = NS()
+    parent.TeacherElevationTrajectoryMpcSemanticCurriculumCfg = lambda: NS(terrain_levels=None)
+    monkeypatch.setitem(sys.modules,parent.__name__,parent)
+    from ame_baseline.m1_mixed_course import configure_mixed_terrain
+    command = NS(ranges=NS(),limit_ranges=NS())
+    cfg = NS(robot_name='m1',action_dim=12,m1_fixed_wheel_speed_m_s=.3,
+             scene=NS(terrain=NS()),curriculum=NS(),commands=NS(base_velocity=command),
+             events=NS(reset_base=NS(params={})))
+    configure_mixed_terrain(cfg)
+    assert command.ranges.lin_vel_x == command.limit_ranges.lin_vel_x == (.3,.3)

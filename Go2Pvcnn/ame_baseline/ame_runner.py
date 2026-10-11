@@ -46,6 +46,10 @@ class AmeOnPolicyRunner(on_policy_runner.OnPolicyRunner):
         unwrapped = getattr(getattr(self, 'env', None), 'unwrapped', None)
         return getattr(unwrapped, '_m1_learning_gate', None)
 
+    def _fixed_wheel_speed(self):
+        unwrapped = getattr(getattr(self, 'env', None), 'unwrapped', None)
+        return getattr(getattr(unwrapped, 'cfg', None), 'm1_fixed_wheel_speed_m_s', None)
+
     def save(self, path, infos=None):
         destination = Path(path)
         base_checkpoint = destination.with_name(
@@ -66,6 +70,13 @@ class AmeOnPolicyRunner(on_policy_runner.OnPolicyRunner):
             checkpoint["ame_num_critic_obs"] = self.alg.actor_critic.map_dim + self.alg.actor_critic.critic_state_dim
             checkpoint["ame_num_actions"] = int(self.alg.actor_critic.std.numel())
             checkpoint["next_iter"] = self.current_learning_iteration + 1
+            speed = self._fixed_wheel_speed()
+            if speed is not None:
+                from .m1_fixed_wheel_checkpoint import fixed_wheel_contract, validate_action_contract
+                checkpoint['m1_action_contract'] = fixed_wheel_contract(speed)
+                validate_action_contract(checkpoint, checkpoint['ame_num_actions'], speed)
+                if hasattr(self, '_m1_action_conversion'):
+                    checkpoint['m1_action_conversion'] = self._m1_action_conversion
             gate = self._learning_gate()
             if gate is not None:
                 checkpoint['m1_learning_curriculum'] = gate.state_dict()
@@ -77,6 +88,8 @@ class AmeOnPolicyRunner(on_policy_runner.OnPolicyRunner):
 
     def load(self, path, load_optimizer=True, keep_std=True):
         checkpoint = torch.load(path, map_location=self.device)
+        from .m1_fixed_wheel_checkpoint import validate_action_contract
+        validate_action_contract(checkpoint, int(self.alg.actor_critic.std.numel()), self._fixed_wheel_speed())
         gate = self._learning_gate()
         if gate is not None and 'm1_learning_curriculum' not in checkpoint:
             raise ValueError('Flat-first resume requires learning curriculum metadata')
@@ -98,6 +111,8 @@ class AmeOnPolicyRunner(on_policy_runner.OnPolicyRunner):
         )
         if saved_dims != expected_dims:
             raise ValueError(f"AME checkpoint dimensions {saved_dims} do not match runtime {expected_dims}")
+        if 'm1_action_conversion' in checkpoint:
+            self._m1_action_conversion = checkpoint['m1_action_conversion']
         state_dict = dict(checkpoint["model_state_dict"])
         if not keep_std:
             state_dict.pop("std", None)

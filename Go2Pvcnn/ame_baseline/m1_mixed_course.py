@@ -40,8 +40,12 @@ def configure_mixed_terrain(cfg):
     from go2_pvcnn.tasks.teacher_elevation_trajectory_mpc_semantic_env_cfg import (
         SEMANTIC_TERRAIN_CFG, TeacherElevationTrajectoryMpcSemanticCurriculumCfg,
     )
-    if cfg.robot_name != 'm1' or cfg.action_dim != 16:
-        raise ValueError('mixed M1 terrain requires M1 with16actions')
+    fixed_speed = getattr(cfg, 'm1_fixed_wheel_speed_m_s', None)
+    if cfg.robot_name != 'm1' or cfg.action_dim != (12 if fixed_speed is not None else 16):
+        raise ValueError('mixed M1 terrain requires the matching M1 action contract')
+    if fixed_speed is not None:
+        from .m1_ame_contract import validate_fixed_wheel_speed
+        fixed_speed = validate_fixed_wheel_speed(fixed_speed)
     cfg.m1_course_profile = 'mixed'
     cfg.scene.terrain.terrain_generator = copy.deepcopy(SEMANTIC_TERRAIN_CFG)
     cfg.scene.terrain.terrain_generator.size = (16., 16.)
@@ -63,10 +67,10 @@ def configure_mixed_terrain(cfg):
     cfg.scene.terrain.semantic_course_scale_profile_overrides={'small':(.05,.10),'large':(.45,.55)}
     cfg.scene.terrain.semantic_course_grounding_cfg=SemanticCourseGroundingCfg(embed_depth_m=0.)
     cfg.curriculum.terrain_levels=copy.deepcopy(TeacherElevationTrajectoryMpcSemanticCurriculumCfg().terrain_levels)
-    cfg.commands.base_velocity.ranges.lin_vel_x=(.18,.45)
+    cfg.commands.base_velocity.ranges.lin_vel_x=(.18,.45) if fixed_speed is None else (fixed_speed,fixed_speed)
     cfg.commands.base_velocity.ranges.lin_vel_y=(0.,0.)
     cfg.commands.base_velocity.ranges.ang_vel_z=(0.,0.)
-    cfg.commands.base_velocity.limit_ranges.lin_vel_x=(.18,.45)
+    cfg.commands.base_velocity.limit_ranges.lin_vel_x=cfg.commands.base_velocity.ranges.lin_vel_x
     cfg.commands.base_velocity.limit_ranges.lin_vel_y=(0.,0.)
     cfg.commands.base_velocity.limit_ranges.ang_vel_z=(0.,0.)
     cfg.events.reset_base.params['pose_range']={'x':(0.,0.),'y':(0.,0.),'yaw':(0.,0.)}
