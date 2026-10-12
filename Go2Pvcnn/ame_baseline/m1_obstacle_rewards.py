@@ -18,6 +18,7 @@ from extension.parallelism.rl_adapter import resolve_named_indices
 from extension.parallelism.terrain import query_height_semantic_valid
 from extension.parallelism.types import ParallelismTerrain
 from .m1_ame_rewards import M1_SUPPORT_BODY_NAMES
+from .m1_ame_contract import M1_REQUIRED_TOP_MARGIN_M
 from .m1_obstacle_profile import (
     M1_DEFAULT_SMALL_OBSTACLE_HEIGHT_M,
     M1_FIXED_SMALL_OBSTACLE_LOCAL_XY,
@@ -37,6 +38,7 @@ def wheel_obstacle_reward_terms(
     return_presence: bool = False,
     return_clearance: bool = False,
     allow_stationary_single_lift: bool = False,
+    required_top_margin_m: float = 0.05,
 ) -> tuple[Tensor, ...]:
     """Return bounded signed progress and nonnegative articulated lift [B].
 
@@ -225,7 +227,7 @@ def wheel_obstacle_reward_terms(
     # obstacle is present.  This prevents a low scrape from being recorded as
     # a crossing even though low upward motion still receives exploration
     # reward above.
-    clearance_seen = (active_wheel & (wheel_bottom_clearance >= 0.05)).any(-1)
+    clearance_seen = (active_wheel & (wheel_bottom_clearance >= required_top_margin_m)).any(-1)
     # The existing nonfinite-state termination remains the owner of failures;
     # invalid data must not inject NaN into the PPO reward sum before reset.
     result = (torch.nan_to_num(progress, nan=0., posinf=0., neginf=0.),
@@ -270,6 +272,7 @@ def _terms_from_env(env, command_name, return_presence=False, return_clearance=F
         course_origin_xy=reward_course_origin(env, scene_origins),
         return_presence=return_presence, return_clearance=return_clearance,
         allow_stationary_single_lift=allow_stationary_single_lift,
+        required_top_margin_m=M1_REQUIRED_TOP_MARGIN_M,
     )
     return terms
 
@@ -426,7 +429,7 @@ def m1_small_obstacle_corridor_penalty(env, command_name='base_velocity') -> Ten
 
 
 def m1_small_obstacle_clearance(env, command_name='base_velocity') -> Tensor:
-    """Return the strict 5 cm top-clearance observation for success metrics."""
+    """Perception proxy without extra top margin; not a crossing receipt."""
     return _terms_from_env(env, command_name, return_clearance=True)[2]
 
 

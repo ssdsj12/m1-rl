@@ -35,6 +35,9 @@ M1_TRAINING_JOINT_POS = ((0., -_TRAIN_HIP, -_TRAIN_KNEE, 0.) * 2
                          + (0., _TRAIN_HIP, _TRAIN_KNEE, 0.) * 2)
 # Ground the lowest collision mesh; the analytic tire differs by 0.21 mm.
 M1_TRAINING_ROOT_Z_M = 0.45600081145762916
+# No user-imposed extra air gap. Actual nonpenetration, collision termination,
+# measured passage and stable far-side landing remain mandatory.
+M1_REQUIRED_TOP_MARGIN_M = 0.0
 
 
 def m1_training_contract():
@@ -42,12 +45,13 @@ def m1_training_contract():
     return dict(version=1, stance='front_rear_inward_585mm',
                 joint_names=list(M1_ASSET_JOINT_NAMES),
                 joint_pos=list(M1_TRAINING_JOINT_POS), root_z=M1_TRAINING_ROOT_Z_M,
-                obstacle_collision_reset=True)
+                obstacle_collision_reset=True,
+                required_top_margin_m=M1_REQUIRED_TOP_MARGIN_M)
 
 
 def validate_training_contract(checkpoint, expected):
     if expected is not None and checkpoint.get('m1_training_contract') != expected:
-        raise ValueError('M1 training contract mismatch: stance/obstacle reset; use a compatible checkpoint')
+        raise ValueError('M1 training contract mismatch: stance/obstacle reset/top margin; use a compatible checkpoint')
 
 
 def m1_last_leg_action(env):

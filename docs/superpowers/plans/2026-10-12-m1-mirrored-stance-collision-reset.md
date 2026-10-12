@@ -25,6 +25,13 @@ strict raw collision feeds termination before reward; metadata guards playback.
 
 ## Task 2: Native verification and fresh launch
 
+User amendment before launch: remove extra 3cm margin, allow learned retracting
+or swinging motion. RED/GREEN cases: 1/10/29mm gaps with actual passage/recovery;
+collision, penetration, missing support/overlap/landing still fail. Both tracker
+calls, perception proxy and checkpoint contract must agree on zero extra margin.
+No old environment-variable floor. Update deployment manifest for wrapper and
+obstacle rewards. Repeat native runtime wiring before fresh launch.
+
 Files: scripts/probe_m1_mirrored_collision_reset.py and deployment notes/README.
 
 1. Check actual new host processes/GPU, stage candidate modules separately.

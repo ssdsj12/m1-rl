@@ -7,6 +7,7 @@ import os
 import torch
 
 from rsl_rl.env import VecEnv
+from .m1_ame_contract import M1_REQUIRED_TOP_MARGIN_M
 from .m1_obstacle_profile import (
     M1_FIXED_SMALL_OBSTACLE_LOCAL_XY,
     M1_SMALL_OBSTACLE_DIAMETER_M,
@@ -1343,7 +1344,7 @@ class AmeRslRlEnvWrapper(VecEnv):
                     support_safe=recovery_balance_safe, touchdown_safe=strict_crossing_touchdown,
                     collision=collision, wheel_horizontal_radius=float(M1_WHEEL_HORIZONTAL_ENVELOPE_M),
                     wheel_vertical_radius=float(M1_WHEEL_RADIUS_M),wheel_thickness=float(M1_WHEEL_THICKNESS_M),
-                    required_clearance=max(.03,float(os.environ.get('M1_STRICT_TOP_CLEARANCE_M','.03'))),
+                    required_clearance=M1_REQUIRED_TOP_MARGIN_M,
                     required_far_margin=max(.04,float(os.environ.get('M1_STRICT_FAR_MARGIN_M','.04'))),
                     stable_frames=max(5,int(os.environ.get('M1_STRICT_STABLE_FRAMES','5'))),
                 )
@@ -1368,7 +1369,7 @@ class AmeRslRlEnvWrapper(VecEnv):
                     wheel_bottom_z_w=wheel_bottom_z_w,
                     obstacle_half_extents=(M1_SMALL_OBSTACLE_DIAMETER_M / 2.0,
                                            M1_SMALL_OBSTACLE_DIAMETER_M / 2.0),
-                    required_clearance=max(0.03, float(os.environ.get("M1_STRICT_TOP_CLEARANCE_M", "0.03"))),
+                    required_clearance=M1_REQUIRED_TOP_MARGIN_M,
                     required_far_margin=max(0.04, float(os.environ.get("M1_STRICT_FAR_MARGIN_M", "0.04"))),
                     stable_frames=max(5, int(os.environ.get("M1_STRICT_STABLE_FRAMES", "5"))),
                 )

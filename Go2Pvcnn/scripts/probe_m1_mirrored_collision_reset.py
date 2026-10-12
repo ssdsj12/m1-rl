@@ -32,6 +32,15 @@ try:
     cfg.events.reset_base.params['velocity_range'] = {k:(0.,0.) for k in ('x','y','z','roll','pitch','yaw')}
     env = ManagerBasedRLEnv(cfg=cfg)
     wrapped = AmeRslRlEnvWrapper(env)
+    assert env.cfg.m1_training_contract['required_top_margin_m'] == 0.
+    # Observe the real wrapper's argument on GPU, not just its source text.
+    original_update = wrapped._m1_strict_crossing.update
+    margin_calls = []
+    def checked_update(**kwargs):
+        margin_calls.append(kwargs['required_clearance'])
+        assert kwargs['required_clearance'] == 0.
+        return original_update(**kwargs)
+    wrapped._m1_strict_crossing.update = checked_update
     assert wrapped.num_actions == 12 and not env.scene['robot'].is_fixed_base
     assert not getattr(env, '_trajectory_manager', None)
     robot = env.scene['robot']
@@ -62,6 +71,17 @@ try:
     root[0,1] -= .2074
     root[0,2] = env.scene.terrain.env_origins[0,2] + M1_TRAINING_ROOT_Z_M
     ids = torch.tensor([0],device=args.device)
+    # Separated by 1.5cm: no collision, no extra 3cm rule (not a full crossing).
+    clear_root = root.clone()
+    clear_root[0,0] += .18
+    clear_root[0,2] += (box[2]-env.scene.terrain.env_origins[0,2]) + .015
+    robot.write_root_state_to_sim(clear_root,env_ids=ids)
+    env.scene.write_data_to_sim()
+    _, _, clear_done, _ = wrapped.step(zero)
+    clear_hit = env.termination_manager.get_term('obstacle_collision').clone()
+    print('M1_MIRROR_CLEAR '+json.dumps(dict(done=clear_done.tolist(),hit=clear_hit.tolist())),flush=True)
+    assert not bool(clear_hit[0]) and not bool(clear_done[0])
+    wrapped.reset()
     robot.write_root_state_to_sim(root,env_ids=ids)
     env.scene.write_data_to_sim()
     collision = False
@@ -79,6 +99,7 @@ try:
             break
     assert collision and other_resets == 0, (collision,other_resets)
     assert not bool(obstacle_collision(env)[0]), 'reset pose retains collision'
+    assert margin_calls and set(margin_calls) == {0.}
     print('M1_MIRROR_NATIVE_COMPLETE',flush=True)
 finally:
     if env is not None:

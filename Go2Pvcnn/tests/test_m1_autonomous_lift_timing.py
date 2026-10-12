@@ -6,7 +6,8 @@ from ame_baseline.m1_dynamic_crossing import EncounterCrossingTracker
 
 
 class Frames:
-    def __init__(self, modes=(True,)):
+    def __init__(self, modes=(True,), clearance=.03):
+        self.clearance = clearance
         self.modes = torch.tensor(modes, dtype=torch.bool)
         self.n = len(modes)
         self.tracker = EncounterCrossingTracker(self.n, 'cpu', obstacle_count=1)
@@ -35,7 +36,7 @@ class Frames:
             touchdown_safe=torch.full((self.n,), touch, dtype=torch.bool),
             collision=torch.full((self.n,), collision, dtype=torch.bool),
             wheel_horizontal_radius=.1, wheel_vertical_radius=.1, wheel_thickness=.04,
-            required_clearance=.03, required_far_margin=.04, stable_frames=5)
+            required_clearance=self.clearance, required_far_margin=.04, stable_frames=5)
         # On the pre-feature baseline, expose semantic failures rather than
         # stopping every trajectory at an unexpected-keyword TypeError.
         if mode and 'autonomous_lift' in inspect.signature(self.tracker.update).parameters:

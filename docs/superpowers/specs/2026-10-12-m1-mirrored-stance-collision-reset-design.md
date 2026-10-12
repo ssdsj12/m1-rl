@@ -17,8 +17,13 @@ obstacle collision, and train a NEW model rather than continuing any checkpoint.
 - Use current live geometry, not previous reward buffers. Collision detection
   is a sampled geometry/semantic-scanner detector, not an exact contact-pair
   oracle. Native contact/reset cases must be checked before deployment.
-- Keep strict 3 cm crossing clearance distinct from collision; insufficient
-  clearance alone is not this termination. Stage layouts and heights unchanged.
+- User amendment: no extra 3 cm top clearance. Measured nonpenetrating passage,
+  no obstacle collision, three-wheel support and stable far-side landing remain.
+  Both runtime trackers and perception proxy use zero EXTRA margin. Perception
+  informs PPO; prediction alone never certifies passage. No fixed swing/fold
+  trajectory: retracting or swinging a leg are both allowed. Reward high-water
+  budget ends at the obstacle top, without rewarding repeated height cycles.
+  Stage layouts and heights unchanged; standalone legacy APIs keep defaults.
 - Fresh network, optimizer and curriculum; no resume, checkpoint or migrated
   model. Flat-first starts at stage 0. Four wheels stay at 0.30 m/s targets,
   PPO has 12 leg actions, 2048 environments, save100, 10000 iterations.
