@@ -48,10 +48,10 @@ def test_invalid_bottom_input_is_rejected_not_replaced():
             wheel_bottom_z_w=torch.full((1,4),float('nan')))
 
 
-def test_runtime_passes_measured_mesh_bottom_to_tracker():
+def test_runtime_passes_measured_reference_cylinder_bottom_to_tracker():
     source = (Path(__file__).parents[1]/'ame_baseline/ame_env_wrapper.py').read_text()
-    assert 'wheel_bottom_from_vertices(' in source
-    assert 'load_wheel_collision_vertices(' in source
+    assert 'cylinder_bottom(' in source
+    assert 'cylinder_geometry=True' in source
     assert 'wheel_bottom_z_w=wheel_bottom_z_w' in source
 
 

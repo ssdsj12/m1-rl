@@ -59,11 +59,11 @@ def test_fixed_targets_survive_actions_and_reset(runtime):
         term.process_actions(actions)
         term.apply_actions()
         torch.testing.assert_close(robot.legs[0], actions * 1.5)
-        torch.testing.assert_close(robot.wheels[0], torch.full((2, 4), .3 / .095958))
+        torch.testing.assert_close(robot.wheels[0], torch.full((2, 4), .3 / .0959))
         assert robot.wheels[1] == [3, 7, 11, 15]
     term.reset()
     term.apply_actions()
-    torch.testing.assert_close(robot.wheels[0], torch.full((2, 4), .3 / .095958))
+    torch.testing.assert_close(robot.wheels[0], torch.full((2, 4), .3 / .0959))
     with pytest.raises(ValueError, match='12'):
         term.process_actions(torch.zeros(2, 16))
 

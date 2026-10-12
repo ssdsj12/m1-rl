@@ -52,7 +52,7 @@ def test_m1_reward_config_replaces_airtime_with_named_progress_and_climb():
         assert isinstance(fields[name], ast.Constant) and fields[name].value is None
     for name, function, weight in (
         ('small_obstacle_progress', 'm1_obstacle_rewards.m1_small_obstacle_progress', 1.),
-                ('small_obstacle_climb', 'm1_obstacle_rewards.m1_small_obstacle_climb', 1.5),
+                ('small_obstacle_climb', 'm1_obstacle_rewards.m1_small_obstacle_climb', 4.0),
             ('parallelism_geometry_collision', 'm1_obstacle_rewards.m1_obstacle_collision_penalty', -10.),
     ):
         kwargs = {item.arg: item.value for item in fields[name].keywords}

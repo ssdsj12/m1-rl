@@ -18,7 +18,7 @@ def test_arbitrary_legs_cannot_change_wheel_targets():
     torch.testing.assert_close(out[:,LEG],a)
     torch.testing.assert_close(out[:,WHEEL],torch.full((2,4),.3,dtype=a.dtype))
     targets=c.m1_action_targets(out,torch.zeros_like(out))
-    torch.testing.assert_close(targets[:,WHEEL],torch.full((2,4),.3/.095958,dtype=a.dtype))
+    torch.testing.assert_close(targets[:,WHEEL],torch.full((2,4),.3/.0959,dtype=a.dtype))
 
 @pytest.mark.parametrize('speed',[0,-.3,float('nan'),float('inf'),2.1])
 def test_invalid_fixed_speed_rejected(speed):
