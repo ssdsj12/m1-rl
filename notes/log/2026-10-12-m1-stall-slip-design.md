@@ -6,6 +6,20 @@
 
 #### 实际训练更新核验
 
+最终现场已至207：201–207连续value/surrogate有限，GPU23120MiB。env_cfg.yaml确有stall-slip-v1及2s/.05m/.50/.25/.03/.27/10N完整合同。
+GitHub普通push成功，独立ls-remote确认 `10-12=b1568e3ef17fa8769fdfa88982bf036f9ffb1a67`（含代码、README、部署记录）。
+15项README/notes/spec/plan/tests/scripts同步服务器tar-diff无差异，包双方SHA `709cf0106cc6566b38db6e22e9f97e8aed99757982eb7e1808db07d1c3e1e154`。
+远端127.0.0.1:6006/data/logdir独立返回17-28-55新run；本地16006未验证。
+
+执行裁决（来自计划ledger，全部保留）：
+
+1. 按用户既有选择在当前镜像逐项执行，采用新版inline流程及一次全分支独立审查；不按旧版逐任务派代理。减少重复上下文，代价是没有每任务独立审查，由TDD和最终审查覆盖。
+2. 适配器与生命周期共用一组RED/GREEN验证；确保实际接口一致，代价是提交归因粒度更粗，不减少测试。
+3. 审查未独立重跑CPU或访问服务器，GPU/物理/部署/真实model200由执行者现场验收；已落实，不将审查结论冒充原生证据。若跳过会存在运行时未验风险。
+4. 两项增量费用上限不证明完整回报最优；保留监控与真实跨越验收，代价是其他奖励仍可能导致非期望策略，不能承诺必然学会。
+
+审查没有遗留Critical/Important；文档状态已同步，无延后minor。原生未证明真实策略跨越，后续真实学习仍OPEN。
+
 PID6598现场cwd/cmdline/environ核实2048/cuda0/9799/resume/keep_std/M1_LOAD_OPTIMIZER1/save100/.30。
 新run `2026-10-12_17-28-55/bb57e7d` stdout201–202，value .0035/.00081004、surrogate .0052/-.00237612，均有限。
 TB202 stage0/新stall和slip率及积分全0（按合同保留stage0旧feet_slide）；GPU23116MiB。
