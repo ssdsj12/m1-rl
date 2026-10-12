@@ -19,6 +19,28 @@ def cylinder_bottom(pos, quat, radius=M1_WHEEL_RADIUS_M, thickness=M1_WHEEL_THIC
     return pos[...,2]-(thickness/2*az+radius*(1-az.square()).clamp_min(0).sqrt())
 
 
+def cylinder_box_xy_witness(pos,quat,centers_top,half_extents,
+                            radius=M1_WHEEL_RADIUS_M,thickness=M1_WHEEL_THICKNESS_M):
+    """Positive interior XY passage witness from actual cylinder points.
+
+    Finite sampling can miss a tiny corner overlap; it cannot certify passage
+    through a horizontally separated box. Tangency is not interior passage.
+    """
+    cylinder_axis(pos,quat)  # validate measured poses
+    angle=torch.arange(32,device=pos.device,dtype=pos.dtype)*(2*torch.pi/32)
+    rings=[]
+    for y in (-thickness/2,0.,thickness/2):
+        rings.append(torch.stack((radius*angle.cos(),torch.full_like(angle,y),radius*angle.sin()),-1))
+    points=torch.cat((*rings,pos.new_tensor([[0,0,0],[0,-thickness/2,0],[0,thickness/2,0]])),0)
+    q=quat/quat.norm(dim=-1,keepdim=True)
+    xyz=q[... ,1:][:,:,None].expand(-1,-1,points.shape[0],-1)
+    local=points[None,None].expand(pos.shape[0],pos.shape[1],-1,-1)
+    uv=torch.cross(xyz,local,dim=-1)
+    world=local+2*(q[...,0,None,None]*uv+torch.cross(xyz,uv,dim=-1))+pos[:,:,None]
+    inside=((world[...,:2]-centers_top[:,None,None,:2]).abs()<half_extents[:,None,None]-1e-6).all(-1)
+    return inside.any(-1)
+
+
 def cylinder_clears_box(pos, quat, centers_top, half_extents,
                         radius=M1_WHEEL_RADIUS_M, thickness=M1_WHEEL_THICKNESS_M):
     """Certify a cylinder disjoint from an axis-aligned, downward solid box.

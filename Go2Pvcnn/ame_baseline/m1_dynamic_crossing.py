@@ -180,6 +180,12 @@ class EncounterCrossingTracker:
         overlap = (enabled & (local_pos[rows,selected,0]+wheel_horizontal_radius >= near)
             & (local_pos[rows,selected,0]-wheel_horizontal_radius <= hx[rows,slot])
             & (local_pos[rows,selected,1].abs() <= hy[rows,slot]+widths[rows,selected]))
+        xy_witness=None
+        if cylinder_geometry:
+            from .m1_reference_geometry import cylinder_box_xy_witness
+            xy_witness=cylinder_box_xy_witness(wheel_pos_w,wheel_quat_w,selected_center,
+                extents[rows,slot],radius=wheel_vertical_radius,thickness=wheel_thickness)
+            overlap &= xy_witness[rows,selected]
         # Observe flight without an arbitrary minimum rise. A wheel already
         # unloaded at encounter entry has no loaded reference; it still needs
         # the other three contacts, but cannot earn unmeasured height credit.
@@ -195,7 +201,11 @@ class EncounterCrossingTracker:
         if cylinder_geometry:
             from .m1_reference_geometry import cylinder_clears_box
             raised=selected_center.clone(); raised[:,2]+=float(required_clearance)
-            shape_clear=cylinder_clears_box(wheel_pos_w,wheel_quat_w,raised,extents[rows,slot],
+            # Empty flat-stage rows contain zero-sized padding, not a box.
+            # Supply harmless positive placeholders only for disabled rows;
+            # enabled geometry is still validated above and cannot be masked.
+            shape_extents=torch.where(enabled[:,None],extents[rows,slot],torch.ones_like(extents[rows,slot]))
+            shape_clear=cylinder_clears_box(wheel_pos_w,wheel_quat_w,raised,shape_extents,
                 radius=wheel_vertical_radius,thickness=wheel_thickness)
         measured_clear=(bottom_clearance>=required_clearance) if shape_clear is None else shape_clear[rows,selected]
         # Every sampled overlap must clear the top, not merely one lucky frame.
@@ -229,7 +239,8 @@ class EncounterCrossingTracker:
             wheel_vertical_radius=wheel_vertical_radius,wheel_lateral_half_width=widths,
             wheel_bottom_z_w=wheel_bottom_z_w,obstacle_half_extents=projected,
             required_clearance=required_clearance,required_far_margin=required_far_margin,
-            stable_frames=stable_frames,approach_distance=approach_distance,clearance_safe=shape_clear)
+            stable_frames=stable_frames,approach_distance=approach_distance,clearance_safe=shape_clear,
+            overlap_witness=xy_witness)
         # The inner tracker clears target_wheel on recovery. Preserve the
         # selected slot/wheel from before its update, and certify only after
         # its full consecutive nominal-support recovery gate passes.
@@ -280,8 +291,9 @@ class EncounterCrossingTracker:
                 (2*hx[rows,slot]+2*wheel_horizontal_radius+required_far_margin).clamp_min(1e-6))
             out.update(self.learning_progress.update(key=key,selected=selected,forces=wheel_forces,
                 weight=robot_weight,active=mode&enabled,
-                safe=attitude_safe&matches_lane&~out['failed']&~collision&(~overlap|measured_clear),
-                before=before,airborne=self.flight_active&single_support,progress=progress))
+                safe=attitude_safe&matches_lane&~out['failed']&~collision&(~overlap|measured_clear)
+                    &(local_pos[rows,selected,1].abs()<hy[rows,slot]+widths[rows,selected]-1e-6),
+                before=before,airborne=self.flight_active&single_support&self.crossing_started,progress=progress))
         released=out['recovery_complete'] | abandoned
         if released.any():
             self.inner.reset(released)

@@ -1,11 +1,13 @@
 """Isolated native contract tests, never concurrent with training or a lift teacher."""
 import argparse
 import json
+import faulthandler
 from isaaclab.app import AppLauncher
 
 parser=argparse.ArgumentParser(description=__doc__)
 AppLauncher.add_app_launcher_args(parser)
 args=parser.parse_args();launcher=AppLauncher(args);env=None
+faulthandler.dump_traceback_later(60,repeat=True)
 try:
     import torch
     from pxr import UsdGeom
@@ -94,5 +96,6 @@ try:
     assert collision and calls
     print('REFERENCE_LEARNING_NATIVE_COMPLETE',flush=True)
 finally:
+    faulthandler.cancel_dump_traceback_later()
     if env is not None:env.close()
     launcher.app.close()
