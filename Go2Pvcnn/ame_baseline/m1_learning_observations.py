@@ -68,5 +68,8 @@ def m1_wheel_learning_observation(env):
     robot=env.scene['robot'];scanner=env.scene['semantic_height_scanner'].data
     ids=list(resolve_named_indices(tuple(robot.body_names),M1_SUPPORT_BODY_NAMES))
     forces,weight=wheel_loads(env)
-    return wheel_learning_features(scanner.ray_hits_w,scanner.semantic_map,scanner.valid_mask,
+    # Native SemanticGridRayCasterData encodes misses as non-finite ray hits;
+    # it does not expose the planner's separate valid_mask field.
+    valid=torch.isfinite(scanner.ray_hits_w).all(-1)
+    return wheel_learning_features(scanner.ray_hits_w,scanner.semantic_map,valid,
         robot.data.body_pos_w[:,ids],robot.data.root_quat_w,forces,weight)

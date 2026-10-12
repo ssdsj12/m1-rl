@@ -24,7 +24,14 @@ try:
     from ame_baseline.m1_reference_geometry import cylinder_bottom
     cfg=M1AmeCrossLargeComplexEnvCfg();configure_flat_first_terrain(cfg)
     cfg.scene.num_envs=4;cfg.sim.device=args.device;cfg.seed=7
+    # Headless measurement needs no remote arrow_x.usd visualization asset.
+    cfg.commands.base_velocity.debug_vis=False
     cfg.events.reset_base.params['velocity_range']={k:(0.,0.) for k in ('x','y','z','roll','pitch','yaw')}
+    # Kit may replace stderr/fault handlers during imports. Keep a dedicated
+    # diagnostic descriptor and arm immediately before manager construction.
+    trace_file=open('/tmp/m1-reference-native-stacks.log','a')
+    faulthandler.enable(file=trace_file,all_threads=True)
+    faulthandler.dump_traceback_later(30,repeat=True,file=trace_file)
     env=ManagerBasedRLEnv(cfg=cfg);wrapped=AmeRslRlEnvWrapper(env)
     robot=env.scene['robot'];ids=list(resolve_named_indices(tuple(robot.body_names),M1_SUPPORT_BODY_NAMES))
     assert isinstance(robot.actuators['legs'],DCMotor)
@@ -95,6 +102,10 @@ try:
             collision=True;break
     assert collision and calls
     print('REFERENCE_LEARNING_NATIVE_COMPLETE',flush=True)
+except BaseException:
+    import traceback
+    traceback.print_exc()
+    raise
 finally:
     faulthandler.cancel_dump_traceback_later()
     if env is not None:env.close()

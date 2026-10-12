@@ -43,7 +43,8 @@ def test_runtime_named_mapping_actual_mass_and_no_registry():
     robot=NS(body_names=names,data=NS(body_pos_w=a[3][:,order],root_quat_w=a[4]),
         root_physx_view=NS(get_masses=lambda:torch.tensor([[5.,5.]])))
     sensor=NS(body_names=names,data=NS(net_forces_w=a[5][:,order]))
-    scan=NS(data=NS(ray_hits_w=a[0],semantic_map=a[1],valid_mask=a[2]))
+    # SemanticGridRayCasterData has ray_hits_w and semantic_map, no valid_mask.
+    scan=NS(data=NS(ray_hits_w=a[0],semantic_map=a[1]))
     env=NS(scene={'robot':robot,'contact_forces':sensor,'semantic_height_scanner':scan},
         cfg=NS(sim=NS(gravity=(0.,0.,-10.))))
     torch.testing.assert_close(g.m1_wheel_learning_observation(env),g.wheel_learning_features(*a))
