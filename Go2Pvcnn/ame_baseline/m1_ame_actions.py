@@ -116,10 +116,15 @@ class M1FixedAbadHipKneeAction(JointAction):
         self._abad_columns = list(resolve_named_indices(M1_ASSET_JOINT_NAMES, M1_ABAD_JOINT_NAMES))
         self._default_asset_pos = self._asset.data.default_joint_pos[:, asset_ids].clone()
         self._default_asset_pos[:, self._abad_columns] = 0.
+        self._default_pos = self._default_asset_pos[:, self._policy_columns].clone()
         initial = m1_action_targets(expand_fixed_abad_actions(self._raw_actions, self._fixed_speed), self._default_asset_pos)
         self._fixed_wheel_targets = initial[:, list(resolve_named_indices(M1_ASSET_JOINT_NAMES, M1_WHEEL_JOINT_NAMES))].clone()
         self._leg_targets = initial[:, self._leg_columns].clone()
         self._processed_actions[:] = initial[:, self._policy_columns]
+
+    def targets_for_actions(self, actions):
+        return m1_action_targets(expand_fixed_abad_actions(actions, self._fixed_speed),
+                                 self._default_asset_pos)[:, self._policy_columns]
 
     def process_actions(self, actions):
         targets = m1_action_targets(expand_fixed_abad_actions(actions, self._fixed_speed), self._default_asset_pos)

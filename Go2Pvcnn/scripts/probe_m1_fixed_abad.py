@@ -2,9 +2,15 @@
 import math
 
 
+def require_finite(*tensors):
+    import torch
+    if any(not bool(torch.isfinite(value).all()) for value in tensors):
+        raise ValueError('Nonfinite raw native measurement')
+
+
 def validate_evidence(e):
     expected=dict(complete=True,stages=[0,1,2,3,4],policy_dim=8,history_dim=16,
-                  policy_state_dim=85,critic_state_dim=88,rewards_finite=True,
+                  policy_state_dim=85,critic_state_dim=88,rewards_finite=True,raw_rewards_finite=True,
                   terminal_row_reset=True,flat_resets=0)
     if any(e.get(k)!=v for k,v in expected.items()):
         raise ValueError('Incomplete native fixed-ABAD evidence')
@@ -51,19 +57,29 @@ def main():
         order=list(resolve_named_indices(robot.joint_names,M1_ASSET_JOINT_NAMES))
         sensor=env.scene['contact_forces'];feet=list(resolve_named_indices(sensor.body_names,M1_SUPPORT_BODY_NAMES))
         e=dict(complete=False,stages=[],policy_dim=wrapped.num_actions,history_dim=16,
-            policy_state_dim=85,critic_state_dim=88,rewards_finite=True,abad_target_error=0.,
+            policy_state_dim=85,critic_state_dim=88,rewards_finite=True,raw_rewards_finite=True,abad_target_error=0.,
             wheel_target_error=0.,apply_calls=0,terminal_row_reset=False,flat_resets=0,
             flat_max_tilt=0.,contract=fixed_abad_contract(.3))
         apply=term.apply_actions
         def measured_apply():
             apply();e['apply_calls']+=1
+            require_finite(robot.data.joint_pos_target[:,abad],robot.data.joint_vel_target[:,wheels])
             e['abad_target_error']=max(e['abad_target_error'],float(robot.data.joint_pos_target[:,abad].abs().max()))
             e['wheel_target_error']=max(e['wheel_target_error'],float((robot.data.joint_vel_target[:,wheels]-.3/.0959).abs().max()))
         term.apply_actions=measured_apply
+        sanitize=wrapped._sanitize_rewards
+        def measured_sanitize(raw):
+            require_finite(raw)
+            return sanitize(raw)
+        wrapped._sanitize_rewards=measured_sanitize
         def frame(stream,phase,tick,action):
             obs,reward,done,extras=wrapped.step(action)
             assert obs.shape==(4,1621) and extras['observations']['critic'].shape==(4,1624)
             assert m1_last_leg_action(env).shape==(4,12) and m1_last_action(env).shape==(4,16)
+            require_finite(obs,extras['observations']['critic'],reward,env.reward_manager._step_reward,
+                robot.data.joint_pos_target[:,order],robot.data.joint_pos[:,order],
+                robot.data.root_state_w,sensor.data.net_forces_w[:,feet])
+            assert not bool(env.termination_manager.get_term('nonfinite_robot_state').any())
             e['rewards_finite'] &= bool(torch.isfinite(reward).all() and torch.isfinite(obs).all())
             r,p,y=euler_xyz_from_quat(robot.data.root_quat_w)
             tilt=torch.atan2(torch.sin(torch.stack((r,p))),torch.cos(torch.stack((r,p)))).abs()

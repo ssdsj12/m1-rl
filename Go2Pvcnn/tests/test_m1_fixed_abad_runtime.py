@@ -15,6 +15,9 @@ def test_apply_keeps_abad_zero_on_every_substep(runtime):
     robot.set_joint_velocity_target=lambda target,joint_ids:setattr(robot,'wheels',(target.clone(),joint_ids))
     term=runtime.M1FixedAbadHipKneeAction(runtime.M1FixedAbadHipKneeActionCfg(asset_name='robot',fixed_wheel_speed_m_s=.3),NS(robot=robot))
     assert term.action_dim==8
+    # The existing optional control trace reads these policy-ordered fields.
+    assert term._default_pos.shape==(2,8)
+    assert term.targets_for_actions(torch.zeros(2,8)).shape==(2,8)
     for _ in range(20):
         a=torch.linspace(-.1,.1,8).repeat(2,1)
         term.process_actions(a)
