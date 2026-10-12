@@ -1,5 +1,7 @@
 ## 2026-10-11 active: T306/pure-ppo-learning
 
+- T306/action-contract/fixed-abad OPEN：[8维HIP/KNEE与固定ABAD规格](log/2026-10-12-m1-fixed-abad-eight-action-design.md)待审；用户最新选model200显式转换，非从零。候选验收与新run启动尚未实施，旧训练保持停止。
+
 - 最新T306/forward-progress-regression：训练按用户要求停止、监控PAUSED；同空地200/500对比已确认检查点相关偏航与抖动退化，奖励因果及演示额外步进修复OPEN。当前仅发布现有代码与诊断文档至10-12，锁ABAD方案未实施。[证据](log/2026-10-12-m1-stall-slip-design.md)。
 
 - T306/reward/stall-slip implementation/native/deploy CLOSED：6d90e80/183CPU/补强原生通过，6598/run17-28-55从显式model200实际201–202更新，stage0/2048/loss有限。真实学习OPEN，当前0费用正常；旧模型保留。[记录](log/2026-10-12-m1-stall-slip-design.md)。

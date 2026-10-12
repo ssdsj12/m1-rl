@@ -2,6 +2,8 @@
 
 ## Current State
 
+LATEST fixed-abad-eight-action DESIGN ONLY：用户选ABAD目标0rad/真8维HIP-KNEE，最新从model200迁移覆盖从零；保留网络对应行/Adam/std/course，201起，书面规格待审。子节点action-mapping、checkpoint-conversion、evaluation-clock/native/deploy；生产未改，旧训练停。[规格证据](../log/2026-10-12-m1-fixed-abad-eight-action-design.md)。
+
 LATEST 12:13UTC：用户要求停止已执行，6598不存在/GPU1MiB/监控PAUSED，不自动重启。批准的200/500同空地对比完成：相同初始观测，隔离移除演示额外update后实测2秒，200前进.580m/偏航.43度；500前进.123m/偏航-74.42度，腿目标变化RMS约51.5倍、三轮>10N帧99%→1%。证明检查点相关空地退化，碰撞惩罚因果未定。生产/奖励未改，原GUI与probe均退出；[证据](../log/2026-10-12-m1-stall-slip-design.md)。以下运行状态为历史。
 
 LATEST stall-slip DEPLOYED：6d90e80，183CPU/补强native全通过，无遗留Critical/Important。新6598/run17-28-55从用户确认model200显式迁移201+9799/2048/optimizer/std/course保持，实际201–202/loss有限，stage0两费用0；TB6768新run。旧4885/完整600及全部PT保留。LastFeature/Verified6d90e80；actual-learning OPEN。[证据](../log/2026-10-12-m1-stall-slip-design.md)。以下未部署状态为历史。
