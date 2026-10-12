@@ -1,5 +1,12 @@
 # M1 execution gates contract
 
+Latest candidate: reference commit8aeb845, three learning signals, contractv2/state85/88,
+rootZ.62/front(.3,-.6)/rear(-.3,.6), DCMotor120/5.5, wheel damping30,
+actual Y-cylinder radius.0959/width.0465. User approved replacing585mm.
+301 CPU pass/1 skip plus native passed. Old2303 stopped at CPU-valid100;
+new4885/run12-26-20 fresh0/2048 and model0 v2/newAdam/stage0 verified. No oldPT loads.
+See notes/log/2026-10-12-m1-reference-learning-implementation.md for actual deployment status.
+
 DEPLOYED c7af587/91f104c: fresh PID2303/run11-20-43 actual iterations0–1 finite,
 2048/GPU21866MiB. CPU model0:39finite/33Adam step20/12positive std/stage0,
 new stance/reset/zero-extra-margin contract. AME+PPO, not AMP. TB2468 remote

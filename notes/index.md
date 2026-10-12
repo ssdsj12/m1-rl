@@ -1,5 +1,7 @@
 # TestPvcnnWithIsaacsim Notes Index
 
+最新[参考M1与三项学习反馈实施](log/2026-10-12-m1-reference-learning-implementation.md)：参考姿态已批准替代585mm，14runtime已部署。301CPU/1skip与原生通过；2303保留model100后停，新4885/run12-26-20从零完成0轮、2048/model0新合同/新Adam/stage0核验。TB5041指新run。下文待审批/未部署及2303继续均历史。
+
 最新用户授权三项学习信号及robot对齐；[参考robot审计](log/2026-10-12-m1-reference-robot-audit.md)确认4源USD相同但电机/PD/轮collision/随机化不同，参考姿态与585mm冲突须书面审阅。仅设计，runtime未改，2303继续；下文“候选未授权”已过时。
 
 最新只读[旧wave/IK与自主PPO对照](log/2026-10-12-m1-legacy-wave-learning-comparison.md)：核对ssdsj12/m1 main8aeb845，优先借鉴观测/安全卸载与越过进度，不搬动作接管；保守包络判定待反例审计。生产未改/PID2303继续，新run37仍stage0。
