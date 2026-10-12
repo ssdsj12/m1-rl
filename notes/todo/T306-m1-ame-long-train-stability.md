@@ -2,6 +2,13 @@
 
 ## Current State
 
+用户已授权三项学习信号与reference-robot-alignment。4源USD SHA一致但运行actuator/轮collision/随机化不同；参考root.62及膝角不等于585mm姿态。[审计与规格](../log/2026-10-12-m1-reference-robot-audit.md)待书面审阅这一冲突，非三项方向重新审批。2303只读至65，未改生产/未停训/未并发probe。LastFeature/Verified仍c7af587，CurrentWork10-12；学习仍OPEN。
+
+新分析子节点legacy-learning-transfer，与自主学习相关：GitHub main8aeb845代码对照确认旧模式
+可IK+残差/暂停驱动，也有纯policy分支。当前缺显式接触/轮相对障碍actor特征，已有安全
+预抬高水位奖但卸载/空中推进信号待评估；零额外净空仍有包络保守失败待CPU反例。
+这些是候选/未证实当前失败主因，生产不改，2303至37/stage0继续。[证据](../log/2026-10-12-m1-legacy-wave-learning-comparison.md)。
+
 mirrored-reset/no-extra-clearance/fresh-start CLOSED：PID2303实际0–1轮，model0完整CPU/39模型/33Adam step20/12std/stage0/新合同。TB2468新run11-20-43。LastFeature c7af587（含91f104c姿态重置）；216CPU/native通过。真实学习仍OPEN，下方待核验为历史。
 
 最新用户取消额外3cm净空、允许收腿/摆腿自主学习。c7af587/216CPU及零margin原生接线通过，

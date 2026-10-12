@@ -1,5 +1,9 @@
 # TestPvcnnWithIsaacsim Notes Index
 
+最新用户授权三项学习信号及robot对齐；[参考robot审计](log/2026-10-12-m1-reference-robot-audit.md)确认4源USD相同但电机/PD/轮collision/随机化不同，参考姿态与585mm冲突须书面审阅。仅设计，runtime未改，2303继续；下文“候选未授权”已过时。
+
+最新只读[旧wave/IK与自主PPO对照](log/2026-10-12-m1-legacy-wave-learning-comparison.md)：核对ssdsj12/m1 main8aeb845，优先借鉴观测/安全卸载与越过进度，不搬动作接管；保守包络判定待反例审计。生产未改/PID2303继续，新run37仍stage0。
+
 当前部署优先：c7af587/91f104c，PID2303/run2026-10-12_11-20-43从零完成0–1轮，2048/AME+PPO/12腿/.30固定轮/零额外净空/撞障碍重置；model0完整CPU校验新Adam与stage0。TB2468新run，原PT保留。下方待部署均历史。[记录](log/2026-10-12-m1-mirrored-reset-fresh.md)。
 
 用户最新明确：取消额外3cm净空，收腿/摆腿由PPO自行学习；216相关CPU通过，原生零margin接线复验中。从零新训练，不续旧PT。当前状态只认[最新记录](log/2026-10-12-m1-mirrored-reset-fresh.md)。

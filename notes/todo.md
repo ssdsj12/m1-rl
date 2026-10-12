@@ -1,5 +1,9 @@
 ## 2026-10-11 active: T306/pure-ppo-learning
 
+- legacy-learning-transfer/reference-robot-alignment：三项已授权，实际配置差异核查完成；姿态/root与585mm不等价，书面规格待审。生产未改。[审计](log/2026-10-12-m1-reference-robot-audit.md)。
+
+- T306/legacy-learning-transfer 只读候选OPEN：补充观测与过程奖励、复核包络假失败；未批准实施/不改训练。[对照证据](log/2026-10-12-m1-legacy-wave-learning-comparison.md)。
+
 - 当前fresh开训验收CLOSED：PID2303/run11-20-43实跑0–1/2048，model0新Adam/stage0/零额外净空合同核验。AME+PPO，收/摆腿自主学；真实跨越能力OPEN。[记录](log/2026-10-12-m1-mirrored-reset-fresh.md)。
 
 - T306/no-extra-clearance：用户取消额外3cm净空并允许自主收腿/摆腿；216相关CPU通过，原生复验/从零开训待实测。[同任务记录](log/2026-10-12-m1-mirrored-reset-fresh.md)。
