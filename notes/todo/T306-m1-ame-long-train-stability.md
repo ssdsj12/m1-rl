@@ -2,6 +2,8 @@
 
 ## Current State
 
+新增pure-ppo-learning/reward/stall-slip子节点，关联timeout-without-crossing但非已证实根因修复。用户确认新增原地惩罚/替换旧打滑项；[规格与代码核查](../log/2026-10-12-m1-stall-slip-design.md)待书面审阅细化数值。LastFeature/Verified仍1d4d1ad，CurrentWork10-12/docs；下一步writing-plans/TDD，生产未改，训练未暂停。
+
 最新reference-learning已部署（实现1d4d1ad含4e1b9d2）/301CPU1skip/原生通过。2303保留完整model100后SIGINT停止；4885/run12-26-20已fresh0轮/2048/loss有限，model0新合同v2/85/88/新Adam/stage0通过。TB5041指新run，GPU23134MiB，无并发probe。不能重启旧PID/PT。[记录](../log/2026-10-12-m1-reference-learning-implementation.md)。下文待审批/未部署均历史。
 
 用户已授权三项学习信号与reference-robot-alignment。4源USD SHA一致但运行actuator/轮collision/随机化不同；参考root.62及膝角不等于585mm姿态。[审计与规格](../log/2026-10-12-m1-reference-robot-audit.md)待书面审阅这一冲突，非三项方向重新审批。2303只读至65，未改生产/未停训/未并发probe。LastFeature/Verified仍c7af587，CurrentWork10-12；学习仍OPEN。

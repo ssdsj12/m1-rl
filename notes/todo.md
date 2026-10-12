@@ -1,5 +1,7 @@
 ## 2026-10-11 active: T306/pure-ppo-learning
 
+- T306/reward/stall-slip OPEN：原地2秒/5cm、当前承重打滑方向已确认；有界数值及部署方式待书面审阅，未改生产。[规格记录](log/2026-10-12-m1-stall-slip-design.md)。
+
 - T306/reference-learning部署CLOSED：三信号+参考机器人/301CPU1skip/原生通过，4885/run12-26-20实际fresh0轮/2048/model0完整校验。真实跨越学习仍OPEN。[当前记录](log/2026-10-12-m1-reference-learning-implementation.md)。
 
 - legacy-learning-transfer/reference-robot-alignment：三项已授权，实际配置差异核查完成；姿态/root与585mm不等价，书面规格待审。生产未改。[审计](log/2026-10-12-m1-reference-robot-audit.md)。

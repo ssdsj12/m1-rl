@@ -1,3 +1,4 @@
+- [Stall/slip design](2026-10-12-m1-stall-slip-design.md): user approved direction; written bounded rates/lifecycle awaiting review. Docs only, no production change.
 - [Reference learning implementation](2026-10-12-m1-reference-learning-implementation.md): 301 CPU pass/1 skip, native pass,14runtime deployed. Old2303 stopped at verified100; new4885 fresh0/2048/model0 newAdam/stage0/v2 verified, TB5041. Actual learning OPEN.
 - [Reference robot audit / learning signals design](2026-10-12-m1-reference-robot-audit.md): historical design, subsequently approved including replacement of585mm by reference pose; execution above.
 - [Mirrored stance / collision termination / fresh PPO](2026-10-12-m1-mirrored-reset-fresh.md): c7af587/91f104c deployed,216CPU/native pass; fresh PID2303/11-20-43 actual0–1 finite/2048, model0 newAdam/stage0/zero-extra-margin contract verified. AME+PPO, learned retract/swing allowed, not AMP. TB2468 newrun; oldPT retained. Learning OPEN.
