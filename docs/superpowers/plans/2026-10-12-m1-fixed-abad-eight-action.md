@@ -1,4 +1,4 @@
-# Fixed ABAD / Eight-Action Model200 Implementation Plan
+# Fixed ABAD / Eight-Action Fresh Implementation Plan
 
 ## 用户最新覆盖决定（执行中）
 
@@ -6,7 +6,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (preserve user's current-mirror inline method) or superpowers:subagent-driven-development only if the user changes that choice. Steps use checkbox syntax for tracking.
 
-**Goal:** 将model200显式转换为8维HIP/KNEE PPO，固定ABAD目标0rad，通过隔离验收后开始新续训run。
+**Goal（最新）:** 固定ABAD目标0rad、8维HIP/KNEE PPO，通过隔离验收后fresh从0训练；历史200迁移条目由顶部用户覆盖决定撤销。
 
 **Architecture:** 新增可独立测试的8→16动作展开与12→8检查点转换，复用既有AME观察结构及PPO。固定ABAD使用原位置PD；动作分布是真8维，历史仍记录16列执行命令。旧12/16模式保持兼容，加载依完整合同拒绝错配。
 
@@ -114,5 +114,5 @@
 - [x] 接口一致：fixed_abad显式布尔传递；8策略与12腿/16执行表示严格区分；旧签名新增keyword默认false。
 - [x] Review Focus五项都有所属任务的明确反例；没有把GPU动态结果冒充CPU测试。
 - [x] 范围控制：不改奖励/PD/地形，不迁移500，不重复请求模型选择。
-- [ ] 用户审阅计划；沿用此前选择“当前镜像内逐项执行”，若用户另选则更新执行方式。
-- [ ] 执行者读取executing-plans及TDD技能后实施；本计划提交不等于代码实现或已开训。
+- [x] 用户审阅计划；沿用“当前镜像内逐项执行”，执行中用户将起点改为fresh0。
+- [x] 执行者读取executing-plans及TDD技能后实施；按fresh覆盖完成，证据见notes对应实施日志，旧200迁移清单不执行。

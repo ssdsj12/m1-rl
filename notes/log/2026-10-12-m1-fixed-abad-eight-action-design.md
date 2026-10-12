@@ -23,6 +23,16 @@ TDD反例：映射RED14→GREEN23；运行时RED4→GREEN40并stall-slip32；保
 
 扩展回归的2个旧launcher测试在未部署生产基线同样失败（cuda7/4旧默认、旧1585维metadata），与此次使用的run_m1_pure_ppo入口无关，保留不修；不声称全库测试全绿。新合同相关最终回归及部署结果在下方追加。
 
+### 实际部署与fresh优化
+
+最终相关回归235passed/6.02s（`/tmp/m1-abad-final-green.log`）。12:55:28UTC部署11runtime，备份`/tmp/m1-fixed-abad-production-before-20261012T125528Z/manifest.json`，回执`/tmp/m1-fixed-abad-fresh-deploy.json`；本地预期SHA=候选=生产逐项相同。生产git旧bb57e7d仅run目录标记，不代表部署代码未更新。
+
+新PID10660，cwd生产目录，cmdline `--num_envs 2048 --max_iterations 10000 --device cuda:0 --headless --course-profile flat-first`，环境`M1_FIXED_ABAD=1/M1_FIXED_WHEEL_SPEED_M_S=.30/SAVE_INTERVAL100`。无`--resume/--checkpoint/CHECKPOINT/M1_LOAD_OPTIMIZER`。run `2026-10-12_20-55-34/bb57e7d`，日志`/tmp/m1-ppo-fixed-abad-fresh-20261012.log`。已实际0–3更新：value .0977/.1071/.0916/.0731，surrogate -.0010/-.0008/-.0007/-.0009有限；GPU23021MiB（nvidia-smi宿主命名空间PID与容器10660不同，不当成额外训练）。
+
+model0审计`/tmp/m1-fixed-abad-model0-audit.json`：SHA `4673610b4eb54486143ce4c7dc03a1742b7713489e9ebdfb6493fef381c882a8`；39有限模型/33Adam且step均20/8正std .04961965–.05028835/iter0 next1/stage0 streak0/训练合同v3/动作v2。没有action_conversion或reward_conversion；不是200改名。这是实际优化后的保存点，不是初始化文件。
+
+旧TB6768已核实cmdline后退出，新TB10838指新run，remote127.0.0.1:6006/data/logdir独立核实。6007旧实例未动；local16006不改隧道且未重验。原训练6598不恢复；所有旧PT保留。stage0无障碍时strict NaN表示无样本，不是成功。接线与平地零动作验收不证明PPO学习完成；持续观察推进/偏航/抖动/三轮载荷/真实跨越完整事件。
+
 以下为历史设计，不作为当前训练起点或状态。
 
 最新：用户已确认书面规格；[实施计划](../../docs/superpowers/plans/2026-10-12-m1-fixed-abad-eight-action.md)已完成自检，等待计划审阅。沿用“当前镜像内逐项执行”选择，不重复审批方向/模型。6任务覆盖动作、历史、迁移、入口时钟、原生、部署；未改runtime/启动训练。

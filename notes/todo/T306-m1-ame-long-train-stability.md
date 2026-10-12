@@ -2,7 +2,7 @@
 
 ## Current State
 
-LATEST fixed-abad-eight-action PLAN READY：ABAD目标0rad/真8维HIP-KNEE/model200迁移规格已确认；保留网络对应行/Adam/std/course，201起，实施计划待审。子节点action-mapping、checkpoint-conversion、evaluation-clock/native/deploy；生产未改，旧训练停。[规格与计划证据](../log/2026-10-12-m1-fixed-abad-eight-action-design.md)。
+LATEST fixed-abad-eight-action DEPLOYED：用户最终fresh从0覆盖200迁移，新网络/Adam/std/stage0；399cf7b/235CPU/独立审查2项修复/原生1000env帧5stage通过。11runtime逐SHA部署，PID10660/run20-55-34实际0–3轮/loss有限/8维/2048；model0 CPU39有限模型/33Adam(step20)/8正std/v3/stage0完整，TB10838/remote6006核实。actual-learning OPEN，固定角非机械锁定，旧PT保留。[实施证据](../log/2026-10-12-m1-fixed-abad-eight-action-design.md)。
 
 LATEST 12:13UTC：用户要求停止已执行，6598不存在/GPU1MiB/监控PAUSED，不自动重启。批准的200/500同空地对比完成：相同初始观测，隔离移除演示额外update后实测2秒，200前进.580m/偏航.43度；500前进.123m/偏航-74.42度，腿目标变化RMS约51.5倍、三轮>10N帧99%→1%。证明检查点相关空地退化，碰撞惩罚因果未定。生产/奖励未改，原GUI与probe均退出；[证据](../log/2026-10-12-m1-stall-slip-design.md)。以下运行状态为历史。
 
