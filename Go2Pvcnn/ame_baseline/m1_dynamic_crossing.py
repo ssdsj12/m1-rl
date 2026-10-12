@@ -41,12 +41,15 @@ class EncounterCrossingTracker:
         self.recovered=torch.zeros_like(self.used)
         self.known_ids=torch.full((num_envs,obstacle_count),-2,device=device,dtype=torch.long)
         self.crossing_count=torch.zeros_like(self.slot)
+        from .m1_learning_progress import LearningProgress
+        self.learning_progress=LearningProgress(num_envs,device)
 
     def __getattr__(self,name):
         return getattr(self.inner,name)
 
     def reset(self,rows):
         self.inner.reset(rows)
+        self.learning_progress.reset(rows)
         self.slot[rows]=-1;self.target_obstacle_id[rows]=-1
         self.early_lift[rows]=False;self.used[rows]=False
         self.flight_active[rows]=False;self.crossing_started[rows]=False
@@ -78,7 +81,8 @@ class EncounterCrossingTracker:
                support_safe,touchdown_safe,collision,wheel_horizontal_radius,
                wheel_vertical_radius,wheel_thickness,required_clearance=.03,
                required_far_margin=.04,stable_frames=5,approach_distance=.25,
-               autonomous_lift=None, cylinder_geometry=False):
+               autonomous_lift=None, cylinder_geometry=False,
+               wheel_forces=None, robot_weight=None, attitude_safe=None):
         b=wheel_pos_w.shape[0];rows=torch.arange(b,device=self.device)
         mode = torch.zeros(b, device=self.device, dtype=torch.bool) if autonomous_lift is None else autonomous_lift
         if (not isinstance(mode, torch.Tensor) or mode.shape != (b,)
@@ -268,6 +272,16 @@ class EncounterCrossingTracker:
         out['overlap_sample']=overlap & torch.isfinite(bottom_clearance)
         out['bottom_clearance']=torch.where(out['overlap_sample'], bottom_clearance,
                                            torch.full_like(bottom_clearance, float('nan')))
+        if wheel_forces is not None:
+            if robot_weight is None or attitude_safe is None:
+                raise ValueError('load feedback needs actual weight and attitude gate')
+            key=torch.where(enabled,self.target_obstacle_id*4+selected,-1)
+            progress=((local_pos[rows,selected,0]-(near-wheel_horizontal_radius)) /
+                (2*hx[rows,slot]+2*wheel_horizontal_radius+required_far_margin).clamp_min(1e-6))
+            out.update(self.learning_progress.update(key=key,selected=selected,forces=wheel_forces,
+                weight=robot_weight,active=mode&enabled,
+                safe=attitude_safe&matches_lane&~out['failed']&~collision&(~overlap|measured_clear),
+                before=before,airborne=self.flight_active&single_support,progress=progress))
         released=out['recovery_complete'] | abandoned
         if released.any():
             self.inner.reset(released)

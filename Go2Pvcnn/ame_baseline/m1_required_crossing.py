@@ -77,7 +77,8 @@ class RequiredCrossingRewardGate:
 
 
 def required_crossing_reward(reward, step_terms, dt, *, blocked, collision,
-                             done, prelift, recovery, prelift_progress_delta=None):
+                             done, prelift, recovery, prelift_progress_delta=None,
+                             unload_delta=None, passage_delta=None):
     """Strip positive shaping in a required-crossing zone, preserve all costs.
 
     Isaac RewardManager._step_reward holds weighted reward rates, whereas
@@ -99,6 +100,10 @@ def required_crossing_reward(reward, step_terms, dt, *, blocked, collision,
         progress = torch.where(torch.isfinite(prelift_progress_delta),
             prelift_progress_delta.clamp_min(0.),torch.zeros_like(prelift_progress_delta)).to(reward.dtype)
     bonus = safe.to(reward.dtype) * (.3 * progress * blocked.to(reward.dtype) + 2. * recovery.to(reward.dtype))
+    for delta,scale in ((unload_delta,.1),(passage_delta,.3)):
+        if delta is not None:
+            finite_delta=torch.where(torch.isfinite(delta),delta.clamp(0.,1.),0.)
+            bonus += (safe & blocked).to(reward.dtype)*scale*finite_delta
     return reward - removed + bonus, removed, bonus
 
 

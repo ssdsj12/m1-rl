@@ -1322,6 +1322,8 @@ class AmeRslRlEnvWrapper(VecEnv):
                 direction = torch.stack((command[:,0]*yaw.cos()-command[:,1]*yaw.sin(),
                                          command[:,0]*yaw.sin()+command[:,1]*yaw.cos()), dim=-1)
                 from .m1_dynamic_crossing import autonomous_lift_stage_mask
+                from .m1_learning_observations import wheel_loads
+                wheel_forces,robot_weight=wheel_loads(self.unwrapped)
                 strict_result = self._m1_strict_crossing.update(
                     wheel_pos_w=robot.data.body_pos_w[:, wheel_ids],
                     wheel_quat_w=robot.data.body_quat_w[:, wheel_ids],
@@ -1330,6 +1332,8 @@ class AmeRslRlEnvWrapper(VecEnv):
                         self.unwrapped.scene.terrain.terrain_levels, done,
                         flat_first=getattr(self.unwrapped.cfg, 'm1_flat_first', False)),
                     wheel_grounded=support_contact, cylinder_geometry=True,
+                    wheel_forces=wheel_forces,robot_weight=robot_weight,
+                    attitude_safe=torch.isfinite(tilt)&torch.isfinite(tilt_rate)&(tilt<=.15)&(tilt_rate<=.20)&~done,
                     support_safe=recovery_balance_safe, touchdown_safe=strict_crossing_touchdown,
                     collision=collision, wheel_horizontal_radius=float(M1_WHEEL_HORIZONTAL_ENVELOPE_M),
                     wheel_vertical_radius=float(M1_WHEEL_RADIUS_M),wheel_thickness=float(M1_WHEEL_THICKNESS_M),
@@ -1379,7 +1383,8 @@ class AmeRslRlEnvWrapper(VecEnv):
                 float(self.unwrapped.step_dt), blocked=required_zone, collision=collision,
                 done=done, prelift=strict_result.get('single_prelift_event', torch.zeros_like(done)),
                 recovery=strict_result['recovery_complete'],
-                prelift_progress_delta=strict_result.get('prelift_progress_delta', torch.zeros_like(rewards)))
+                prelift_progress_delta=strict_result.get('prelift_progress_delta', torch.zeros_like(rewards)),
+                unload_delta=strict_result.get('unload_delta'),passage_delta=strict_result.get('passage_delta'))
             # Isaac may reuse extras. Snapshot tensors so runner steps do not
             # alias the next frame's dict or in-place updated measurements.
             extras['log'] = {k: v.detach().clone() if isinstance(v, torch.Tensor) else v
@@ -1387,6 +1392,11 @@ class AmeRslRlEnvWrapper(VecEnv):
             log = extras['log']
             log['RequiredCrossing/removed_positive_reward'] = removed.mean()
             log['RequiredCrossing/event_bonus'] = event_bonus.mean()
+            process_safe=(~collision&~done&required_zone).to(rewards.dtype)
+            for component,scale in (('unload',.1),('passage',.3),('prelift_progress',.3)):
+                delta=strict_result.get(component+'_delta',torch.zeros_like(rewards))
+                log['RequiredCrossing/'+component+'_bonus']=(process_safe*scale*delta).mean()
+            log['RequiredCrossing/final_ppo_reward']=rewards.mean()
             log['RequiredCrossing/zone_fraction'] = required_zone.float().mean()
             log['RequiredCrossing/route_penalty_rate'] = route_penalty.mean()
             # Historical vertical >=2cm counter: telemetry, not an autonomous
