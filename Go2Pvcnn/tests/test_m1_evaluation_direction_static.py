@@ -6,7 +6,8 @@ from ame_baseline.m1_obstacle_profile import M1_FIXED_SMALL_OBSTACLE_LOCAL_XY
 def test_m1_evaluation_obstacles_are_in_forward_positive_x_corridor():
     root = Path(__file__).resolve().parents[1]
     source = (root / 'scripts' / 'evaluate_m1_ame.py').read_text()
-    assert 'cfg.commands.base_velocity.ranges.lin_vel_x = (.35, .35)' in source
+    assert 'configure_evaluation_command(cfg)' in source
+    assert 'command.ranges.lin_vel_x = (.35,.35) if speed is None else (speed,speed)' in source
     # Evaluation must use the exact same left/right wheel-track course as
     # training; a body-centerline course cannot validate per-leg crossings.
     assert 'M1_FIXED_SMALL_OBSTACLE_LOCAL_XY' in source

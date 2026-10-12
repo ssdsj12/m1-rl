@@ -119,7 +119,7 @@ def main() -> int:
         elif args.course_profile == "flat-first":
             from ame_baseline.m1_mixed_course import configure_flat_first_terrain
             configure_flat_first_terrain(env_cfg)
-        print(f"[M1] course_profile={args.course_profile}; robot=m1; action_dim={env_cfg.action_dim}; fixed_wheel_speed_m_s={env_cfg.m1_fixed_wheel_speed_m_s}", flush=True)
+        print(f"[M1] course_profile={args.course_profile}; robot=m1; action_dim={env_cfg.action_dim}; fixed_wheel_speed_m_s={env_cfg.m1_fixed_wheel_speed_m_s}; fixed_abad={env_cfg.m1_fixed_abad}", flush=True)
         env_cfg.scene.num_envs = args.num_envs
         env_cfg.sim.device = device
         env_cfg.seed = args.seed

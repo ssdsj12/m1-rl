@@ -17,12 +17,39 @@ def configure_evaluation_command(cfg):
         command.limit_ranges.lin_vel_x = (speed,speed)
 
 
-def validate_evaluation_checkpoint(checkpoint, expected, speed, training_contract=None):
+def configure_evaluation_action_mode(cfg, checkpoint):
+    """Select only a fully specified saved action contract, before environment creation."""
+    from ame_baseline.m1_fixed_wheel_checkpoint import validate_action_contract
+    from ame_baseline.m1_ame_actions import configure_fixed_abad_control, configure_fixed_wheel_control
+    saved = checkpoint.get('m1_action_contract')
+    mode = saved.get('mode') if isinstance(saved, dict) else None
+    if mode not in (None, 'fixed_wheel_leg_only', 'fixed_wheel_fixed_abad_hip_knee'):
+        raise ValueError('Unknown M1 evaluation action contract')
+    fixed_abad = mode == 'fixed_wheel_fixed_abad_hip_knee'
+    speed = saved.get('wheel_speed_m_s') if isinstance(saved, dict) else None
+    dim = checkpoint.get('ame_num_actions')
+    if mode is None and (saved is not None or dim != 16):
+        raise ValueError('Missing M1 evaluation action contract')
+    flag = os.environ.get('M1_FIXED_ABAD')
+    if flag is not None and (flag not in ('0','1') or (flag == '1') != fixed_abad):
+        raise ValueError('Requested fixed ABAD conflicts with checkpoint contract')
+    requested_speed = os.environ.get('M1_FIXED_WHEEL_SPEED_M_S')
+    if requested_speed is not None and (speed is None or float(requested_speed) != speed):
+        raise ValueError('Requested wheel speed conflicts with checkpoint contract')
+    validate_action_contract(checkpoint, dim, speed, fixed_abad=fixed_abad)
+    if speed is not None:
+        configure = configure_fixed_abad_control if fixed_abad else configure_fixed_wheel_control
+        configure(cfg, speed)
+    elif cfg.action_dim != 16 or getattr(cfg, 'm1_fixed_wheel_speed_m_s', None) is not None:
+        raise ValueError('Legacy checkpoint requires legacy environment')
+
+
+def validate_evaluation_checkpoint(checkpoint, expected, speed, training_contract=None, *, fixed_abad=False):
     from ame_baseline.m1_ame_contract import validate_training_contract
     validate_training_contract(checkpoint, training_contract)
     from ame_baseline.ame_runner import AME_ARCHITECTURE_SIGNATURE
     from ame_baseline.m1_fixed_wheel_checkpoint import validate_action_contract, validate_checkpoint_state
-    validate_action_contract(checkpoint,expected[2],speed)
+    validate_action_contract(checkpoint,expected[2],speed,fixed_abad=fixed_abad)
     saved=tuple(checkpoint.get(k) for k in ('ame_num_actor_obs','ame_num_critic_obs','ame_num_actions'))
     if saved!=expected or checkpoint.get('ame_architecture_signature')!=AME_ARCHITECTURE_SIGNATURE:
         raise ValueError(f'Checkpoint {saved} incompatible with M1 evaluation {expected}')
@@ -52,6 +79,8 @@ def main():
         from ame_baseline.actor_critic_ame import ActorCriticAME
         from ame_baseline.m1_evaluation_metrics import EpisodeMetrics, collision_from_rewards
         cfg = M1AmeCrossLargeComplexEnvCfg()
+        checkpoint = torch.load(args.checkpoint, map_location='cpu', weights_only=False)
+        configure_evaluation_action_mode(cfg, checkpoint)
         cfg.sim.enable_cameras = True
         cfg.scene.num_envs = args.num_envs
         cfg.scene.env_spacing = 8.0
@@ -128,17 +157,16 @@ def main():
         robot = env.scene["robot"]
         assert not robot.is_fixed_base
         obs, extras = wrapped.get_observations()
-        checkpoint = torch.load(args.checkpoint, map_location=args.device, weights_only=False)
         expected = (obs.shape[-1], extras["observations"]["critic"].shape[-1], wrapped.num_actions)
-        validate_evaluation_checkpoint(checkpoint, expected, cfg.m1_fixed_wheel_speed_m_s, cfg.m1_training_contract)
+        validate_evaluation_checkpoint(checkpoint, expected, cfg.m1_fixed_wheel_speed_m_s, cfg.m1_training_contract,
+                                       fixed_abad=cfg.m1_fixed_abad)
         model = ActorCriticAME(*expected).to(args.device)
         model.load_state_dict(checkpoint["model_state_dict"])
         model.eval()
         episodes = EpisodeMetrics(args.num_envs, args.device, scenario)
         with torch.inference_mode():
             for _ in range(args.max_iterations):
-                # Advance Kit/rendering so the WebRTC viewport receives frames.
-                simulation_app.update()
+                # env.step owns physics/rendering; an app.update here doubles simulated time.
                 before = (robot.data.root_pos_w - env.scene.env_origins).clone()
                 obs, _, done, _ = wrapped.step(model.act_inference(obs))
                 geometry = collision_from_rewards(env.reward_manager._step_reward, env.reward_manager.active_terms)
