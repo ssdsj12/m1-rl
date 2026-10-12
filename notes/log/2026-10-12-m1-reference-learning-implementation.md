@@ -77,3 +77,55 @@ TB旧2468已核实旧logdir后退出，新5041 remote127.0.0.1:6006/data/logdir�
 本轮额外判断：原生验收依批准规格验证配置/感知接线/空地稳定/间隙与碰撞；
 五帧成功完整正反例由CPU轨迹验证，未强加动作生成器制造原生抬腿成功。代价：真实物理越障仍需后续策略视频与完整事件验收。
 其余几何、可见patch、测试基准、保守支撑取舍见上文；无延后Minor审查项。
+
+## 05:33 / 06:35 UTC 监控与发布回执
+
+05:33 UTC 普通 push 已成功，独立 ls-remote 确认 GitHub `10-12` 为
+`e45a007b85a027e766e92b90948c1727e136a485`；上述上传失败仅为历史，不再待发布。
+
+06:35 UTC PID4885 的 cwd/cmdline 现场复核仍为本 run、2048env/cuda0；GPU23136MiB。
+stdout 第249轮首次出现 stage 转换快照均值 .025，第299轮已为 stage1（3cm障碍）。
+第299轮 value2.3020 / surrogate−.0010 有限，平均回合72.43步；obstacle_collision终止指标.9989，
+bad_orientation .0015，base_contact0。各指标是聚合统计，不能据此认定每次抬腿失败原因或相加视作互斥比例。
+安全卸载奖金打印.0002、原抬升增量奖金.0001，稳定落轮与严格成功仍0；不宣称已学会跨越。
+
+随后已保存当前 run `model_300.pt`，CPU读取完整且全部张量有限、12个std均正（.02550–.03581），
+iter300/next301，version2/85policy/88critic/参考物理与零额外margin合同在文件内保持。
+SHA256 `a66d20440e75f4d3568216b5504cf99391b76844513a01bf298cf1b315cf09dd`。
+课程stage1/streak0；last完整2051回合：前进pass0、strict attempts2051、success0；
+pending255另列，不混入last。CPU审计CUDA未初始化。
+保持长训；未改生产/奖励/std，未停止训练或并发原生回放。刚进入障碍阶段的失败不自动触发停训。
+
+## 07:40 UTC 小时监控：姿态与承重指标恶化，根因尚未闭合
+
+PID4885 cwd/cmdline仍为当前run/2048/cuda0，stdout438，GPU23136MiB，value .8650 / surrogate -.0018有限。
+model400 CPU所有张量有限、12正std .03198–.05684，iter400/next401，stage1/streak0；
+SHA `a9e2b84b2307738176216f7eb62bbe9f4cd424074ba26ea1fc5af4252421ed96`。
+last完整2052回合pass0/2070attempt/0success；pending684回合/694attempt另列。CUDA未初始化。
+
+原始TB比较280–300共21轮与400–438共39轮，各数值为这些rollout的等权均值，非完整回合窗口率：
+- bad_orientation终止指标 .000954 → .236809；obstacle_collision .999084 → .764947；非互斥分类。
+- loaded_touchdown_fraction .533172 → .049047；recovery_ready_fraction .109438 → .001306。
+- route_penalty_rate .035270 → .198834；此tag实际为归一化轮轨代价值均值，不能直接解释成偏离环境百分比。
+- unload_bonus .000275109 → .000001125；passage_bonus约9.88e-8 → 0。
+- prelift_progress_delta .000209291 → .000202058，非米；并非完全无抬升增量。
+- mean_episode_length 72.41 → 226.62，不是越障进步证据；预抬>=2cm诊断和stable_landings自249至本次读取全0，strict全0。
+
+代码追踪：bad_orientation来自实际projected_gravity阈值；loaded_touchdown为目标轮和支撑的载荷门槛，
+recovery_ready还包含倾角/角速度/名义关节姿态/高度。两者不是实际落轮事件成功率，不能把下降直接当作全部三轮失载。
+已证实失败构成发生变化：姿态超限增多、承重/恢复条件更少、轮轨代价增加；参数非有限或训练退出并非当前解释。
+尚不能从聚合数据判断“抬腿先造成失稳”，或“撞击/腿部侧移先造成失稳”，也不能以std正值判定探索充分。
+缺同env同attempt逐帧载荷/轮底/姿态/碰撞先后证据；下一步因果诊断需当前PT隔离回放，必须独占GPU安全边界，
+不能在约23GB训练旁启动native，也不能因本次监控擅自暂停长训或调整奖励。根因调查保持OPEN，未声称修复。
+
+## 08:39 UTC 常规监控：延续已告知的超时状态
+
+此前用户查询时已核实stdout553/TB554、model500的last完整2049回合pass0/1907attempt/0success，
+pending1649回合/1867attempt另列；最近20轮passage与有效overlap样本均0，raw抬升delta均值4.18152e-6非米。
+该状态已回复用户，本次不重复通知。
+
+本次现场PID4885/cwd/cmdline仍为当前run/2048/cuda0，stdout576，stage1/streak0，GPU23136MiB。
+value .1494 / surrogate -.0009有限；均回合961.61步，timeout .9068，collision .0508，bad_orientation .0387。
+strict成功/稳定恢复仍0、有效净空样本0（NaN非成功），route代价均值.3664。
+非严格proxy crossing .007不作为真实跨越证据。延续此前超时多、有效跨越暴露少的状态，
+不能由此区分停滞/偏航/侧移，更不能称碰撞减少等于学会。未改训练、未暂停、无并发native。

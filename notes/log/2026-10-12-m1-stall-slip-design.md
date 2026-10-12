@@ -1,5 +1,35 @@
 # 原地/打滑双惩罚规格记录
 
+## 12:13 UTC model200/model500 同空地对比（仅诊断，训练保持停止）
+
+- 用户报告出生即哆嗦转圈，批准先比较200与500。单env、seed42、同空地/初态/固定轮目标3.1282587rad/s、model.eval确定性推理。两组初始观测最大差0、完整初态相同、关节顺序相同。200使用已批准奖励元数据转换版792fbd7，CPU再次逐张量确认与原reference model200模型权重完全相同；500为f3065bc。
+- 发现原evaluate入口每轮simulation_app.update再wrapped.step：实测100次策略调用推进4.0秒，额外推进发生在策略控制步外。原始日志保留，不能把它标成2秒或直接代表训练步频。仅/tmp隔离诊断去掉额外update，不修改生产文件；两模型重新各100步，sim.current_time实测均1.999999955秒，COMPLETE/退出0且无done。
+- 校正步频结果：200世界X前进.579886m、Y+.001253m、偏航+.43385度、最大倾角1.2576度；500世界X+.123104m、Y-.125328m、偏航-74.42194度、最大倾角7.1217度。12腿目标逐步差RMS .00465246→.23968386rad（约51.5倍）；腿实际速度RMS .201209→1.586900rad/s。至少三轮当前Fz>10N的采样帧占比99%→1%，这只是接触诊断而非完整三轮支撑成功门槛。
+- 500四轮平均Fz为159.08/29.31/13.07/170.66N，200为95.21/96.05/109.22/99.34N；相同轮速目标不保证相同机身推进。此处没有障碍碰撞或重置，也没有随机动作采样，重现的是检查点相关空地控制退化，不是证明实际抬腿后摔倒。
+- 因果边界：额外演示步进确有影响，但消除后500仍显著偏航/动作抖动；不能据此单独归因-20碰撞惩罚。训练历史奖励作用、actor/编码器及BatchNorm推理统计等仍需隔离，未实施新奖励或训练。
+- 证据：/tmp/m1-flat-compare{200,500}-single-20261012.log；脚本/tmp/m1-flat-comparison-single-step-20261012.py及/tmp/m1-flat-comparison-summary-20261012.py。原入口对比日志/tmp/m1-flat-compare{200,500}-20261012.log及200-clock日志保留。原GUI演示已结束，全部本轮probe退出，GPU1MiB，6598不存在。m1-ppo仍PAUSED；没有重启、删除PT或改变显示配置。
+
+## 用户要求停止训练（11:50 UTC附近）
+
+用户明确“那先停止训练”，随后索要play指令。现场先核实6598 cwd/cmdline属于本run，再仅对6598发送SIGINT；ps确认进程不存在，GPU0回落1MiB。最新保存仍model500（上文CPU数值校验），全部PT/日志保留；未恢复训练。m1-ppo监控已设PAUSED并写入禁止自动重启。只提供演示命令，尚未启动演示；现成evaluate_m1_ame.py为独立small至少10cm测试场，不是本stage1的3cm密填课程回放。
+
+## 11:42 UTC model500 与超时转变
+
+- 6598现场cwd/cmdline仍本run/2048/cuda0/keep_std，stdout502、TB505/stage1，GPU23120MiB；value .1998/surrogate -.0015有限。未停训/改奖励/std/生产/并发native。
+- model500 CPU递归模型/Adam张量有限，12正std .04698959–.07145716，iter500；动作合同12腿/.30存在。SHA f3065bc16c2e8c1c4d2b34147c7745a950413b9a311215804550b8ff1c31cc62。last完整2050回合/pass0/2962attempt/0success；pending192回合/251attempt/0success另列。本轮为只读数值/元数据检查，不冒充完整恢复加载验收。
+- 原始TB等权rollout比较340–365与480–502：timeout 0→.776880，collision .998915→.198624，orientation .001085→.024524，终止指标非互斥。502平均回合917.99步约18.36秒；不再沿用早先“多数未到2秒已碰撞”。
+- stall_rate 0→.340727（费用/秒，非环境百分比），实际stall_cost .006815；slip_rate .052566→.063991、slip_cost .001280，费用真实生效而非漏接。route_penalty_rate .025578→.905820是归一化代价均值，提示轮轨义务偏离，不能称90.6%环境绕行。
+- loaded_touchdown条件占比 .363739→.006381，recovery_ready .010675→.00006687；unload/passage窗口均值降至0。rawprelift增量 .000859901→.000003137（非米）；prelift_events/stable_landings/strict_successes全历史至505均0。
+- 502 clearance_samples0/min NaN为无样本而非成功；普通Crossing success rate .026不是strict跨越。训练从碰撞主导转为超时主导是实质变化，通知一次；不能凭汇总认定侧绕、顶住、打滑或抬腿摔倒的逐帧因果。根因OPEN，安全隔离回放需GPU边界，用户长训优先下不擅自暂停/追加处罚。
+
+## 10:41 UTC 只读监控
+
+- PID6598 cwd/cmdline现场核实，2048/cuda0/keep_std及本次初始化来源保持，stdout365/stage1，GPU23120MiB/97%；value .4012、surrogate -.0017有限。未改生产/停止训练/并发native。
+- 365轮平均回合87.74步（dt .02约1.755秒）；碰撞终止.9984、姿态.0016、timeout0，指标并非互斥逐事件归因。与已通知的306轮相比仍是碰撞终止占主导，没有新严格成功。
+- stable_landings/prelift_events/strict_successes均打印0；连续prelift_progress_delta打印.0012（归一化非米），不能称完全没有增量或已学会。slip_rate .0572/slip_cost .0011；stall_rate打印0不等于原始零，未在本轮重新读取原始TB。
+- 本轮未新审计PT；最近10:15UTC已核验本run model300，SHA7092b7fe0b4b01c5d01cb7b276501322480fb0457ad93f76621273538271f84b，模型/Adam有限、12正std .02453475–.03487041、合同完整；last2057回合/2057attempt/0success，pending966另列。旧“首个新保存点尚未到达”为部署时历史。
+- 具体同env/attempt失败先后仍OPEN；汇总不证明抬腿导致摔倒。不重复通知同一风险，继续既有每小时观察。
+
 ## 最新实施与切换（2026-10-12 09:25 UTC）
 
 ### 09:29 UTC 部署回执

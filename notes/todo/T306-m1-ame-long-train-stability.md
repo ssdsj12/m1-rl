@@ -2,6 +2,8 @@
 
 ## Current State
 
+LATEST 12:13UTC：用户要求停止已执行，6598不存在/GPU1MiB/监控PAUSED，不自动重启。批准的200/500同空地对比完成：相同初始观测，隔离移除演示额外update后实测2秒，200前进.580m/偏航.43度；500前进.123m/偏航-74.42度，腿目标变化RMS约51.5倍、三轮>10N帧99%→1%。证明检查点相关空地退化，碰撞惩罚因果未定。生产/奖励未改，原GUI与probe均退出；[证据](../log/2026-10-12-m1-stall-slip-design.md)。以下运行状态为历史。
+
 LATEST stall-slip DEPLOYED：6d90e80，183CPU/补强native全通过，无遗留Critical/Important。新6598/run17-28-55从用户确认model200显式迁移201+9799/2048/optimizer/std/course保持，实际201–202/loss有限，stage0两费用0；TB6768新run。旧4885/完整600及全部PT保留。LastFeature/Verified6d90e80；actual-learning OPEN。[证据](../log/2026-10-12-m1-stall-slip-design.md)。以下未部署状态为历史。
 
 stall-slip：书面数值/model200已确认；78e6e6a/182CPU通过，独立审查/native进行中。4885在完整600核验后SIGINT退出，GPU1MiB，保留所有PT。生产未改，无长训；禁止自动重启。恢复源200 stage0/streak1（无249PT），计划201+9799/2048/keep_std/optimizer/course。[证据](../log/2026-10-12-m1-stall-slip-design.md)。

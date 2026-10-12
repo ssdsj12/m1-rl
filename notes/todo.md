@@ -1,5 +1,7 @@
 ## 2026-10-11 active: T306/pure-ppo-learning
 
+- 最新T306/forward-progress-regression：训练按用户要求停止、监控PAUSED；同空地200/500对比已确认检查点相关偏航与抖动退化，奖励因果及演示额外步进修复OPEN。当前仅发布现有代码与诊断文档至10-12，锁ABAD方案未实施。[证据](log/2026-10-12-m1-stall-slip-design.md)。
+
 - T306/reward/stall-slip implementation/native/deploy CLOSED：6d90e80/183CPU/补强原生通过，6598/run17-28-55从显式model200实际201–202更新，stage0/2048/loss有限。真实学习OPEN，当前0费用正常；旧模型保留。[记录](log/2026-10-12-m1-stall-slip-design.md)。
 
 - T306/reference-learning部署CLOSED：三信号+参考机器人/301CPU1skip/原生通过，4885/run12-26-20实际fresh0轮/2048/model0完整校验。真实跨越学习仍OPEN。[当前记录](log/2026-10-12-m1-reference-learning-implementation.md)。

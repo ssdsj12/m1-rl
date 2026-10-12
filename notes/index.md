@@ -1,5 +1,7 @@
 # TestPvcnnWithIsaacsim Notes Index
 
+最新12:13UTC[空地200/500对比](log/2026-10-12-m1-stall-slip-design.md)：训练按用户要求已停止，监控PAUSED。相同初始观测/确定性推理/实测2秒，200前进.580m偏航.43度，500前进.123m偏航-74.42度并目标抖动/承重恶化。发现演示入口额外物理步进，隔离诊断去掉后退化仍在；生产未改，不据此断言碰撞惩罚唯一原因。下方6598运行记录为历史。
+
 最新[原地/打滑双惩罚](log/2026-10-12-m1-stall-slip-design.md)：6d90e80已部署，183CPU/补强原生通过；4885完整600后退出，所有PT保留。用户确认reference model200 stage0/streak1显式迁移，PID6598/run17-28-55实际201–202/2048/loss有限，TB6768新run。双费用仅stage1–3，当前stage0费用0正常，非从零或从249恢复。
 
 最新[参考M1与三项学习反馈实施](log/2026-10-12-m1-reference-learning-implementation.md)：参考姿态已批准替代585mm，14runtime已部署。301CPU/1skip与原生通过；2303保留model100后停，新4885/run12-26-20从零完成0轮、2048/model0新合同/新Adam/stage0核验。TB5041指新run。下文待审批/未部署及2303继续均历史。
