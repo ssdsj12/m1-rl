@@ -114,7 +114,7 @@ class M1AmeRewardsCfg(CrossLargeComplexPpoRewardsCfg):
     )
     parallelism_geometry_collision = RewTerm(
         func=m1_obstacle_rewards.m1_obstacle_collision_penalty, weight=-10.0,
-        params={"asset_cfg": SceneEntityCfg("robot"), "scanner_cfg": SceneEntityCfg("semantic_height_scanner")},
+        params={"asset_cfg": SceneEntityCfg("robot"), "scanner_cfg": SceneEntityCfg("semantic_height_scanner"), "strict_obstacle_contact": True},
     )
     non_support_obstacle_contact = RewTerm(
         func=m1_obstacle_rewards.m1_non_support_obstacle_contact, weight=-8.0,

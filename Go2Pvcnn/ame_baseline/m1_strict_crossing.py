@@ -108,6 +108,7 @@ class StrictCrossingTracker:
         required_far_margin: float = 0.04,
         stable_frames: int = 5,
         approach_distance: float = 0.25,
+        clearance_safe: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         """Record a collision-free passage and safe touchdown before recovery.
 
@@ -127,6 +128,9 @@ class StrictCrossingTracker:
         if wheel_pos_w.ndim != 3 or wheel_pos_w.shape[1:] != (4, 3):
             raise ValueError("wheel_pos_w must be [B,4,3]")
         batch = self.progress.shape[0]
+        if clearance_safe is not None and (clearance_safe.shape!=(batch,4) or clearance_safe.dtype!=torch.bool
+                                           or clearance_safe.device!=self.device):
+            raise ValueError('clearance_safe must be bool [B,4]')
         if wheel_pos_w.shape[0] != batch or wheel_pos_w.device != self.device:
             raise ValueError("wheel_pos_w batch/device mismatch")
         expected = (batch, self.obstacle_count, 3)
@@ -217,8 +221,8 @@ class StrictCrossingTracker:
                         & (selected_pos[:, 0] - float(wheel_horizontal_radius) <= far_x))
         measured_bottom = (wheel_bottom_z_w[rows, selected] if wheel_bottom_z_w is not None
                            else selected_pos[:, 2] - float(wheel_vertical_radius))
-        clearance_now = (active & ~self.awaiting_recovery & has_target & selected_matches_lane & overlaps_top
-                         & (measured_bottom >= obstacle[:, 2] + float(required_clearance)))
+        clear = (measured_bottom >= obstacle[:, 2] + float(required_clearance)) if clearance_safe is None else clearance_safe[rows,selected]
+        clearance_now = (active & ~self.awaiting_recovery & has_target & selected_matches_lane & overlaps_top & clear)
         far_now = (active & ~self.awaiting_recovery & has_target & selected_matches_lane
                    & (selected_pos[:, 0] - float(wheel_horizontal_radius) - far_x
                       >= float(required_far_margin)))

@@ -78,7 +78,7 @@ class EncounterCrossingTracker:
                support_safe,touchdown_safe,collision,wheel_horizontal_radius,
                wheel_vertical_radius,wheel_thickness,required_clearance=.03,
                required_far_margin=.04,stable_frames=5,approach_distance=.25,
-               autonomous_lift=None):
+               autonomous_lift=None, cylinder_geometry=False):
         b=wheel_pos_w.shape[0];rows=torch.arange(b,device=self.device)
         mode = torch.zeros(b, device=self.device, dtype=torch.bool) if autonomous_lift is None else autonomous_lift
         if (not isinstance(mode, torch.Tensor) or mode.shape != (b,)
@@ -187,9 +187,15 @@ class EncounterCrossingTracker:
             ((self.flight_active | self.crossing_started) & ~grounded & ~single_support)
             | (overlap & grounded))
         bottom_clearance = bottom-selected_center[:,2]
+        shape_clear=None
+        if cylinder_geometry:
+            from .m1_reference_geometry import cylinder_clears_box
+            raised=selected_center.clone(); raised[:,2]+=float(required_clearance)
+            shape_clear=cylinder_clears_box(wheel_pos_w,wheel_quat_w,raised,extents[rows,slot],
+                radius=wheel_vertical_radius,thickness=wheel_thickness)
+        measured_clear=(bottom_clearance>=required_clearance) if shape_clear is None else shape_clear[rows,selected]
         # Every sampled overlap must clear the top, not merely one lucky frame.
-        self.inner.failed |= overlap & (~torch.isfinite(bottom_clearance)
-                                        | (bottom_clearance < required_clearance))
+        self.inner.failed |= overlap & (~torch.isfinite(bottom_clearance) | ~measured_clear)
         self.inner.failed |= enabled&~mode&~before&~self.early_lift
         fully_past=(local_pos[rows,selected,0]-wheel_horizontal_radius
                     >=hx[rows,slot]+required_far_margin)
@@ -219,7 +225,7 @@ class EncounterCrossingTracker:
             wheel_vertical_radius=wheel_vertical_radius,wheel_lateral_half_width=widths,
             wheel_bottom_z_w=wheel_bottom_z_w,obstacle_half_extents=projected,
             required_clearance=required_clearance,required_far_margin=required_far_margin,
-            stable_frames=stable_frames,approach_distance=approach_distance)
+            stable_frames=stable_frames,approach_distance=approach_distance,clearance_safe=shape_clear)
         # The inner tracker clears target_wheel on recovery. Preserve the
         # selected slot/wheel from before its update, and certify only after
         # its full consecutive nominal-support recovery gate passes.

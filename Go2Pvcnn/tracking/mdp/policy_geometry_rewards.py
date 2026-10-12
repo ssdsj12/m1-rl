@@ -286,7 +286,9 @@ def _strict_m1_surface_points(specs, cfg, *, dtype, device):
                               spec.radius_m * theta.sin()), -1) for y in (-half, 0., half)]
         primitive = torch.cat((*rings, torch.tensor([[0., -half, 0.], [0., half, 0.]], dtype=dtype, device=device)))
         rotation = _quat_to_matrix(torch.tensor(spec.quat_wxyz_l, dtype=dtype, device=device))
-        result[i] = primitive @ rotation.T + torch.tensor(spec.center_l, dtype=dtype, device=device)
+        # Reference floating overlay centers each Y-cylinder on FOOT_LINK;
+        # source mesh's signed 7.3mm center offset is no longer authored.
+        result[i] = primitive @ rotation.T
         valid[i] = True
     return result, valid
 

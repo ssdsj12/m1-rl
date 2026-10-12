@@ -33,6 +33,11 @@ def _env():
     valid = torch.ones_like(semantic, dtype=torch.bool)
     valid[5] = False
     root = torch.tensor([[0., 0., contract.M1_TRAINING_ROOT_Z_M]]).repeat(count, 1)
+    q = torch.tensor(contract.M1_TRAINING_JOINT_POS)[None]
+    legs = select_named_joint_state(q, source_names=M1_ASSET_JOINT_NAMES, selected_names=M1_PLANNER_JOINT_NAMES)
+    from extension.parallelism.m1_kinematics import M1_WHEEL_RADIUS_M
+    ground_bottom = m1_fk(root[:1], torch.zeros(1, 3), legs).foot_pos_w[0, 0, 2] - M1_WHEEL_RADIUS_M
+    root[:, 2] -= ground_bottom  # calibrate this contact fixture, not the spawn pose
     root[1, 2] += .029  # small top contact, no legacy support exemption allowed
     root[3, 2] += .04  # only 1cm gap, not strict-success 3cm, yet NOT collision
     data = SimpleNamespace(root_pos_w=root, root_quat_w=torch.tensor([[1.,0.,0.,0.]]).repeat(count,1),
@@ -48,6 +53,12 @@ def test_collision_terminates_only_hit_rows_without_ground_or_clearance_false_po
     result = terms.obstacle_collision(_env())
     assert result.dtype == torch.bool
     assert result.tolist() == [False, True, True, False, True, False]
+
+
+def test_reference_reward_uses_same_no_margin_shape_as_termination():
+    from ame_baseline.m1_obstacle_rewards import m1_obstacle_collision_penalty
+    env = _env()
+    assert torch.equal(m1_obstacle_collision_penalty(env, strict_obstacle_contact=True).bool(), terms.obstacle_collision(env))
 
 
 def test_obstacle_termination_is_wired_as_physical_failure_not_timeout():

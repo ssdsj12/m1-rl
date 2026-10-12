@@ -1300,21 +1300,10 @@ class AmeRslRlEnvWrapper(VecEnv):
             from .m1_strict_crossing import m1_wheel_lateral_half_width_from_quat
             robot = self.unwrapped.scene["robot"]
             wheel_ids = list(resolve_named_indices(tuple(robot.body_names), M1_SUPPORT_BODY_NAMES))
-            from .m1_crossing_clearance import (
-                load_wheel_collision_vertices, wheel_bottom_from_vertices,
-            )
-            if getattr(self, '_m1_wheel_vertices_b', None) is None:
-                import omni.usd
-                self._m1_wheel_vertices_b = torch.tensor(
-                    load_wheel_collision_vertices(
-                        omni.usd.get_context().get_stage(),
-                        self.unwrapped.scene.env_prim_paths[0] + '/Robot',
-                        M1_SUPPORT_BODY_NAMES,
-                    ), dtype=robot.data.body_pos_w.dtype, device=robot.data.body_pos_w.device,
-                )
-            wheel_bottom_z_w = wheel_bottom_from_vertices(
+            from .m1_reference_geometry import cylinder_bottom
+            wheel_bottom_z_w = cylinder_bottom(
                 robot.data.body_pos_w[:, wheel_ids],
-                robot.data.body_quat_w[:, wheel_ids], self._m1_wheel_vertices_b,
+                robot.data.body_quat_w[:, wheel_ids],
             )
             wheel_lateral_half_width = m1_wheel_lateral_half_width_from_quat(
                 robot.data.body_quat_w[:, wheel_ids],
@@ -1340,7 +1329,7 @@ class AmeRslRlEnvWrapper(VecEnv):
                     autonomous_lift=autonomous_lift_stage_mask(
                         self.unwrapped.scene.terrain.terrain_levels, done,
                         flat_first=getattr(self.unwrapped.cfg, 'm1_flat_first', False)),
-                    wheel_grounded=support_contact,
+                    wheel_grounded=support_contact, cylinder_geometry=True,
                     support_safe=recovery_balance_safe, touchdown_safe=strict_crossing_touchdown,
                     collision=collision, wheel_horizontal_radius=float(M1_WHEEL_HORIZONTAL_ENVELOPE_M),
                     wheel_vertical_radius=float(M1_WHEEL_RADIUS_M),wheel_thickness=float(M1_WHEEL_THICKNESS_M),

@@ -433,7 +433,7 @@ def m1_small_obstacle_clearance(env, command_name='base_velocity') -> Tensor:
     return _terms_from_env(env, command_name, return_clearance=True)[2]
 
 
-def m1_obstacle_collision_penalty(env, asset_cfg=None, scanner_cfg=None) -> Tensor:
+def m1_obstacle_collision_penalty(env, asset_cfg=None, scanner_cfg=None, strict_obstacle_contact=False) -> Tensor:
     """Return a positive M1 obstacle-collision event for a negative reward term.
 
     The event is computed from the live M1 FK geometry against the semantic
@@ -443,14 +443,11 @@ def m1_obstacle_collision_penalty(env, asset_cfg=None, scanner_cfg=None) -> Tens
     """
     from tracking.mdp.policy_geometry_rewards import m1_policy_geometry_collision_penalty
 
-    if asset_cfg is None and scanner_cfg is None:
-        event = m1_policy_geometry_collision_penalty(env)
-    else:
-        event = m1_policy_geometry_collision_penalty(
-            env,
-            asset_cfg=asset_cfg,
-            scanner_cfg=scanner_cfg,
-        )
+    kwargs = {}
+    if asset_cfg is not None: kwargs['asset_cfg'] = asset_cfg
+    if scanner_cfg is not None: kwargs['scanner_cfg'] = scanner_cfg
+    if strict_obstacle_contact: kwargs['strict_obstacle_contact'] = True
+    event = m1_policy_geometry_collision_penalty(env, **kwargs)
     return torch.nan_to_num(event, nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
 
 
