@@ -114,7 +114,10 @@ def main():
                     assert parts['failure_termination'][0]==0
                     assert abs(integral-20.)<2e-5
                     assert env._m1_collision_budget.total[0]==0
-                    assert abs(float(env._m1_collision_budget.total[1])-.7)<1e-8
+                    # Other rows may encounter obstacles while rolling. Compare
+                    # their old-episode snapshot, not only the starting sentinel.
+                    torch.testing.assert_close(env._m1_collision_budget.total[1:].float(),snap['total'][1:])
+                    assert env._m1_collision_budget.total[1]>=.7
                     evidence['budget_resets']+=1;evidence['integral']=integral
                     break
             assert evidence['budget_resets']==1 and evidence['positive_charge_steps']>=199

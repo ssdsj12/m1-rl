@@ -29,3 +29,11 @@
 首原生12181已退出，320条左右阶段记录但无COMPLETE：累计20/无额外20部分通过，最后180度倒置没有触发现有bad_orientation（它用abs(projected_gravity.z)），故不能称通过。保留原证据。仅诊断夹具改为90度侧倾，生产判据未改；该历史倒置盲区归为T306/termination/inverted-orientation OPEN，不扩大本次修改。新12469验证完整生产接线及最终奖励。
 
 审查minor的原生单行累计保留已按计划补充：env1非零.7状态哨兵不参与真实扣分证据，env0预算reset时必须保持env1.7。CPU core重复同step已测试；adapter生命周期由真实manager探针覆盖。部署/fresh能力及学习效果审查者未判定，仍由主任务现场验收，不作为已通过。
+
+## 原生最终验收与部署
+
+第二次12469完成200步满预算后，诊断断言错误地假设其他滚动行始终不碰撞，因此要求env1仍为.7而失败；实际env1自行碰撞累计到2.9，未reset。保留该失败证据。修正探针为比较reset前快照与reset后未结束行真实total，不改生产/检测/阈值。
+
+第三次12630完整通过并退出：`/tmp/m1-collision-budget-native-v3.jsonl`320行（319控制步×4env=1276环境帧），唯一COMPLETE；SHA `fa6dd761ae2493eb38d14a43697e6982018ab617fc49521944ad3395abe957ed`。实际200收费步，float32输出积分20.000000298（计账float64准确封顶20）；前199无reset，第200只env0 reset、failure_termination0；其他行非零累计保留。下步env0total0，原始碰撞进入strict共257环境帧，碰撞帧final reward组成已验证。flat100步前进.571–.583m/0reset；stage0/1/2/3/4配置均经过；单行纯timeout无-20；90度姿态失败离散项-20（总reward-20.04725）。没有PPO学习或跨越成功证明。
+
+16:26:43UTC GPU1MiB且全部probe退出后，备份7runtime到`/tmp/m1-collision-budget-production-before-20261012T162643Z/manifest.json`，逐SHA核实部署。新fresh进程12788由kernel flock入口启动；回执`/tmp/m1-collision-budget-fresh-deploy.json`、log`/tmp/m1-ppo-collision-budget-fresh-20261012.log`。已要求fixedABAD/2048/cuda0/flat-first/max10000/save100，清除旧checkpoint/optimizer加载变量；首轮优化/PT审计待下方追加，当前不能只凭进程宣称训练验收完成。
