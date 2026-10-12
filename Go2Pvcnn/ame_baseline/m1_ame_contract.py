@@ -35,11 +35,11 @@ M1_TRAINING_ROOT_Z_M = .62
 M1_REQUIRED_TOP_MARGIN_M = 0.0
 
 
-def m1_training_contract():
+def m1_training_contract(*, fixed_abad=False):
     """Pose/reset semantics required in newly trained checkpoints."""
     from .m1_reference_robot import REFERENCE_ROBOT_COMMIT
     from .m1_stall_slip import reward_contract
-    return dict(version=2, stance='reference_front_rear_inward_root062',
+    contract = dict(version=2, stance='reference_front_rear_inward_root062',
                 reference_robot_commit=REFERENCE_ROBOT_COMMIT,
                 policy_state_dim=85, critic_state_dim=88, learning_signal_version=1,
                 reward_contract=reward_contract(),
@@ -51,6 +51,11 @@ def m1_training_contract():
                 joint_pos=list(M1_TRAINING_JOINT_POS), root_z=M1_TRAINING_ROOT_Z_M,
                 obstacle_collision_reset=True,
                 required_top_margin_m=M1_REQUIRED_TOP_MARGIN_M)
+    if fixed_abad:
+        from .m1_fixed_abad import M1_ABAD_JOINT_NAMES, M1_HIP_KNEE_JOINT_NAMES
+        contract.update(version=3, fixed_abad_joint_names=list(M1_ABAD_JOINT_NAMES),
+                        fixed_abad_targets=[0.]*4, policy_joint_names=list(M1_HIP_KNEE_JOINT_NAMES))
+    return contract
 
 
 def validate_training_contract(checkpoint, expected):
@@ -59,6 +64,10 @@ def validate_training_contract(checkpoint, expected):
 
 
 def m1_last_leg_action(env):
+    if getattr(env.cfg, 'm1_fixed_abad', False):
+        executed = m1_last_action(env)
+        return select_named_joint_state(executed, source_names=M1_ASSET_JOINT_NAMES,
+                                        selected_names=M1_PLANNER_JOINT_NAMES)
     if getattr(env.cfg, 'm1_fixed_wheel_speed_m_s', None) is not None:
         action = env.action_manager.action
         if action.shape[-1] != 12:
@@ -74,6 +83,9 @@ def m1_last_leg_action(env):
 def m1_last_action(env):
     """M1 policy history includes all 12 leg and 4 wheel commands."""
     speed = getattr(env.cfg, 'm1_fixed_wheel_speed_m_s', None)
+    if getattr(env.cfg, 'm1_fixed_abad', False):
+        from .m1_fixed_abad import expand_fixed_abad_actions
+        return expand_fixed_abad_actions(env.action_manager.action, speed)
     if speed is not None:
         return expand_fixed_wheel_actions(env.action_manager.action, speed)
     return select_named_joint_state(

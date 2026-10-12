@@ -1,5 +1,9 @@
 # Fixed ABAD / Eight-Action Model200 Implementation Plan
 
+## 用户最新覆盖决定（执行中）
+
+用户改为“从0开始训吧还是”。以下历史model200迁移步骤被撤销：不实施12→8转换器、不读取200作为初始化、不继承权重/Adam/std/课程。Task3仅实现8维保存/加载合同及错配拒绝。Task5使用随机8维wiring与零动作参考空地测试验证物理接线和时钟，不将随机策略稳定性当学习验收。Task6为fresh/no CHECKPOINT/no resume/no M1_LOAD_OPTIMIZER，新网络/Adam/stage0，从0到exclusive10000、2048env/save100；首个model0须CPU审计。其余固定ABAD/8维/奖励物理不变、隔离验证、安全部署和独立审查约束不变。此决定直接授权执行，不重复审批。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (preserve user's current-mirror inline method) or superpowers:subagent-driven-development only if the user changes that choice. Steps use checkbox syntax for tracking.
 
 **Goal:** 将model200显式转换为8维HIP/KNEE PPO，固定ABAD目标0rad，通过隔离验收后开始新续训run。

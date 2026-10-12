@@ -420,9 +420,16 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
         from .m1_reference_robot import configure_reference_robot
         configure_reference_robot(self)
         fixed_speed = os.environ.get("M1_FIXED_WHEEL_SPEED_M_S")
+        fixed_abad = os.environ.get('M1_FIXED_ABAD', '0')
+        if fixed_abad not in ('0', '1'):
+            raise ValueError('M1_FIXED_ABAD must be 0 or 1')
+        self.m1_fixed_abad = fixed_abad == '1'
+        if self.m1_fixed_abad and fixed_speed is None:
+            raise ValueError('Fixed ABAD requires explicit fixed wheel speed')
         if fixed_speed is not None:
-            from .m1_ame_actions import configure_fixed_wheel_control
-            configure_fixed_wheel_control(self, float(fixed_speed))
+            from .m1_ame_actions import configure_fixed_wheel_control, configure_fixed_abad_control
+            configure = configure_fixed_abad_control if self.m1_fixed_abad else configure_fixed_wheel_control
+            configure(self, float(fixed_speed))
 
 __all__ = [
     "M1AmeCrossLargeComplexEnvCfg",

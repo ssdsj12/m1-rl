@@ -41,7 +41,9 @@ def configure_mixed_terrain(cfg):
         SEMANTIC_TERRAIN_CFG, TeacherElevationTrajectoryMpcSemanticCurriculumCfg,
     )
     fixed_speed = getattr(cfg, 'm1_fixed_wheel_speed_m_s', None)
-    if cfg.robot_name != 'm1' or cfg.action_dim != (12 if fixed_speed is not None else 16):
+    fixed_abad = getattr(cfg, 'm1_fixed_abad', False)
+    expected_actions = (8 if fixed_abad else 12) if fixed_speed is not None else 16
+    if (fixed_abad and fixed_speed is None) or cfg.robot_name != 'm1' or cfg.action_dim != expected_actions:
         raise ValueError('mixed M1 terrain requires the matching M1 action contract')
     if fixed_speed is not None:
         from .m1_ame_contract import validate_fixed_wheel_speed

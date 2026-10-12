@@ -74,8 +74,9 @@ def m1_action_rate_l2(env) -> Tensor:
     source_names = tuple(getattr(env.cfg, "asset_joint_names", M1_ASSET_JOINT_NAMES))
     delta = env.action_manager.action - env.action_manager.prev_action
     if getattr(env.cfg, 'm1_fixed_wheel_speed_m_s', None) is not None:
-        if delta.shape[-1] != 12:
-            raise ValueError('fixed-wheel action rate requires 12 leg actions')
+        expected = 8 if getattr(env.cfg, 'm1_fixed_abad', False) else 12
+        if delta.shape[-1] != expected:
+            raise ValueError(f'fixed-wheel action rate requires {expected} leg actions')
         return delta.square().sum(-1)
     planner = _select(delta, source_names, M1_PLANNER_JOINT_NAMES)
     wheels = _select(delta, source_names, M1_WHEEL_JOINT_NAMES)
