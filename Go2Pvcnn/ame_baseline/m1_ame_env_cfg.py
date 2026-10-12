@@ -17,7 +17,7 @@ from extension.parallelism.rl_adapter import select_named_joint_state
 from extension.semantic_course import SemanticCourseLayoutCfg, SemanticCourseGroundingCfg
 from extension.semantic_curriculum import SemanticObstacleCount
 from .ame_env_cfg import AmeCrossLargeComplexEnvCfg, AmeObservationsCfg
-from .m1_ame_terminations import nonfinite_robot_state
+from .m1_ame_terminations import nonfinite_robot_state, obstacle_collision
 from . import m1_ame_rewards as m1_rewards
 from . import m1_obstacle_rewards
 from .m1_ame_actions import M1AmeActionsCfg
@@ -25,7 +25,7 @@ from .m1_ame_assets import spawn_m1_floating_usd
 from .m1_ame_contract import (
     m1_last_leg_action, m1_last_action, m1_wheel_surface_velocity,
     M1_WHEEL_ACTION_SCALE_RAD_S, M1_WHEEL_SPEED_LIMIT_RAD_S,
-    M1_TRAINING_ROOT_Z_M, M1_TRAINING_JOINT_POS,
+    M1_TRAINING_ROOT_Z_M, M1_TRAINING_JOINT_POS, m1_training_contract,
 )
 from .m1_obstacle_profile import (
     M1_DEFAULT_SMALL_OBSTACLE_HEIGHT_M,
@@ -62,6 +62,7 @@ class M1AmeObservationsCfg(AmeObservationsCfg):
 
 @configclass
 class M1AmeTerminationsCfg(TeacherElevationTrajectoryMpcSemanticTerminationsCfg):
+    obstacle_collision = DoneTerm(func=obstacle_collision, time_out=False)
     nonfinite_robot_state = DoneTerm(
         func=nonfinite_robot_state,
         params={"asset_cfg": SceneEntityCfg("robot")},
@@ -141,6 +142,7 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
     # This is root-frame height, not total robot height. Checkpoint reuse must
     # be physically checked because the default joint-position offset changes.
     root_z_m: float = M1_TRAINING_ROOT_Z_M
+    m1_training_contract: dict = m1_training_contract()
     wheel_action_scale: float = M1_WHEEL_ACTION_SCALE_RAD_S
     actions: M1AmeActionsCfg = M1AmeActionsCfg()
     observations: M1AmeObservationsCfg = M1AmeObservationsCfg()

@@ -34,4 +34,14 @@ def nonfinite_robot_state(env, asset_cfg) -> torch.Tensor:
     return invalid
 
 
-__all__ = ["nonfinite_robot_state"]
+def obstacle_collision(env) -> torch.Tensor:
+    """Current-step semantic-obstacle intersection, including wheel contact.
+
+    Uses the live scanner/FK, never the previous reward buffer. Ground is
+    masked before the query; success clearance is not a collision margin.
+    """
+    from tracking.mdp.policy_geometry_rewards import m1_policy_geometry_collision_penalty
+    return m1_policy_geometry_collision_penalty(env, strict_obstacle_contact=True).bool()
+
+
+__all__ = ["nonfinite_robot_state", "obstacle_collision"]

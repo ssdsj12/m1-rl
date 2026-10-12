@@ -263,12 +263,41 @@ def policy_geometry_collision_penalty(
     )
 
 
+def _strict_m1_surface_points(specs, cfg, *, dtype, device):
+    """Use the source M1 tire's Y axle, not the legacy planner's X cylinder.
+
+    32 angular samples bound radial discretization below 0.47 mm. This is
+    still a sampled proxy, not an exact PhysX contact-pair detector.
+    """
+    from extension.parallelism.m1_collision import build_m1_surface_points_l, _quat_to_matrix
+    points, mask = build_m1_surface_points_l(specs, cfg, dtype=dtype, device=device)
+    if not any(spec.shape_type == 'cylinder' for spec in specs):
+        return points, mask
+    result = torch.zeros(len(specs), 98, 3, dtype=dtype, device=device)
+    valid = torch.zeros(len(specs), 98, dtype=torch.bool, device=device)
+    for i, spec in enumerate(specs):
+        if spec.shape_type != 'cylinder':
+            result[i, :points.shape[1]] = points[i]
+            valid[i, :points.shape[1]] = mask[i]
+            continue
+        theta = torch.arange(32, dtype=dtype, device=device) * (2. * torch.pi / 32.)
+        half = float(spec.height_m) / 2.
+        rings = [torch.stack((spec.radius_m * theta.cos(), torch.full_like(theta, y),
+                              spec.radius_m * theta.sin()), -1) for y in (-half, 0., half)]
+        primitive = torch.cat((*rings, torch.tensor([[0., -half, 0.], [0., half, 0.]], dtype=dtype, device=device)))
+        rotation = _quat_to_matrix(torch.tensor(spec.quat_wxyz_l, dtype=dtype, device=device))
+        result[i] = primitive @ rotation.T + torch.tensor(spec.center_l, dtype=dtype, device=device)
+        valid[i] = True
+    return result, valid
+
+
 def live_m1_policy_geometry_collision_event(
     root_pos_w: Tensor,
     root_quat_w: Tensor,
     joint_pos: Tensor,
     joint_names: Sequence[str],
     terrain: ParallelismTerrain,
+    *, strict_obstacle_contact: bool = False,
 ) -> Tensor:
     """Return M1 live-policy collision events using named planner joints."""
 
@@ -291,7 +320,20 @@ def live_m1_policy_geometry_collision_event(
         capsule_samples=int(backend.cfg.capsule_samples),
     )
     expanded_geometry = _expand_geometry_for_collision(geometry)
-    _, collision_bits = backend.collision_mask(terrain, expanded_geometry, backend.cfg)
+    collision_cfg = backend.cfg
+    if strict_obstacle_contact:
+        collision_cfg = dataclass_replace(
+            backend.cfg, collision_margin_m=0.,
+            contact_tolerant_collision_shape_names=(),
+            contact_tolerant_collision_point_indices=(),
+            contact_tolerant_support_shape_names=(),
+            contact_tolerant_support_semantic_ids=(),
+        )
+    if strict_obstacle_contact:
+        _, collision_bits = official_collision_mask(
+            terrain, expanded_geometry, collision_cfg, surface_points_builder=_strict_m1_surface_points)
+    else:
+        _, collision_bits = backend.collision_mask(terrain, expanded_geometry, collision_cfg)
     return collision_bits.reshape(collision_bits.shape[0], -1).any(dim=-1).to(dtype=torch.float32)
 
 
@@ -399,6 +441,7 @@ def m1_policy_geometry_collision_penalty(
     env,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     scanner_cfg: SceneEntityCfg = SceneEntityCfg("semantic_height_scanner"),
+    *, strict_obstacle_contact: bool = False,
 ) -> Tensor:
     """Return the raw M1 live-policy geometry collision event."""
 
@@ -435,6 +478,7 @@ def m1_policy_geometry_collision_penalty(
         joint_pos=robot.data.joint_pos,
         joint_names=tuple(getattr(robot, "joint_names", ())),
         terrain=obstacle_terrain,
+        **({'strict_obstacle_contact': True} if strict_obstacle_contact else {}),
     )
 
 

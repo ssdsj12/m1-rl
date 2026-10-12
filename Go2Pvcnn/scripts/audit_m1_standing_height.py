@@ -58,7 +58,7 @@ current=measure(M1_TRAINING_JOINT_POS,M1_TRAINING_ROOT_Z_M)
 lo,hi=.05,2.0
 def pose(knee):
     hip=-math.atan2(.28*math.sin(knee),.26+.28*math.cos(knee))
-    return (0.,hip,knee,0.)*4
+    return (0.,-hip,-knee,0.)*2 + (0.,hip,knee,0.)*2
 assert measure(pose(lo),0)['height']>.585>measure(pose(hi),0)['height']
 for _ in range(45):
     mid=(lo+hi)/2

@@ -29,9 +29,25 @@ M1_WHEEL_SPEED_LIMIT_RAD_S = 2.0 / M1_WHEEL_RADIUS_M
 # See scripts/audit_m1_standing_height.py for independent mesh FK verification.
 _TRAIN_KNEE = 1.6824843873167417
 _TRAIN_HIP = -atan2(.28 * sin(_TRAIN_KNEE), .26 + .28 * cos(_TRAIN_KNEE))
-M1_TRAINING_JOINT_POS = (0., _TRAIN_HIP, _TRAIN_KNEE, 0.) * 4
+# Front knees point inward (-X); rear knees point inward (+X). All four
+# source joint axes have the same sign, so copying angles is NOT mirroring.
+M1_TRAINING_JOINT_POS = ((0., -_TRAIN_HIP, -_TRAIN_KNEE, 0.) * 2
+                         + (0., _TRAIN_HIP, _TRAIN_KNEE, 0.) * 2)
 # Ground the lowest collision mesh; the analytic tire differs by 0.21 mm.
 M1_TRAINING_ROOT_Z_M = 0.45600081145762916
+
+
+def m1_training_contract():
+    """Pose/reset semantics required in newly trained checkpoints."""
+    return dict(version=1, stance='front_rear_inward_585mm',
+                joint_names=list(M1_ASSET_JOINT_NAMES),
+                joint_pos=list(M1_TRAINING_JOINT_POS), root_z=M1_TRAINING_ROOT_Z_M,
+                obstacle_collision_reset=True)
+
+
+def validate_training_contract(checkpoint, expected):
+    if expected is not None and checkpoint.get('m1_training_contract') != expected:
+        raise ValueError('M1 training contract mismatch: stance/obstacle reset; use a compatible checkpoint')
 
 
 def m1_last_leg_action(env):

@@ -17,7 +17,9 @@ def configure_evaluation_command(cfg):
         command.limit_ranges.lin_vel_x = (speed,speed)
 
 
-def validate_evaluation_checkpoint(checkpoint, expected, speed):
+def validate_evaluation_checkpoint(checkpoint, expected, speed, training_contract=None):
+    from ame_baseline.m1_ame_contract import validate_training_contract
+    validate_training_contract(checkpoint, training_contract)
     from ame_baseline.ame_runner import AME_ARCHITECTURE_SIGNATURE
     from ame_baseline.m1_fixed_wheel_checkpoint import validate_action_contract, validate_checkpoint_state
     validate_action_contract(checkpoint,expected[2],speed)
@@ -128,7 +130,7 @@ def main():
         obs, extras = wrapped.get_observations()
         checkpoint = torch.load(args.checkpoint, map_location=args.device, weights_only=False)
         expected = (obs.shape[-1], extras["observations"]["critic"].shape[-1], wrapped.num_actions)
-        validate_evaluation_checkpoint(checkpoint, expected, cfg.m1_fixed_wheel_speed_m_s)
+        validate_evaluation_checkpoint(checkpoint, expected, cfg.m1_fixed_wheel_speed_m_s, cfg.m1_training_contract)
         model = ActorCriticAME(*expected).to(args.device)
         model.load_state_dict(checkpoint["model_state_dict"])
         model.eval()
