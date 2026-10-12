@@ -127,6 +127,16 @@ def test_replace_not_add_and_preserve_other_stages():
     torch.testing.assert_close(m.replace_slip(env,legacy),legacy)
 
 
+def test_native_completion_requires_exercised_integration_cases():
+    m=module();assert hasattr(m,'validate_native_evidence')
+    evidence=dict(nonzero_stall_steps=20,terminal_old_stage=True,terminal_old_force=True,
+                  next_step_new_stage=True,history_only_zero=True,rate_error=0.)
+    m.validate_native_evidence(evidence)
+    for k in evidence:
+        bad=evidence.copy();bad[k]=.2 if k=='rate_error' else 0
+        with pytest.raises(AssertionError):m.validate_native_evidence(bad)
+
+
 def test_prepare_snapshot_full_receipts_and_stage_identity():
     m=module();assert hasattr(m,'prepare_stall_snapshot')
     env=fake_env();env.scene=SimpleNamespace(env_origins=torch.zeros(3,3))

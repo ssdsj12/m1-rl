@@ -12,6 +12,14 @@ def reward_contract():
                 current_upward_force_n=10., progress='world_x_high_water')
 
 
+def validate_native_evidence(evidence):
+    """A COMPLETE marker requires exercised, not vacuously passing, cases."""
+    assert evidence['nonzero_stall_steps']>0
+    for key in ('terminal_old_stage','terminal_old_force','next_step_new_stage','history_only_zero'):
+        assert evidence[key],key
+    assert 0<=evidence['rate_error']<1e-6
+
+
 class StallWindow:
     """Per-row rolling high-water progress; reset never borrows another episode."""
     def __init__(self, n, device, dt):
