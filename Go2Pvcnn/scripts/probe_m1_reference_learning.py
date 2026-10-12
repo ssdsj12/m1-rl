@@ -101,6 +101,8 @@ try:
             assert bool(hit[0]) and float(reward[0])<-10
             collision=True;break
     assert collision and calls
+    if 'additional_checks' in globals():
+        additional_checks(env,wrapped)
     print('REFERENCE_LEARNING_NATIVE_COMPLETE',flush=True)
 except BaseException:
     import traceback

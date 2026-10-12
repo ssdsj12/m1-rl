@@ -153,6 +153,7 @@ class AmeRslRlEnvWrapper(VecEnv):
         )
         self._m1_course_registry = None
         self._m1_required_gate = None
+        self._m1_stall_window = None
         if getattr(getattr(self.unwrapped, 'cfg', None), 'm1_course_profile', 'fixed') == 'mixed':
             from .m1_course_registry import CourseRegistry
             from .m1_dynamic_crossing import EncounterCrossingTracker
@@ -168,6 +169,8 @@ class AmeRslRlEnvWrapper(VecEnv):
                 from .m1_required_crossing import RequiredCrossingRewardGate
                 self._m1_required_gate = RequiredCrossingRewardGate(
                     self.num_envs, self._m1_course_registry.capacity, self.device)
+                from .m1_stall_slip import StallWindow
+                self._m1_stall_window = StallWindow(self.num_envs, self.device, float(self.unwrapped.step_dt))
         self._small_candidate_prev = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self._small_candidate_seen = torch.zeros_like(self._small_candidate_prev)
         self._small_candidate_lift_seen = torch.zeros_like(self._small_candidate_prev)
@@ -1036,6 +1039,7 @@ class AmeRslRlEnvWrapper(VecEnv):
         self._m1_strict_crossing.reset(torch.ones(self.num_envs, dtype=torch.bool, device=self.device))
         if self._m1_required_gate is not None:
             self._m1_required_gate.reset(torch.ones(self.num_envs, dtype=torch.bool, device=self.device))
+            self._m1_stall_window.reset(torch.ones(self.num_envs, dtype=torch.bool, device=self.device))
         self._large_candidate_seen.zero_()
         return self._format_observations(obs_dict)
 
@@ -1124,6 +1128,9 @@ class AmeRslRlEnvWrapper(VecEnv):
             # RewardManager consumes this during env.step. Pre-step values
             # preserve the old episode's cost across Isaac's automatic reset.
             self.unwrapped._m1_required_route_snapshot = (required_stage.clone(), route_penalty)
+            from .m1_stall_slip import prepare_stall_snapshot
+            prepare_stall_snapshot(self.unwrapped, self._m1_stall_window, levels,
+                                   course, required_wheels, recovered_wheels)
         obs_dict, rewards, terminated, truncated, extras = self.env.step(actions)
         small_candidate, large_candidate = self.get_obstacle_presence()
         if self._m1_step_debug:
@@ -1397,6 +1404,14 @@ class AmeRslRlEnvWrapper(VecEnv):
                 delta=strict_result.get(component+'_delta',torch.zeros_like(rewards))
                 log['RequiredCrossing/'+component+'_bonus']=(process_safe*scale*delta).mean()
             log['RequiredCrossing/final_ppo_reward']=rewards.mean()
+            stall_snapshot=self.unwrapped._m1_stall_snapshot
+            slip_snapshot=self.unwrapped._m1_slip_snapshot
+            for key,value in stall_snapshot.items():
+                log['StallSlip/stall_'+key]=value.float().mean().clone()
+            for key,value in slip_snapshot.items():
+                log['StallSlip/slip_'+key]=value.float().mean().clone()
+            log['StallSlip/stall_cost']=stall_snapshot['rate'].mean()*float(self.unwrapped.step_dt)
+            log['StallSlip/slip_cost']=slip_snapshot['rate'].mean()*float(self.unwrapped.step_dt)
             log['RequiredCrossing/zone_fraction'] = required_zone.float().mean()
             log['RequiredCrossing/route_penalty_rate'] = route_penalty.mean()
             # Historical vertical >=2cm counter: telemetry, not an autonomous
@@ -1479,6 +1494,7 @@ class AmeRslRlEnvWrapper(VecEnv):
         self._m1_strict_crossing.reset(done)
         if self._m1_required_gate is not None:
             self._m1_required_gate.reset(done)
+            self._m1_stall_window.reset(done)
         # Isaac auto-reset bypasses wrapper.reset(). Never retain the previous
         # course's world-frame wheel/root anchor in a newly reset row.
         if self._m1_teacher_hold_foot_phase is not None:

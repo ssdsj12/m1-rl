@@ -161,7 +161,9 @@ def m1_wheel_rolling_residual_l2(env, asset_cfg=None, sensor_cfg=None) -> Tensor
     contact_velocity = linear + torch.linalg.cross(angular, radial, dim=-1)
     forces = sensor.data.net_forces_w_history[:, :, sensor_ids]
     contact = forces.norm(dim=-1).amax(dim=1) > 1.0
-    return (contact_velocity[..., :2].square().sum(dim=-1) * contact).sum(dim=-1)
+    legacy = (contact_velocity[..., :2].square().sum(dim=-1) * contact).sum(dim=-1)
+    from .m1_stall_slip import replace_slip
+    return replace_slip(env, legacy)
 
 
 def _small_obstacle_wheels(env) -> Tensor:

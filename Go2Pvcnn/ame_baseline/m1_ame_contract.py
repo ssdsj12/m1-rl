@@ -38,9 +38,11 @@ M1_REQUIRED_TOP_MARGIN_M = 0.0
 def m1_training_contract():
     """Pose/reset semantics required in newly trained checkpoints."""
     from .m1_reference_robot import REFERENCE_ROBOT_COMMIT
+    from .m1_stall_slip import reward_contract
     return dict(version=2, stance='reference_front_rear_inward_root062',
                 reference_robot_commit=REFERENCE_ROBOT_COMMIT,
                 policy_state_dim=85, critic_state_dim=88, learning_signal_version=1,
+                reward_contract=reward_contract(),
                 robot_physics=dict(leg_motor='DCMotor',leg_pd=[120.,5.5],leg_effort=150.,
                     leg_velocity=20.,wheel_pd=[0.,30.],wheel_effort=200.,wheel_velocity=20.,
                     wheel_shape='cylinder_y',wheel_radius=.0959,wheel_width=.0465,

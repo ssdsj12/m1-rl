@@ -21,6 +21,7 @@ from .m1_ame_terminations import nonfinite_robot_state, obstacle_collision
 from . import m1_ame_rewards as m1_rewards
 from . import m1_obstacle_rewards
 from .m1_learning_observations import m1_wheel_learning_observation
+from .m1_stall_slip import stall_penalty
 from .m1_ame_actions import M1AmeActionsCfg
 from .m1_ame_assets import spawn_m1_floating_usd
 from .m1_ame_contract import (
@@ -122,6 +123,7 @@ class M1AmeRewardsCfg(CrossLargeComplexPpoRewardsCfg):
         func=m1_obstacle_rewards.m1_non_support_obstacle_contact, weight=-8.0,
         params={"sensor_cfg": SceneEntityCfg("contact_forces"), "command_name": "base_velocity"},
     )
+    stall = RewTerm(func=stall_penalty, weight=1.0)
     feet_slide = RewTerm(
         func=m1_rewards.m1_wheel_rolling_residual_l2, weight=-0.1,
         params={"asset_cfg": SceneEntityCfg("robot", body_names=list(m1_rewards.M1_SUPPORT_BODY_NAMES), preserve_order=True),

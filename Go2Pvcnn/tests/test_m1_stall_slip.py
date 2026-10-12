@@ -99,3 +99,108 @@ def test_incremental_cost_bound_and_discounted_collision_comparison():
     # Incremental two-cost contribution cannot beat the immediate -20 failure
     # penalty by terminating now; does NOT prove total policy return ordering.
     assert float((rates*dt*gamma**torch.arange(1000)).sum())<20.
+
+
+def fake_env():
+    from extension.parallelism.m1_kinematics import M1_WHEEL_RADIUS_M
+    from ame_baseline.m1_ame_rewards import M1_SUPPORT_BODY_NAMES
+    names=tuple(reversed(M1_SUPPORT_BODY_NAMES));b=3
+    v=torch.zeros(b,4,3);w=v.clone();w[...,1]=.3/M1_WHEEL_RADIUS_M
+    f=v.clone();f[...,2]=20
+    data=SimpleNamespace(body_link_lin_vel_w=v,body_ang_vel_w=w,
+                         body_quat_w=torch.tensor([1.,0,0,0]).expand(b,4,4))
+    robot=SimpleNamespace(body_names=names,data=data)
+    sensor=SimpleNamespace(body_names=names,data=SimpleNamespace(net_forces_w=f))
+    return SimpleNamespace(cfg=SimpleNamespace(m1_flat_first=True),
+        scene={'robot':robot,'contact_forces':sensor},
+        _m1_stall_slip_stage=torch.tensor([False,True,False]))
+
+
+def test_replace_not_add_and_preserve_other_stages():
+    m=module();assert hasattr(m,'replace_slip')
+    env=fake_env();legacy=torch.tensor([4.,4.,4.])
+    actual=m.replace_slip(env,legacy)
+    torch.testing.assert_close(actual,torch.tensor([4.,2.5,4.]))
+    env.scene['contact_forces'].data.net_forces_w.zero_()
+    torch.testing.assert_close(m.replace_slip(env,legacy),torch.tensor([4.,0.,4.]))
+    env.cfg.m1_flat_first=False
+    torch.testing.assert_close(m.replace_slip(env,legacy),legacy)
+
+
+def test_prepare_snapshot_full_receipts_and_stage_identity():
+    m=module();assert hasattr(m,'prepare_stall_snapshot')
+    env=fake_env();env.scene=SimpleNamespace(env_origins=torch.zeros(3,3))
+    root=torch.zeros(3,3)
+    class Scene:
+        env_origins=torch.zeros(3,3)
+        def __getitem__(self,k):return SimpleNamespace(data=SimpleNamespace(root_pos_w=root))
+    env.scene=Scene()
+    t=m.StallWindow(3,'cpu',.02)
+    course={'ids':torch.ones(3,1,dtype=torch.long),'valid':torch.ones(3,1,dtype=torch.bool)}
+    required=torch.ones(3,1,4,dtype=torch.bool);recovered=~required
+    levels=torch.tensor([0,1,4])
+    for _ in range(105):m.prepare_stall_snapshot(env,t,levels,course,required,recovered)
+    torch.testing.assert_close(m.stall_penalty(env),torch.tensor([0.,-.5,0.]))
+    root[:,1]=99 # side travel never clears stall
+    m.prepare_stall_snapshot(env,t,levels,course,required,recovered)
+    assert m.stall_penalty(env)[1]==-.5
+    recovered[:]=True
+    m.prepare_stall_snapshot(env,t,levels,course,required,recovered)
+    assert m.stall_penalty(env).sum()==0
+
+
+def test_wrapper_and_manager_lifecycle_wiring():
+    from pathlib import Path
+    base=Path(__file__).parents[1]/'ame_baseline'
+    w=(base/'ame_env_wrapper.py').read_text()
+    assert 'self._m1_stall_window' in w
+    assert w.index('prepare_stall_snapshot(self.unwrapped') < w.index('self.env.step(actions)')
+    assert 'self._m1_stall_window.reset(done)' in w
+    assert 'func=stall_penalty' in (base/'m1_ame_env_cfg.py').read_text()
+    assert 'replace_slip(env, legacy)' in (base/'m1_ame_rewards.py').read_text()
+
+
+def source_checkpoint():
+    from copy import deepcopy
+    from ame_baseline.actor_critic_ame import ActorCriticAME
+    from ame_baseline.ame_runner import AME_ARCHITECTURE_SIGNATURE
+    from ame_baseline.m1_fixed_wheel_checkpoint import fixed_wheel_contract
+    from ame_baseline.m1_ame_contract import m1_training_contract
+    from ame_baseline.m1_learning_curriculum import LearningCurriculumGate
+    actor=ActorCriticAME(1621,1624,12,actor_hidden_dims=(8,),critic_hidden_dims=(8,))
+    opt=torch.optim.Adam(actor.parameters());sum(x.square().sum() for x in actor.parameters()).backward();opt.step()
+    c=m1_training_contract();c.pop('reward_contract',None)
+    return dict(model_state_dict=deepcopy(actor.state_dict()),optimizer_state_dict=opt.state_dict(),
+        ame_architecture_signature=AME_ARCHITECTURE_SIGNATURE,ame_num_actor_obs=1621,ame_num_critic_obs=1624,
+        ame_num_actions=12,iter=200,next_iter=201,m1_training_contract=c,
+        m1_action_contract=fixed_wheel_contract(.3),m1_learning_curriculum=LearningCurriculumGate(1,'cpu').state_dict())
+
+
+def test_explicit_reward_conversion_preserves_source_and_states():
+    m=module();assert hasattr(m,'convert_reward_checkpoint')
+    from ame_baseline.m1_ame_contract import m1_training_contract,validate_training_contract
+    src=source_checkpoint();new=m.convert_reward_checkpoint(src,'a'*64)
+    assert 'reward_contract' not in src['m1_training_contract']
+    with pytest.raises(ValueError):validate_training_contract(src,m1_training_contract())
+    validate_training_contract(new,m1_training_contract())
+    for k,v in src['model_state_dict'].items():torch.testing.assert_close(new['model_state_dict'][k],v,rtol=0,atol=0)
+    for p,ss in src['optimizer_state_dict']['state'].items():
+        for k,v in ss.items():torch.testing.assert_close(new['optimizer_state_dict']['state'][p][k],v,rtol=0,atol=0)
+    assert new['m1_learning_curriculum']==src['m1_learning_curriculum']
+    assert new['m1_reward_conversion']['source_sha256']=='a'*64
+    assert new['next_iter']==201
+
+
+@pytest.mark.parametrize('corrupt',['contract','std','optimizer','stage','iteration','dims','course_nan','adam_lr'])
+def test_conversion_rejects_invalid_source(corrupt):
+    m=module();assert hasattr(m,'convert_reward_checkpoint')
+    src=source_checkpoint()
+    if corrupt=='contract':src['m1_training_contract']['root_z']=.456
+    if corrupt=='std':src['model_state_dict']['std'][0]=float('nan')
+    if corrupt=='optimizer':src['optimizer_state_dict']['state'].pop(0)
+    if corrupt=='stage':src.pop('m1_learning_curriculum')
+    if corrupt=='iteration':src['next_iter']=3
+    if corrupt=='dims':src['ame_num_actor_obs']=1589
+    if corrupt=='course_nan':src['m1_learning_curriculum']['window_error']=float('nan')
+    if corrupt=='adam_lr':src['optimizer_state_dict']['param_groups'][0]['lr']=float('nan')
+    with pytest.raises(ValueError):m.convert_reward_checkpoint(src,'a'*64)

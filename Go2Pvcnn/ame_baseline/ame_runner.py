@@ -85,6 +85,8 @@ class AmeOnPolicyRunner(on_policy_runner.OnPolicyRunner):
                 if hasattr(self, '_m1_action_conversion'):
                     checkpoint['m1_action_conversion'] = self._m1_action_conversion
             gate = self._learning_gate()
+            if hasattr(self, '_m1_reward_conversion'):
+                checkpoint['m1_reward_conversion'] = self._m1_reward_conversion
             if gate is not None:
                 checkpoint['m1_learning_curriculum'] = gate.state_dict()
             _atomic_torch_save(checkpoint, destination)
@@ -128,6 +130,8 @@ class AmeOnPolicyRunner(on_policy_runner.OnPolicyRunner):
             raise ValueError('Invalid AME checkpoint next_iter metadata')
         if 'm1_action_conversion' in checkpoint:
             self._m1_action_conversion = checkpoint['m1_action_conversion']
+        if 'm1_reward_conversion' in checkpoint:
+            self._m1_reward_conversion = checkpoint['m1_reward_conversion']
         state_dict = dict(checkpoint["model_state_dict"])
         if not keep_std:
             state_dict.pop("std", None)
