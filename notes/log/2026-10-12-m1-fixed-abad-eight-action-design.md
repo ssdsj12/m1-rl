@@ -35,6 +35,8 @@ model0审计`/tmp/m1-fixed-abad-model0-audit.json`：SHA `4673610b4eb54486143ce4
 
 以下为历史设计，不作为当前训练起点或状态。
 
+发布收尾：代码/README/部署审计已普通push，独立ls-remote确认`10-12=6eb034c5e664e914dc54a14f2284162437816a92`。仅本次git命令使用已核实代理127.0.0.1:7897，未改全局。README/notes/规格计划/6项新测试及旧方向测试同步生产，tar-diff通过，双方包SHA `a3382057dad573c4579ae7ea7b5c91aa5207f544d346ded0acd050ebc0d55ea5`。监控m1-ppo已ACTIVE并更新为fresh8维合同，每小时无变化安静。两个旧未跟踪watcher保留未stage。此发布回执自身随后续文档提交同步，不改变训练runtime。
+
 最新：用户已确认书面规格；[实施计划](../../docs/superpowers/plans/2026-10-12-m1-fixed-abad-eight-action.md)已完成自检，等待计划审阅。沿用“当前镜像内逐项执行”选择，不重复审批方向/模型。6任务覆盖动作、历史、迁移、入口时钟、原生、部署；未改runtime/启动训练。
 
 - Purpose/Stage：T306/pure-ppo-learning/action-contract/fixed-abad，关联空地策略退化，非已证实根因修复。
