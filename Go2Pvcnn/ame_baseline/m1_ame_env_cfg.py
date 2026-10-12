@@ -20,6 +20,7 @@ from .ame_env_cfg import AmeCrossLargeComplexEnvCfg, AmeObservationsCfg
 from .m1_ame_terminations import nonfinite_robot_state, obstacle_collision
 from . import m1_ame_rewards as m1_rewards
 from . import m1_obstacle_rewards
+from .m1_learning_observations import m1_wheel_learning_observation
 from .m1_ame_actions import M1AmeActionsCfg
 from .m1_ame_assets import spawn_m1_floating_usd
 from .m1_ame_contract import (
@@ -50,6 +51,7 @@ def m1_joint_vel_rel(env, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):
 class M1AmeObservationsCfg(AmeObservationsCfg):
     @configclass
     class PolicyStateCfg(AmeObservationsCfg.PolicyStateCfg):
+        wheel_learning = ObsTerm(func=m1_wheel_learning_observation, noise=None)
         actions = ObsTerm(func=m1_last_action, noise=None)
         wheel_vel = ObsTerm(func=m1_wheel_surface_velocity, noise=None)
         joint_pos = ObsTerm(func=m1_joint_pos_rel, params={"asset_cfg": SceneEntityCfg("robot", joint_names=list(M1_PLANNER_JOINT_NAMES), preserve_order=True)}, noise=None)
