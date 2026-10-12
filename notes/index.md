@@ -1,5 +1,11 @@
 # TestPvcnnWithIsaacsim Notes Index
 
+当前部署优先：c7af587/91f104c，PID2303/run2026-10-12_11-20-43从零完成0–1轮，2048/AME+PPO/12腿/.30固定轮/零额外净空/撞障碍重置；model0完整CPU校验新Adam与stage0。TB2468新run，原PT保留。下方待部署均历史。[记录](log/2026-10-12-m1-mirrored-reset-fresh.md)。
+
+用户最新明确：取消额外3cm净空，收腿/摆腿由PPO自行学习；216相关CPU通过，原生零margin接线复验中。从零新训练，不续旧PT。当前状态只认[最新记录](log/2026-10-12-m1-mirrored-reset-fresh.md)。
+
+最新优先：[前后镜像/碰撞重置/全新训练](log/2026-10-12-m1-mirrored-reset-fresh.md)。用户已确认不续训；当前新host a21484122541518848761613，旧训练/演示已停。91f104c与90CPU/4env原生通过，部署与fresh开训待最终核实。以下旧9450运行描述均为历史。
+
 2026-10-12[发布到10-12](log/2026-10-12-m1-release-10-12.md)：用户指定新GitHub分支，README汇总固定轮速12腿/自主抬落/统一密填/动作迁移改进并纠正过时2cm要求。当前9450至4119，model4100完整2048/pass0/2048attempt/0success，未停训或改生产，学习仍OPEN。
 
 最新只读[固定轮速model600窗口](log/2026-10-11-m1-fixed-wheel-model600-window.md)：9450至649/TB651、12腿/.30/2048保持，loss与PT39/Adam33/std12有限。last完整2054回合前进pass.54090/6207attempt/0success；301–651预抬2cm/稳定落轮全0，但rawdelta196轮非零，不是完全无抬轮增量。未停训/改生产/并发probe，具体动态失败原因仍OPEN。

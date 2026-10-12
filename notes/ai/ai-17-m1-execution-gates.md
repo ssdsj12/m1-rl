@@ -1,5 +1,18 @@
 # M1 execution gates contract
 
+DEPLOYED c7af587/91f104c: fresh PID2303/run11-20-43 actual iterations0–1 finite,
+2048/GPU21866MiB. CPU model0:39finite/33Adam step20/12positive std/stage0,
+new stance/reset/zero-extra-margin contract. AME+PPO, not AMP. TB2468 remote
+newrun verified; no local tunnel change. Learning remains OPEN; older pending
+deployment/status descriptions below are historical.
+
+Latest user override 2026-10-12: mirrored front/rear initial/recovery reference,
+obstacle collision terminates only affected env, fresh network/Adam/stage0.
+No extra 3cm top margin; actual nonpenetrating passage/support/far-side landing
+remain. Retracting or swinging is learned, no trajectory template. 216 related
+CPU passed; native/deployment status in [current record](../log/2026-10-12-m1-mirrored-reset-fresh.md).
+Old PID9450/3cm/continuation instructions below are historical, not restart authority.
+
 CURRENT DEPLOYED aea3b32 fixed-wheel .30m/s/true12leg PPO:344CPU/native2000physics calls1600frames20terminal pass;9450/run17-40-08 actual301–304 finite/2048/GPU22026MiB. Source300 explicitly converted preserving33Adam/12std/stage1; original300 and700 retained. Old7960 stopped only after700validation; no oldwatcher restart. TB9685 newrun;GitHub d7625ba verified. Dynamic learning/avoidance OPEN. [Evidence](../log/2026-10-11-m1-fixed-wheel-deploy.md).
 
 LATEST approved fixed-wheel .30m/s/true12leg PPO:344CPU/real300 explicit conversion passed; original300 preserved. Old7960 safely SIGINT after currentrun700 SHA4a23caf9/CPU validation; isolated native9259 running, no training concurrent. No production deployment yet. [Live evidence](../log/2026-10-11-m1-fixed-wheel-deploy.md). Do not re-ask prior approvals or restart7960/watchers.

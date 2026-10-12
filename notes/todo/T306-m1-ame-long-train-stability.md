@@ -2,6 +2,14 @@
 
 ## Current State
 
+mirrored-reset/no-extra-clearance/fresh-start CLOSED：PID2303实际0–1轮，model0完整CPU/39模型/33Adam step20/12std/stage0/新合同。TB2468新run11-20-43。LastFeature c7af587（含91f104c姿态重置）；216CPU/native通过。真实学习仍OPEN，下方待核验为历史。
+
+最新用户取消额外3cm净空、允许收腿/摆腿自主学习。c7af587/216CPU及零margin原生接线通过，
+已在新host部署并启动fresh PID2303/run11-20-43，首轮PT审计待核验。9runtime manifest与
+实际记录见[本轮部署](../log/2026-10-12-m1-mirrored-reset-fresh.md)。无旧PT加载，旧模型保留。
+
+最新2026-10-12：[镜像初态/碰撞重置/fresh](../log/2026-10-12-m1-mirrored-reset-fresh.md)。用户确认新网络新optimizer、不接旧PT。91f104c候选/90CPU/4env原生接线通过，部署与2048新训练OPEN。新host a21484122541518848761613；旧9450已停，禁止按下方历史运行状态自动恢复。
+
 publication/10-12：[发布记录](../log/2026-10-12-m1-release-10-12.md)，仅发布当前实现/README/任务notes；不改变动作合同或运行训练。9450至4119，4100完整2048回合pass0/strict0，当前策略失败诊断仍OPEN，未批准新的暂停。Last Feature仍aea3b32。
 
 fixed-wheel-learning/current-model600-window OPEN：[只读证据](../log/2026-10-11-m1-fixed-wheel-model600-window.md)。9450至649/TB651，当前600权重/Adam/std及12维合同完整；last2054回合pass.54090/6207attempt/0success。301–651无2cm预抬/稳定落轮但196轮rawdelta非零。保持用户长训优先，未自动暂停，具体失败链不能沿用旧16维诊断。

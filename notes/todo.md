@@ -1,5 +1,11 @@
 ## 2026-10-11 active: T306/pure-ppo-learning
 
+- 当前fresh开训验收CLOSED：PID2303/run11-20-43实跑0–1/2048，model0新Adam/stage0/零额外净空合同核验。AME+PPO，收/摆腿自主学；真实跨越能力OPEN。[记录](log/2026-10-12-m1-mirrored-reset-fresh.md)。
+
+- T306/no-extra-clearance：用户取消额外3cm净空并允许自主收腿/摆腿；216相关CPU通过，原生复验/从零开训待实测。[同任务记录](log/2026-10-12-m1-mirrored-reset-fresh.md)。
+
+- 最新2026-10-12 mirrored-reset/fresh OPEN：[已确认新姿态、撞障碍重置与从零训练](log/2026-10-12-m1-mirrored-reset-fresh.md)。旧训练停止，新host a21484122541518848761613；候选90CPU/原生接线通过，部署/新长训待验收。以下运行信息为历史。
+
 - 2026-10-12 publication/10-12：[用户指定新分支发布](log/2026-10-12-m1-release-10-12.md)，README汇总当前实现与学习限制；训练9450/4119保持，不停训或改参数。
 
 - fixed-wheel-leg-only实现/原生/2048开训CLOSED：[部署](log/2026-10-11-m1-fixed-wheel-deploy.md)9450/run17-40-08实际301–304/12action/.30m/s/finite；344CPU通过，GitHub d7625ba上传核实。学习与避让能力仍OPEN；旧7960勿重启，PT保留。
