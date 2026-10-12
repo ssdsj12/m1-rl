@@ -14,12 +14,16 @@ def fixed_wheel_contract(speed_m_s):
                 executed_history_joint_names=list(M1_ASSET_JOINT_NAMES))
 
 
-def validate_action_contract(checkpoint, num_actions, speed_m_s):
+def validate_action_contract(checkpoint, num_actions, speed_m_s, *, fixed_abad=False):
     saved = checkpoint.get('m1_action_contract')
-    if speed_m_s is not None:
+    if fixed_abad:
+        from .m1_fixed_abad import fixed_abad_contract
+        if speed_m_s is None or num_actions != 8 or saved != fixed_abad_contract(speed_m_s):
+            raise ValueError('M1 action contract does not match fixed-ABAD runtime')
+    elif speed_m_s is not None:
         if num_actions != 12 or saved != fixed_wheel_contract(speed_m_s):
             raise ValueError('M1 action contract does not match fixed-wheel runtime')
-    elif saved is not None or num_actions == 12:
+    elif saved is not None or num_actions in (8,12):
         raise ValueError('M1 action contract requires an explicit fixed-wheel runtime')
 
 

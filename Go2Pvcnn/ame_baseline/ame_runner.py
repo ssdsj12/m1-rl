@@ -54,6 +54,10 @@ class AmeOnPolicyRunner(on_policy_runner.OnPolicyRunner):
         unwrapped = getattr(getattr(self, 'env', None), 'unwrapped', None)
         return getattr(getattr(unwrapped, 'cfg', None), 'm1_training_contract', None)
 
+    def _fixed_abad(self):
+        unwrapped = getattr(getattr(self, 'env', None), 'unwrapped', None)
+        return bool(getattr(getattr(unwrapped, 'cfg', None), 'm1_fixed_abad', False))
+
     def save(self, path, infos=None):
         destination = Path(path)
         base_checkpoint = destination.with_name(
@@ -80,8 +84,10 @@ class AmeOnPolicyRunner(on_policy_runner.OnPolicyRunner):
             speed = self._fixed_wheel_speed()
             if speed is not None:
                 from .m1_fixed_wheel_checkpoint import fixed_wheel_contract, validate_action_contract
-                checkpoint['m1_action_contract'] = fixed_wheel_contract(speed)
-                validate_action_contract(checkpoint, checkpoint['ame_num_actions'], speed)
+                from .m1_fixed_abad import fixed_abad_contract
+                checkpoint['m1_action_contract'] = (fixed_abad_contract(speed) if self._fixed_abad()
+                                                    else fixed_wheel_contract(speed))
+                validate_action_contract(checkpoint, checkpoint['ame_num_actions'], speed, fixed_abad=self._fixed_abad())
                 if hasattr(self, '_m1_action_conversion'):
                     checkpoint['m1_action_conversion'] = self._m1_action_conversion
             gate = self._learning_gate()
@@ -100,7 +106,7 @@ class AmeOnPolicyRunner(on_policy_runner.OnPolicyRunner):
         from .m1_ame_contract import validate_training_contract
         validate_training_contract(checkpoint, self._training_contract())
         from .m1_fixed_wheel_checkpoint import validate_action_contract
-        validate_action_contract(checkpoint, int(self.alg.actor_critic.std.numel()), self._fixed_wheel_speed())
+        validate_action_contract(checkpoint, int(self.alg.actor_critic.std.numel()), self._fixed_wheel_speed(), fixed_abad=self._fixed_abad())
         gate = self._learning_gate()
         if gate is not None and 'm1_learning_curriculum' not in checkpoint:
             raise ValueError('Flat-first resume requires learning curriculum metadata')
