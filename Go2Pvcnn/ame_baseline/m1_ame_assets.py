@@ -26,6 +26,25 @@ def apply_m1_leg_joint_limits(robot_prim):
         joint.GetUpperLimitAttr().Set(min(joint.GetUpperLimitAttr().Get(), degrees(hi)))
 
 
+def apply_reference_wheel_colliders(robot_prim):
+    """Reference overlay in the spawned instance; leave source USD untouched."""
+    from pxr import UsdGeom, UsdPhysics
+    from .m1_ame_rewards import M1_SUPPORT_BODY_NAMES
+    from extension.parallelism.m1_kinematics import M1_WHEEL_RADIUS_M, M1_WHEEL_THICKNESS_M
+    stage=robot_prim.GetStage()
+    for name in M1_SUPPORT_BODY_NAMES:
+        path=str(robot_prim.GetPath())+'/'+name
+        old=stage.GetPrimAtPath(path+'/collisions')
+        if not old:
+            raise RuntimeError('M1 reference wheel collision mesh missing: '+path)
+        old.SetActive(False)
+        wheel=UsdGeom.Cylinder.Define(stage,path+'/wheel_collision')
+        wheel.GetAxisAttr().Set('Y')
+        wheel.GetRadiusAttr().Set(M1_WHEEL_RADIUS_M)
+        wheel.GetHeightAttr().Set(M1_WHEEL_THICKNESS_M)
+        UsdPhysics.CollisionAPI.Apply(wheel.GetPrim())
+
+
 def spawn_m1_floating_usd(prim_path, cfg, translation=None, orientation=None):
     import isaaclab.sim as sim_utils
     from pxr import Usd, UsdPhysics, PhysxSchema
@@ -36,6 +55,7 @@ def spawn_m1_floating_usd(prim_path, cfg, translation=None, orientation=None):
     # spawned robot before PhysX creates articulation handles.
     for robot_prim in sim_utils.find_matching_prims(prim_path):
         apply_m1_leg_joint_limits(robot_prim)
+        apply_reference_wheel_colliders(robot_prim)
         stage = robot_prim.GetStage()
         base = stage.GetPrimAtPath(str(robot_prim.GetPath()) + "/BASE_LINK")
         if not base or not base.HasAPI(UsdPhysics.RigidBodyAPI):

@@ -35,19 +35,16 @@ def test_mixed_targets_clip_to_leg_limits_and_wheel_surface_speed_limit():
     assert targets[0, 3] <= 2. / M1_WHEEL_RADIUS_M + 1e-5
 
 
-def test_training_stance_centers_the_wheels_under_the_four_hip_mounts():
+def test_reference_training_stance_matches_named_mirrored_angles():
     from ame_baseline.m1_ame_contract import M1_TRAINING_JOINT_POS, M1_TRAINING_ROOT_Z_M
     from extension.parallelism.m1_kinematics import m1_fk
     from extension.parallelism.rl_adapter import select_named_joint_state
     joints = select_named_joint_state(torch.tensor(M1_TRAINING_JOINT_POS)[None], source_names=M1_ASSET_JOINT_NAMES, selected_names=M1_PLANNER_JOINT_NAMES)
     geometry = m1_fk(torch.tensor([[0., 0., M1_TRAINING_ROOT_Z_M]]), torch.zeros(1, 3), joints)
-    torch.testing.assert_close(geometry.foot_pos_w[0, :, 0], torch.tensor([.3295, .3295, -.3295, -.3295]))
-    # Analytic tire radius differs from the source collision mesh by 0.21 mm.
-    torch.testing.assert_close(geometry.foot_pos_w[0, :, 2], torch.full((4,), M1_WHEEL_RADIUS_M), atol=0.001, rtol=0.)
+    assert geometry.foot_pos_w[0,0,0] > geometry.foot_pos_w[0,2,0]
+    assert M1_TRAINING_JOINT_POS == (0.,.3,-.6,0.)*2+(0.,-.3,.6,0.)*2
 
 
-def test_training_stance_matches_approved_585mm_total_mesh_height():
+def test_training_stance_uses_approved_reference_root_height():
     from ame_baseline.m1_ame_contract import M1_TRAINING_ROOT_Z_M
-    # Independent BASE_LINK visual mesh upper bound from source USD audit.
-    base_top_above_root = 0.128999188542366
-    assert abs(M1_TRAINING_ROOT_Z_M + base_top_above_root - .585) < 1e-6
+    assert M1_TRAINING_ROOT_Z_M == .62

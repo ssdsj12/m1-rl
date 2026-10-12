@@ -14,8 +14,8 @@ def test_front_and_rear_knees_fold_inward_not_in_the_same_direction():
     legs = select_named_joint_state(q, source_names=M1_ASSET_JOINT_NAMES, selected_names=M1_PLANNER_JOINT_NAMES)
     geometry = m1_fk(torch.tensor([[0., 0., contract.M1_TRAINING_ROOT_Z_M]]), torch.zeros(1, 3), legs)
     dx = geometry.knee_pos_w[0, :, 0] - geometry.hip_pos_w[0, :, 0]
-    assert (dx[:2] < -.1).all(), dx
-    assert (dx[2:] > .1).all(), dx
+    assert (dx[:2] < -.05).all(), dx
+    assert (dx[2:] > .05).all(), dx
 
 
 def _env():

@@ -22,19 +22,14 @@ M1_LEG_ACTION_SCALE_RAD = 1.50
 # One wheel action unit requests 1 m/s at the tire. The 2 m/s cap includes
 # headroom for the existing 1 m/s translation plus yaw command.
 M1_WHEEL_ACTION_SCALE_RAD_S = 1.0 / M1_WHEEL_RADIUS_M
-M1_WHEEL_SPEED_LIMIT_RAD_S = 2.0 / M1_WHEEL_RADIUS_M
-# Center each wheel below its hip mount using the M1 0.26/0.28 m links.
-# User-approved Climb reference: 585 mm TOTAL source-mesh height, not root Z.
-# Joint angles are calibrated from this asset, not vendor-published presets.
-# See scripts/audit_m1_standing_height.py for independent mesh FK verification.
-_TRAIN_KNEE = 1.6824843873167417
-_TRAIN_HIP = -atan2(.28 * sin(_TRAIN_KNEE), .26 + .28 * cos(_TRAIN_KNEE))
+M1_WHEEL_SPEED_LIMIT_RAD_S = 20.0
+# User approved the pinned bare-M1 stance, replacing the 585mm mesh calibration.
 # Front knees point inward (-X); rear knees point inward (+X). All four
 # source joint axes have the same sign, so copying angles is NOT mirroring.
-M1_TRAINING_JOINT_POS = ((0., -_TRAIN_HIP, -_TRAIN_KNEE, 0.) * 2
-                         + (0., _TRAIN_HIP, _TRAIN_KNEE, 0.) * 2)
-# Ground the lowest collision mesh; the analytic tire differs by 0.21 mm.
-M1_TRAINING_ROOT_Z_M = 0.45600081145762916
+M1_TRAINING_JOINT_POS = ((0., .30, -.60, 0.) * 2
+                         + (0., -.30, .60, 0.) * 2)
+# Reference spawn root height, not total robot height or settled support height.
+M1_TRAINING_ROOT_Z_M = .62
 # No user-imposed extra air gap. Actual nonpenetration, collision termination,
 # measured passage and stable far-side landing remain mandatory.
 M1_REQUIRED_TOP_MARGIN_M = 0.0
@@ -42,7 +37,14 @@ M1_REQUIRED_TOP_MARGIN_M = 0.0
 
 def m1_training_contract():
     """Pose/reset semantics required in newly trained checkpoints."""
-    return dict(version=1, stance='front_rear_inward_585mm',
+    from .m1_reference_robot import REFERENCE_ROBOT_COMMIT
+    return dict(version=2, stance='reference_front_rear_inward_root062',
+                reference_robot_commit=REFERENCE_ROBOT_COMMIT,
+                policy_state_dim=85, critic_state_dim=88, learning_signal_version=1,
+                robot_physics=dict(leg_motor='DCMotor',leg_pd=[120.,5.5],leg_effort=150.,
+                    leg_velocity=20.,wheel_pd=[0.,30.],wheel_effort=200.,wheel_velocity=20.,
+                    wheel_shape='cylinder_y',wheel_radius=.0959,wheel_width=.0465,
+                    solver_iterations=[4,2],friction=[1.,1.],restitution=0.,mass_jitter=False),
                 joint_names=list(M1_ASSET_JOINT_NAMES),
                 joint_pos=list(M1_TRAINING_JOINT_POS), root_z=M1_TRAINING_ROOT_Z_M,
                 obstacle_collision_reset=True,

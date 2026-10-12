@@ -364,24 +364,8 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
         # Locomotion training must release it; the source viewer asset is intact.
         self.scene.robot.spawn.articulation_props.fix_root_link = False
         self.scene.robot.spawn.func = spawn_m1_floating_usd
-        actuator = self.scene.robot.actuators["all_joints"]
-        self.scene.robot.actuators = {
-            # High support gains keep the floating M1's three loaded wheels
-            # under the body while a fourth wheel is unloaded.  Lower gains
-            # let the root sag and invalidate the serial crossing sequence.
-            "legs": actuator.replace(
-                joint_names_expr=list(M1_PLANNER_JOINT_NAMES),
-                stiffness=float(os.environ.get("M1_LEG_STIFFNESS", "800.0")),
-                damping=float(os.environ.get("M1_LEG_DAMPING", "40.0")),
-            ),
-            "wheels": actuator.replace(
-                joint_names_expr=list(M1_WHEEL_JOINT_NAMES), stiffness=0.0,
-                # Velocity-servo gain, not passive rolling resistance. The
-                # 0.5 default stalls under M1 load; 5.0 passes the rolling gate
-                # without changing the USD's 50 Nm wheel effort limit.
-                damping=5.0, velocity_limit_sim=M1_WHEEL_SPEED_LIMIT_RAD_S,
-            ),
-        }
+        # Reference actuator/material settings are applied once below, after
+        # inherited task overrides. Legacy high-gain env vars cannot win.
         # AME does not use semantic obstacle contact sensors.
         self.scene.semantic_contact_small = None
         self.scene.semantic_contact_large = None
@@ -429,6 +413,8 @@ class M1AmeCrossLargeComplexEnvCfg(AmeCrossLargeComplexEnvCfg):
         self.planner_owned_reference_cache = False
         self.use_batched_reference_trajectory = False
         self.planner_backend = None
+        from .m1_reference_robot import configure_reference_robot
+        configure_reference_robot(self)
         fixed_speed = os.environ.get("M1_FIXED_WHEEL_SPEED_M_S")
         if fixed_speed is not None:
             from .m1_ame_actions import configure_fixed_wheel_control
