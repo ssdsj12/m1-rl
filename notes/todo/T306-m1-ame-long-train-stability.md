@@ -2,6 +2,10 @@
 
 ## Current State
 
+LATEST stall-slip DEPLOYED：6d90e80，183CPU/补强native全通过，无遗留Critical/Important。新6598/run17-28-55从用户确认model200显式迁移201+9799/2048/optimizer/std/course保持，实际201–202/loss有限，stage0两费用0；TB6768新run。旧4885/完整600及全部PT保留。LastFeature/Verified6d90e80；actual-learning OPEN。[证据](../log/2026-10-12-m1-stall-slip-design.md)。以下未部署状态为历史。
+
+stall-slip：书面数值/model200已确认；78e6e6a/182CPU通过，独立审查/native进行中。4885在完整600核验后SIGINT退出，GPU1MiB，保留所有PT。生产未改，无长训；禁止自动重启。恢复源200 stage0/streak1（无249PT），计划201+9799/2048/keep_std/optimizer/course。[证据](../log/2026-10-12-m1-stall-slip-design.md)。
+
 新增pure-ppo-learning/reward/stall-slip子节点，关联timeout-without-crossing但非已证实根因修复。用户确认新增原地惩罚/替换旧打滑项；[规格与代码核查](../log/2026-10-12-m1-stall-slip-design.md)待书面审阅细化数值。LastFeature/Verified仍1d4d1ad，CurrentWork10-12/docs；下一步writing-plans/TDD，生产未改，训练未暂停。
 
 最新reference-learning已部署（实现1d4d1ad含4e1b9d2）/301CPU1skip/原生通过。2303保留完整model100后SIGINT停止；4885/run12-26-20已fresh0轮/2048/loss有限，model0新合同v2/85/88/新Adam/stage0通过。TB5041指新run，GPU23134MiB，无并发probe。不能重启旧PID/PT。[记录](../log/2026-10-12-m1-reference-learning-implementation.md)。下文待审批/未部署均历史。

@@ -1,5 +1,7 @@
 # M1 execution gates contract
 
+LATEST stall-slip-v1 deployed6d90e80: 183 CPU plus native nonzero140 samples/current-force/history/one-row terminal stage identity passed. PID6598/run17-28-55 from explicitly migrated reference model200 at201 (stage0/streak1, not nonexistent249), 2048/fixed.30/12 legs/physical contract unchanged. Do not restart4885 or oldwatchers. All PTs preserved. Only stage1-3 new bounded stall .50/sec and replacing slip .25/sec; stage0/mixed4 legacy. Initialization/source hashes and backups in ../log/2026-10-12-m1-stall-slip-design.md. Training/native concurrency prohibited. Genuine learning remains OPEN.
+
 Latest candidate: reference commit8aeb845, three learning signals, contractv2/state85/88,
 rootZ.62/front(.3,-.6)/rear(-.3,.6), DCMotor120/5.5, wheel damping30,
 actual Y-cylinder radius.0959/width.0465. User approved replacing585mm.
