@@ -2,6 +2,10 @@
 
 ## Current State
 
+publication/10-12：[发布记录](../log/2026-10-12-m1-release-10-12.md)，仅发布当前实现/README/任务notes；不改变动作合同或运行训练。9450至4119，4100完整2048回合pass0/strict0，当前策略失败诊断仍OPEN，未批准新的暂停。Last Feature仍aea3b32。
+
+fixed-wheel-learning/current-model600-window OPEN：[只读证据](../log/2026-10-11-m1-fixed-wheel-model600-window.md)。9450至649/TB651，当前600权重/Adam/std及12维合同完整；last2054回合pass.54090/6207attempt/0success。301–651无2cm预抬/稳定落轮但196轮rawdelta非零。保持用户长训优先，未自动暂停，具体失败链不能沿用旧16维诊断。
+
 fixed-wheel-leg-only/native/deploy/initial2048容量CLOSED：[最终部署](../log/2026-10-11-m1-fixed-wheel-deploy.md)，Feature aea3b32；344CPU+2000原生物理调用/1600环境帧20terminal。9450/run17-40-08完成301–304/loss有限/2048/GPU22026MiB/实际12dim。旧7960仅700校验后停，PT均保留；转换300/33Adam/12std/stage1保留。GitHub d7625ba普通push独立确认。学习/动态大障碍避让仍OPEN，非已学会。
 
 fixed-wheel-leg-only动作/迁移CPU已闭合，native/deploy OPEN：[实施证据](../log/2026-10-11-m1-fixed-wheel-deploy.md)。344相关CPU通过、真实300转换33Adam/12std/stage1，原模型不变；审查发现eval入口与NaN恢复反例已修。09:36UTC旧7960至697，待700完整校验安全切换；不热改、不重复审批。

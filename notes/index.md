@@ -1,5 +1,9 @@
 # TestPvcnnWithIsaacsim Notes Index
 
+2026-10-12[发布到10-12](log/2026-10-12-m1-release-10-12.md)：用户指定新GitHub分支，README汇总固定轮速12腿/自主抬落/统一密填/动作迁移改进并纠正过时2cm要求。当前9450至4119，model4100完整2048/pass0/2048attempt/0success，未停训或改生产，学习仍OPEN。
+
+最新只读[固定轮速model600窗口](log/2026-10-11-m1-fixed-wheel-model600-window.md)：9450至649/TB651、12腿/.30/2048保持，loss与PT39/Adam33/std12有限。last完整2054回合前进pass.54090/6207attempt/0success；301–651预抬2cm/稳定落轮全0，但rawdelta196轮非零，不是完全无抬轮增量。未停训/改生产/并发probe，具体动态失败原因仍OPEN。
+
 最新部署优先：[固定轮速12腿](log/2026-10-11-m1-fixed-wheel-deploy.md) aea3b32已部署，344CPU/2000原生物理调用/1600环境帧20terminal通过。旧7960在完整700保存后停止；新9450/run17-40-08从显式转换300实际完成301–304，2048/GPU22026MiB/loss有限，真实12action/.30m/s轮驱动，非精确机身跟速。TB9685新run；GitHub d7625ba已push/ref确认，后续文档提交优先。旧“候选未部署/待700”均历史，学习仍OPEN。
 
 最新[固定轮速12腿实施](log/2026-10-11-m1-fixed-wheel-deploy.md)：用户已确认0.30m/s及宽松机身跟速；344CPU/真实300显式转换通过，审查反例修复。等待本run700安全边界及隔离原生，尚未改生产；以下“待审”已失效。
