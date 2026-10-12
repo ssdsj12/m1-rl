@@ -65,3 +65,15 @@ CPU39有限模型/33有限Adam、step20、12正std .0496483–.0502175、iter0/n
 无action_conversion。version2/参考commit/85与88状态/物理参数/root.62/零额外margin合同逐项验证通过。
 TB旧2468已核实旧logdir后退出，新5041 remote127.0.0.1:6006/data/logdir独立确认指新run；未改隧道/local16006未重验。
 实现1d4d1ad，发布状态待独立remote ref回执；全部旧PT保留。无样本NaN不是跨越成功。
+
+## 收尾现场复核与发布
+
+04:30UTC附近实际完成0–5轮，最近value loss .0593/.0485/.0401、surrogate−.0013/−.0011/−.0016有限；PID4885/cwd/2048确认，GPU23134MiB。
+14个本地runtime SHA与部署manifest逐项完全一致；README/notes/规格/测试/脚本同步服务器并tar-diff为零，
+同步包SHA `40e8426034c8d1b241ae936c50d6de4032018db2555a4f10e49afb924b238ee9`。
+实现及运行文档已本地提交至97ccab0。两次普通push分别connection reset、443约21s连接失败；
+**本轮GitHub发布未完成**，不影响已验证部署和训练。既有10-12普通push授权保留，不改网络/全局Git、不force。
+
+本轮额外判断：原生验收依批准规格验证配置/感知接线/空地稳定/间隙与碰撞；
+五帧成功完整正反例由CPU轨迹验证，未强加动作生成器制造原生抬腿成功。代价：真实物理越障仍需后续策略视频与完整事件验收。
+其余几何、可见patch、测试基准、保守支撑取舍见上文；无延后Minor审查项。
