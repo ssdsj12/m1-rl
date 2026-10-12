@@ -1,5 +1,7 @@
 # M1 碰撞累计预算与从零训练
 
+最新状态优先：2026-10-12 16:26UTC已部署并fresh开训，PID12788/run2026-10-13_00-26-49/bb57e7d，0–5轮优化有限；model0完整CPU验收通过。下方“候选/暂停/待验收”为保留的过程记录。
+
 - Purpose/Stage：T306/pure-ppo-learning/fixed-abad/collision-budget；用户批准每秒最多5、累计20重置、不追加termination20，并明确改好后直接从零开训。
 - Baseline Ref：afe7202（设计），生产固定ABAD实现399cf7b；Candidate Ref：当前10-12工作树。
 - [规格](../../docs/superpowers/specs/2026-10-12-m1-collision-five-fresh-design.md) / [计划](../../docs/superpowers/plans/2026-10-12-m1-collision-budget-fresh.md)。用户继续指定当前镜像内逐项执行，不重复启动审批。
@@ -37,3 +39,11 @@
 第三次12630完整通过并退出：`/tmp/m1-collision-budget-native-v3.jsonl`320行（319控制步×4env=1276环境帧），唯一COMPLETE；SHA `fa6dd761ae2493eb38d14a43697e6982018ab617fc49521944ad3395abe957ed`。实际200收费步，float32输出积分20.000000298（计账float64准确封顶20）；前199无reset，第200只env0 reset、failure_termination0；其他行非零累计保留。下步env0total0，原始碰撞进入strict共257环境帧，碰撞帧final reward组成已验证。flat100步前进.571–.583m/0reset；stage0/1/2/3/4配置均经过；单行纯timeout无-20；90度姿态失败离散项-20（总reward-20.04725）。没有PPO学习或跨越成功证明。
 
 16:26:43UTC GPU1MiB且全部probe退出后，备份7runtime到`/tmp/m1-collision-budget-production-before-20261012T162643Z/manifest.json`，逐SHA核实部署。新fresh进程12788由kernel flock入口启动；回执`/tmp/m1-collision-budget-fresh-deploy.json`、log`/tmp/m1-ppo-collision-budget-fresh-20261012.log`。已要求fixedABAD/2048/cuda0/flat-first/max10000/save100，清除旧checkpoint/optimizer加载变量；首轮优化/PT审计待下方追加，当前不能只凭进程宣称训练验收完成。
+
+## Fresh 实际更新与首个模型验收
+
+新run `2026-10-13_00-26-49/bb57e7d`（服务器UTC+8命名）实际0–5轮更新；4/5轮value .0584/.0478、surrogate均-.0010，GPU23074MiB。PID12788现场cmdline/cwd/environ核实2048/cuda0/max10000，无resume/checkpoint/CHECKPOINT/M1_LOAD_OPTIMIZER；fixedABAD1/轮速.30不变。
+
+`model_0.pt` SHA `6057f34c8c55bf0d1aae0831da1eac408d658a606adf86916b9873f49ed51f29`；CPU39模型张量和33Adam状态全部有限、step20，8个正std .04961965–.05028835，stage0/streak0/iter0 next1，训练合同v4/动作v2/85policy88critic完整，无action_conversion/reward_conversion。审计`/tmp/m1-collision-budget-model0-audit.json`同时逐项核实7个已部署runtime SHA。不是旧模型续训。新模型已按碰撞预算合同保存，但stage0没有障碍，尚不能据此证明跨越学习效果。
+
+TensorBoard旧10838身份核实后停止，仅替换其6006服务；新PID12992的`/data/logdir`独立核实为本run。6007和local16006转发未动、local未重验。每小时监控m1-ppo已更新为新PID/run/合同与预算指标，禁止旧暂停提示误重启；无实质变化保持安静。GitHub发布回执另见后续追加，不把本地提交当上传成功。
