@@ -47,3 +47,7 @@
 `model_0.pt` SHA `6057f34c8c55bf0d1aae0831da1eac408d658a606adf86916b9873f49ed51f29`；CPU39模型张量和33Adam状态全部有限、step20，8个正std .04961965–.05028835，stage0/streak0/iter0 next1，训练合同v4/动作v2/85policy88critic完整，无action_conversion/reward_conversion。审计`/tmp/m1-collision-budget-model0-audit.json`同时逐项核实7个已部署runtime SHA。不是旧模型续训。新模型已按碰撞预算合同保存，但stage0没有障碍，尚不能据此证明跨越学习效果。
 
 TensorBoard旧10838身份核实后停止，仅替换其6006服务；新PID12992的`/data/logdir`独立核实为本run。6007和local16006转发未动、local未重验。每小时监控m1-ppo已更新为新PID/run/合同与预算指标，禁止旧暂停提示误重启；无实质变化保持安静。GitHub发布回执另见后续追加，不把本地提交当上传成功。
+
+## 收尾回执
+
+普通push后独立ls-remote确认`10-12=6ede420e3cedf65a7026286e1bbd10fa1d515123`，含实现1a2619a/README/实际fresh验收记录。README/notes/spec/plan/测试/探针12文件同步服务器tar-diff无差异；同步时本log SHA为`73ef24389f103b7450c3b55b419cd75bb2c7b44522c081266154974039f4e2e2`（此收尾段追加前）。最终stdout至12轮，11/12轮value .0290/.0281、surrogate -.0010/-.0012有限。预存诊断notes和旧watcher保留，未stage；所有旧PT保留。没有证明跨越能力已改善。
