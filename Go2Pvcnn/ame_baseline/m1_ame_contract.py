@@ -30,7 +30,7 @@ M1_TRAINING_JOINT_POS = ((0., .30, -.60, 0.) * 2
                          + (0., -.30, .60, 0.) * 2)
 # Reference spawn root height, not total robot height or settled support height.
 M1_TRAINING_ROOT_Z_M = .62
-# No user-imposed extra air gap. Actual nonpenetration, collision termination,
+# No user-imposed extra air gap. Actual nonpenetration, collision accounting,
 # measured passage and stable far-side landing remain mandatory.
 M1_REQUIRED_TOP_MARGIN_M = 0.0
 
@@ -39,7 +39,8 @@ def m1_training_contract(*, fixed_abad=False):
     """Pose/reset semantics required in newly trained checkpoints."""
     from .m1_reference_robot import REFERENCE_ROBOT_COMMIT
     from .m1_stall_slip import reward_contract
-    contract = dict(version=2, stance='reference_front_rear_inward_root062',
+    from .m1_collision_budget import collision_budget_contract
+    contract = dict(version=3, stance='reference_front_rear_inward_root062',
                 reference_robot_commit=REFERENCE_ROBOT_COMMIT,
                 policy_state_dim=85, critic_state_dim=88, learning_signal_version=1,
                 reward_contract=reward_contract(),
@@ -49,11 +50,12 @@ def m1_training_contract(*, fixed_abad=False):
                     solver_iterations=[4,2],friction=[1.,1.],restitution=0.,mass_jitter=False),
                 joint_names=list(M1_ASSET_JOINT_NAMES),
                 joint_pos=list(M1_TRAINING_JOINT_POS), root_z=M1_TRAINING_ROOT_Z_M,
-                obstacle_collision_reset=True,
+                obstacle_collision_reset=False,
+                collision_budget=collision_budget_contract(),
                 required_top_margin_m=M1_REQUIRED_TOP_MARGIN_M)
     if fixed_abad:
         from .m1_fixed_abad import M1_ABAD_JOINT_NAMES, M1_HIP_KNEE_JOINT_NAMES
-        contract.update(version=3, fixed_abad_joint_names=list(M1_ABAD_JOINT_NAMES),
+        contract.update(version=4, fixed_abad_joint_names=list(M1_ABAD_JOINT_NAMES),
                         fixed_abad_targets=[0.]*4, policy_joint_names=list(M1_HIP_KNEE_JOINT_NAMES))
     return contract
 

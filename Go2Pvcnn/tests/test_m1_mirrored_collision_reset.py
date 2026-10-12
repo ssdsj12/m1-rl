@@ -61,16 +61,17 @@ def test_reference_reward_uses_same_no_margin_shape_as_termination():
     assert torch.equal(m1_obstacle_collision_penalty(env, strict_obstacle_contact=True).bool(), terms.obstacle_collision(env))
 
 
-def test_obstacle_termination_is_wired_as_physical_failure_not_timeout():
-    source = (Path(__file__).parents[1]/'ame_baseline/m1_ame_env_cfg.py').read_text()
-    assert 'func=obstacle_collision' in source
+def test_collision_budget_declares_no_immediate_reset():
+    current = contract.m1_training_contract()
+    assert current['obstacle_collision_reset'] is False
+    assert current['collision_budget']['episode_budget'] == 20.
 
 
 def test_new_stance_contract_rejects_missing_or_old_metadata():
     assert hasattr(contract, 'm1_training_contract'), 'missing versioned pose/reset contract'
     assert hasattr(contract, 'validate_training_contract')
     expected = contract.m1_training_contract()
-    assert expected['obstacle_collision_reset'] is True
+    assert expected['obstacle_collision_reset'] is False
     contract.validate_training_contract({'m1_training_contract':expected}, expected)
     with pytest.raises(ValueError, match='training contract'):
         contract.validate_training_contract({}, expected)

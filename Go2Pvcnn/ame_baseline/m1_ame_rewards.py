@@ -116,7 +116,11 @@ def m1_failure_termination_penalty(env) -> Tensor:
     # simultaneous timeout + physical failure still incurs the failure cost.
     if float(env.step_dt) <= 0:
         raise ValueError("step_dt must be positive")
-    return env.termination_manager.terminated.to(torch.float32) / float(env.step_dt)
+    terminated = env.termination_manager.terminated
+    if hasattr(env, '_m1_collision_budget'):
+        from .m1_collision_budget import collision_budget_exhausted
+        terminated = terminated & ~collision_budget_exhausted(env)
+    return terminated.to(torch.float32) / float(env.step_dt)
 
 
 def m1_joint_position_penalty(

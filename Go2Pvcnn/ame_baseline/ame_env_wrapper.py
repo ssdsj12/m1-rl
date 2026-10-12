@@ -1132,6 +1132,13 @@ class AmeRslRlEnvWrapper(VecEnv):
             prepare_stall_snapshot(self.unwrapped, self._m1_stall_window, levels,
                                    course, required_wheels, recovered_wheels)
         obs_dict, rewards, terminated, truncated, extras = self.env.step(actions)
+        if hasattr(self.unwrapped, '_m1_collision_budget'):
+            from .m1_collision_budget import current_collision_snapshot
+            collision_snapshot = current_collision_snapshot(self.unwrapped)
+            budget_log = extras.setdefault('log', {})
+            budget_log['CollisionBudget/cost'] = collision_snapshot['cost'].mean()
+            budget_log['CollisionBudget/episode_spent'] = collision_snapshot['total'].mean()
+            budget_log['CollisionBudget/exhausted'] = collision_snapshot['exhausted'].float().mean()
         small_candidate, large_candidate = self.get_obstacle_presence()
         if self._m1_step_debug:
             self._m1_step_debug_count += 1
@@ -1198,6 +1205,8 @@ class AmeRslRlEnvWrapper(VecEnv):
         collision = strict_collision_from_reward_terms(
             self.unwrapped.reward_manager._step_reward,
             names,
+            collision_signal=(current_collision_snapshot(self.unwrapped)['signal']
+                if hasattr(self.unwrapped, '_m1_collision_budget') else None),
         )
         # Keep the scan-disappearance metric as a proxy. Strict completion is
         # evaluated separately against the actual ordered fixed-course boxes.

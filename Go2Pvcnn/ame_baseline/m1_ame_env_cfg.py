@@ -17,7 +17,9 @@ from extension.parallelism.rl_adapter import select_named_joint_state
 from extension.semantic_course import SemanticCourseLayoutCfg, SemanticCourseGroundingCfg
 from extension.semantic_curriculum import SemanticObstacleCount
 from .ame_env_cfg import AmeCrossLargeComplexEnvCfg, AmeObservationsCfg
-from .m1_ame_terminations import nonfinite_robot_state, obstacle_collision
+from .m1_ame_terminations import nonfinite_robot_state
+from .m1_collision_budget_terms import CollisionBudgetTermination
+from .m1_collision_budget import collision_budget_cost
 from . import m1_ame_rewards as m1_rewards
 from . import m1_obstacle_rewards
 from .m1_learning_observations import m1_wheel_learning_observation
@@ -65,7 +67,7 @@ class M1AmeObservationsCfg(AmeObservationsCfg):
 
 @configclass
 class M1AmeTerminationsCfg(TeacherElevationTrajectoryMpcSemanticTerminationsCfg):
-    obstacle_collision = DoneTerm(func=obstacle_collision, time_out=False)
+    collision_budget = DoneTerm(func=CollisionBudgetTermination, time_out=False)
     nonfinite_robot_state = DoneTerm(
         func=nonfinite_robot_state,
         params={"asset_cfg": SceneEntityCfg("robot")},
@@ -115,14 +117,10 @@ class M1AmeRewardsCfg(CrossLargeComplexPpoRewardsCfg):
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=list(M1_PLANNER_JOINT_NAMES), preserve_order=True),
                 "stand_still_scale": 5.0, "velocity_threshold": 0.3},
     )
-    parallelism_geometry_collision = RewTerm(
-        func=m1_obstacle_rewards.m1_obstacle_collision_penalty, weight=-10.0,
-        params={"asset_cfg": SceneEntityCfg("robot"), "scanner_cfg": SceneEntityCfg("semantic_height_scanner"), "strict_obstacle_contact": True},
-    )
-    non_support_obstacle_contact = RewTerm(
-        func=m1_obstacle_rewards.m1_non_support_obstacle_contact, weight=-8.0,
-        params={"sensor_cfg": SceneEntityCfg("contact_forces"), "command_name": "base_velocity"},
-    )
+    # One combined process cost; neither legacy detector may double-charge it.
+    parallelism_geometry_collision = None
+    non_support_obstacle_contact = None
+    collision_budget_cost = RewTerm(func=collision_budget_cost, weight=1.0)
     stall = RewTerm(func=stall_penalty, weight=1.0)
     feet_slide = RewTerm(
         func=m1_rewards.m1_wheel_rolling_residual_l2, weight=-0.1,

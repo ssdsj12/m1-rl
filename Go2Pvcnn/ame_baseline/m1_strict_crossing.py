@@ -41,6 +41,7 @@ def m1_wheel_lateral_half_width_from_quat(
 def strict_collision_from_reward_terms(
     step_rewards: torch.Tensor,
     active_terms: tuple[str, ...] | list[str],
+    *, collision_signal: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Combine geometry and measured non-support obstacle contacts.
 
@@ -53,6 +54,10 @@ def strict_collision_from_reward_terms(
     if rewards.ndim != 2 or rewards.shape[1] != len(names):
         raise ValueError("step_rewards must be [num_envs, len(active_terms)]")
     collision = torch.zeros(rewards.shape[0], dtype=torch.bool, device=rewards.device)
+    if collision_signal is not None:
+        if collision_signal.shape != collision.shape:
+            raise ValueError('one raw collision signal per environment required')
+        collision |= ~torch.isfinite(collision_signal) | (collision_signal != 0)
     for name in ("parallelism_geometry_collision", "non_support_obstacle_contact"):
         if name in names:
             term = rewards[:, names.index(name)]
