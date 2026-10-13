@@ -342,6 +342,22 @@ def test_untracked_reference_freezes_ages_and_accepted():
     assert torch.equal(row['accepted'].wheels_w, accepted.wheels_w)
 
 
+def test_feedback_reference_and_diagnostics_keep_physical_world_anchors():
+    teacher,s,_=prepared_teacher(diagnostic=True)
+    row=teacher._rows[0]; physical=row['accepted']
+    root=s.root_pos_w.clone(); root[:,2] -= .03
+    com=s.com_pos_w.clone(); com[:,2] -= .03
+    wheels=s.wheel_pos_w.clone(); wheels[:,:,2] -= .03
+    out=teacher.diagnostic_step(replace(s,root_pos_w=root,com_pos_w=com,wheel_pos_w=wheels),active_wheel=0,lift=False)
+    command=row['accepted_command']
+    assert command.body.pos_w[0,2] > physical.body.pos_w[0,2]
+    assert torch.equal(command.wheels_w,row['accepted'].wheels_w)
+    names=api().TEACHER_DIAGNOSTIC_FIELDS
+    assert out.diagnostic[0,names.index('accepted_root_z')] == row['accepted'].body.pos_w[0,2]
+    assert out.diagnostic[0,names.index('command_accepted_root_z')] == command.body.pos_w[0,2]
+    assert out.diagnostic[0,names.index('preparation_ready')] == 0
+
+
 def test_invalid_result_keeps_accepted_pose_separate_from_diagnostic_candidate():
     teacher, s, _ = prepared_teacher(diagnostic=True)
     row = teacher._rows[0]

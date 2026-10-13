@@ -61,6 +61,18 @@ class ReferenceStep:
     slew_ok: torch.Tensor
 
 
+@dataclass(frozen=True)
+class FeedbackReferenceStep:
+    physical: PoseReference
+    command: PoseReference
+    nominal_ik: IKResult
+    command_ik: IKResult
+    output: torch.Tensor
+    valid: torch.Tensor
+    backtrack_index: torch.Tensor
+    slew_ok: torch.Tensor
+
+
 def _pose_valid(body):
     return (torch.isfinite(body.pos_w).all(-1) & torch.isfinite(body.quat_w).all(-1)
             & ((body.quat_w.norm(dim=-1)-1).abs() <= 1e-3))
@@ -279,3 +291,73 @@ def backtrack_reference(accepted, requested, q_seed, branch_q, last_applied_q, d
         if bool(chosen.all()):
             break
     return ReferenceStep(output, result, chosen, index, slew_output)
+
+
+def feedback_command(physical, output, captured_yaw):
+    """Virtual Y/Z body shift in captured heading, with unchanged world wheels."""
+    c, s = captured_yaw.cos(), captured_yaw.sin()
+    delta = torch.stack((-s*output[:, 1], c*output[:, 1], output[:, 2]), -1)
+    return PoseReference(BodyPose(physical.body.pos_w+delta, physical.body.quat_w), physical.wheels_w)
+
+
+def backtrack_feedback_reference(accepted, requested, previous_output, proposed_output,
+                                 captured_yaw, q_seed, branch_q, last_applied_q, dt,
+                                 cfg: IKConfig, *, execution_valid):
+    """At most eight paired physical/virtual solves; only execution has slew.
+
+    All changes share beta. The caller supplies a pure decoder/total-wheel
+    validator. Rejected diagnostics describe the final attempt, never a hold.
+    """
+    if not isinstance(accepted, PoseReference) or not isinstance(requested, PoseReference):
+        raise TypeError('accepted/requested must be PoseReference')
+    _check_pose_like(requested.body, accepted.body, 'requested.body')
+    batch, pos = accepted.body.pos_w.shape[0], accepted.body.pos_w
+    for value, shape, name in ((previous_output,(batch,3),'previous_output'),
+                              (proposed_output,(batch,3),'proposed_output'),
+                              (captured_yaw,(batch,),'captured_yaw'),
+                              (q_seed,(batch,12),'q_seed'),(branch_q,(batch,12),'branch_q'),
+                              (last_applied_q,(batch,12),'last_applied_q')):
+        _tensor(value, shape, pos, name)
+    if isinstance(dt,bool) or not isinstance(dt,(int,float)) or not math.isfinite(dt) or dt <= 0:
+        raise ValueError('dt must be finite and positive')
+    if not isinstance(cfg,IKConfig) or not callable(execution_valid):
+        raise TypeError('IKConfig and execution_valid callback required')
+    input_ok = (_pose_valid(accepted.body) & _pose_valid(requested.body)
+        & torch.isfinite(accepted.wheels_w).all(dim=(-1,-2))
+        & torch.isfinite(requested.wheels_w).all(dim=(-1,-2))
+        & torch.isfinite(previous_output).all(-1) & torch.isfinite(proposed_output).all(-1)
+        & torch.isfinite(captured_yaw))
+    chosen=torch.zeros(batch,device=pos.device,dtype=torch.bool)
+    index=torch.full((batch,),-1,device=pos.device,dtype=torch.long)
+    physical=command=nominal_result=command_result=output=slew_output=None
+    def merge_ref(old,new,use):
+        return PoseReference(BodyPose(torch.where(use[:,None],new.body.pos_w,old.body.pos_w),
+            torch.where(use[:,None],new.body.quat_w,old.body.quat_w)),
+            torch.where(use[:,None,None],new.wheels_w,old.wheels_w))
+    for attempt in range(8):
+        beta=2.**(-attempt)
+        quat=_slerp(accepted.body.quat_w,requested.body.quat_w,beta)
+        invalid_quat=torch.where(_pose_valid(requested.body)[:,None],accepted.body.quat_w,requested.body.quat_w)
+        phys=PoseReference(BodyPose(accepted.body.pos_w+beta*(requested.body.pos_w-accepted.body.pos_w),
+            torch.where(input_ok[:,None],quat,invalid_quat)),
+            accepted.wheels_w+beta*(requested.wheels_w-accepted.wheels_w))
+        u=previous_output+beta*(proposed_output-previous_output)
+        cmd=feedback_command(phys,u,captured_yaw)
+        nominal=solve_constrained_ik(q_seed,world_to_goal_body(phys),branch_q,cfg)
+        execution=solve_constrained_ik(q_seed,world_to_goal_body(cmd),branch_q,cfg)
+        slew=(torch.isfinite(last_applied_q).all(-1) & torch.isfinite(execution.q).all(-1)
+            & ((execution.q-last_applied_q).abs() <= 2.5*dt).all(-1))
+        executable=execution_valid(execution,u)
+        if not isinstance(executable,torch.Tensor) or executable.shape != (batch,) or executable.dtype != torch.bool or executable.device != pos.device:
+            raise ValueError('execution_valid must return bool [B] on reference device')
+        valid=input_ok & nominal.valid & execution.valid & slew & executable
+        use=~chosen
+        if physical is None:
+            physical,command,nominal_result,command_result,output,slew_output=phys,cmd,nominal,execution,u,slew
+        else:
+            physical,command=merge_ref(physical,phys,use),merge_ref(command,cmd,use)
+            nominal_result,command_result=_merge_ik(nominal_result,nominal,use),_merge_ik(command_result,execution,use)
+            output=torch.where(use[:,None],u,output); slew_output=torch.where(use,slew,slew_output)
+        index=torch.where(use & valid,attempt,index); chosen |= valid
+        if bool(chosen.all()): break
+    return FeedbackReferenceStep(physical,command,nominal_result,command_result,output,chosen,index,slew_output)

@@ -17,7 +17,7 @@ bounded four-leg IK and actual executed-target continuity precede every commit.
 Legacy solve_ik_body/body_shift_error remain compatibility math only; live
 teacher execution uses the constrained pose path in every phase.
 """
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, fields, field, replace
 from enum import IntEnum
 import hashlib
 import json
@@ -36,7 +36,9 @@ from .m1_reference_geometry import cylinder_bottom
 from .m1_crossing_landing import crossing_touchdown_safe
 from .m1_teacher_ik import body_feet, body_jacobian, dls_step, IKConfig
 from .m1_teacher_pose import (BodyPose, PoseReference, world_to_goal_body,
-    choose_support_pose, backtrack_reference, support_margin)
+    choose_support_pose, backtrack_feedback_reference, feedback_command, support_margin)
+from .m1_teacher_feedback import (FeedbackConfig, FeedbackState, propose_feedback,
+    select_integral, recompute_feedback)
 
 LEG_COLUMNS = list(resolve_named_indices(M1_ASSET_JOINT_NAMES, M1_PLANNER_JOINT_NAMES))
 WHEEL_COLUMNS = list(resolve_named_indices(M1_ASSET_JOINT_NAMES, M1_WHEEL_JOINT_NAMES))
@@ -95,16 +97,36 @@ TEACHER_DIAGNOSTIC_FIELDS = tuple(
        'freeze_reason', 'reference_valid', 'diagnostic_only', 'age', 'body_age', 'lift_age']
     + [f'preparation_{kind}_root_{axis}' for kind in ('prior', 'goal')
        for axis in ('x', 'y', 'z', 'qw', 'qx', 'qy', 'qz')]
-    + ['preparation_ready'])
+    + ['preparation_ready']
+    + [f'command_{kind}_root_{axis}' for kind in ('requested','attempted','accepted')
+       for axis in ('x','y','z','qw','qx','qy','qz')]
+    + [f'command_{kind}_world_wheel_{leg}_{axis}' for kind in ('requested','attempted','accepted')
+       for leg in range(4) for axis in ('x','y','z')]
+    + [f'nominal_ik_{name}_{leg}' for name in ('residual_m','joint_limit_ok','branch_ok',
+       'extension_margin_rad','workspace_ok','iterations','reason') for leg in range(4)]
+    + [f'feedback_{kind}_{axis}' for kind in ('error_h','integral_before','integral_candidate',
+       'integral_selected','integral_committed','raw_output','proposed_output','output_before',
+       'output_committed','limited','integral_limited','amplitude_limited','slew_limited',
+       'final_proposed_output') for axis in ('x','y','z')]
+    + [f'wheel_{kind}_surface_speed_{leg}' for kind in ('nominal','final') for leg in range(4)]
+    + ['feedback_passes','wheel_headroom_limited','feedback_active',
+       'feedback_first_backtrack_index','feedback_first_transaction_valid'])
 TEACHER_DIAGNOSTIC_INTEGER_FIELDS = tuple(
     [f'ik_{name}_{leg}' for name in ('joint_limit_ok', 'branch_ok', 'workspace_ok',
        'iterations', 'reason') for leg in range(4)]
     + ['candidate_index', 'candidate_count', 'backtrack_index', 'invalid_streak',
-       'freeze_reason', 'reference_valid', 'diagnostic_only', 'age', 'body_age', 'lift_age', 'preparation_ready'])
+       'freeze_reason', 'reference_valid', 'diagnostic_only', 'age', 'body_age', 'lift_age', 'preparation_ready']
+    + [f'nominal_ik_{name}_{leg}' for name in ('joint_limit_ok','branch_ok','workspace_ok',
+       'iterations','reason') for leg in range(4)]
+    + [f'feedback_{kind}_{axis}' for kind in ('limited','integral_limited','amplitude_limited','slew_limited')
+       for axis in ('x','y','z')]
+    + ['feedback_passes','wheel_headroom_limited','feedback_active',
+       'feedback_first_backtrack_index','feedback_first_transaction_valid'])
 
 
 @dataclass(frozen=True)
 class TeacherConfig:
+    feedback: FeedbackConfig = field(default_factory=FeedbackConfig)
     balance_steps: int = 30
     balance_position_tolerance_m: float = .01
     balance_speed_limit_m_s: float = .05
@@ -145,7 +167,11 @@ class TeacherConfig:
     invalid_lock_steps: int = 5
 
     def __post_init__(self):
-        if any(not isinstance(v, (int, float)) or not 0 < v < float('inf') for v in asdict(self).values()):
+        if not isinstance(self.feedback, FeedbackConfig):
+            raise ValueError('feedback must be FeedbackConfig')
+        self.feedback.__post_init__()
+        if any(not isinstance(v, (int, float)) or not 0 < v < float('inf')
+               for k,v in asdict(self).items() if k != 'feedback'):
             raise ValueError('teacher configuration values must be positive and finite')
         for name in ('balance_steps', 'lift_steps', 'pass_steps', 'restore_steps', 'ik_iterations',
                      'stable_samples', 'backtrack_steps', 'candidate_limit', 'invalid_lock_steps'):
@@ -163,9 +189,11 @@ class TeacherConfig:
     @property
     def fingerprint(self):
         payload = dict(config=asdict(self), algorithm=REFERENCE_COMMIT,
-                       implementation='support-ik-transaction-v7', diagnostic_fields=TEACHER_DIAGNOSTIC_FIELDS,
+                       implementation='support-ik-transaction-v8', diagnostic_fields=TEACHER_DIAGNOSTIC_FIELDS,
+                       diagnostic_integer_fields=TEACHER_DIAGNOSTIC_INTEGER_FIELDS,
                        asset_order=M1_ASSET_JOINT_NAMES, leg_scale=M1_LEG_ACTION_SCALE_RAD,
-                       wheel_scale=M1_WHEEL_ACTION_SCALE_RAD_S)
+                       wheel_scale=M1_WHEEL_ACTION_SCALE_RAD_S,
+                       wheel_radius_m=M1_WHEEL_RADIUS_M, wheel_speed_limit_rad_s=M1_WHEEL_SPEED_LIMIT_RAD_S)
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
@@ -384,6 +412,75 @@ class ReferenceTeacher:
         executable = bool(encoded[0]) and legal and continuous
         return (action if executable else torch.full_like(defaults, float('nan'))), executable
 
+    def _feedback_transaction(self, s, i, work, accepted, requested, q, branch,
+                              nominal_speed, evidence):
+        """Two passes maximum. No proposed reference/integral is committed here."""
+        cfg=self.cfg.feedback
+        previous=work['feedback']
+        active=torch.tensor([work['prepared'] and work['phase'] != Phase.APPROACH],device=q.device)
+        yaw=work.get('yaw',q.new_zeros(1))
+        dt=s.dt[i:i+1].to(q.dtype)
+        proposal=propose_feedback(requested.body.pos_w,s.root_pos_w[i:i+1],yaw,previous,dt,cfg,active=active)
+        integral_limit=q.new_tensor([cfg.integral_limit_x,cfg.integral_limit_yz,cfg.integral_limit_yz])
+        ki=q.new_tensor([cfg.ki_x,cfg.ki_yz,cfg.ki_yz])
+        limit=q.new_tensor([cfg.output_limit_x,cfg.output_limit_yz,cfg.output_limit_yz])
+        slew=dt[:,None]*q.new_tensor([cfg.slew_rate_x,cfg.slew_rate_yz,cfg.slew_rate_yz])
+        increment=previous.integral+torch.where(active[:,None],ki*proposal.error_h*dt[:,None],torch.zeros_like(q[:,:3]))
+        evidence.update(feedback_active=int(active[0]),feedback_error_h=proposal.error_h,
+            feedback_integral_before=previous.integral,feedback_integral_candidate=proposal.integral_candidate,
+            feedback_raw_output=proposal.raw_output,feedback_output_before=previous.output,
+            feedback_proposed_output=proposal.output,
+            feedback_integral_limited=(increment.abs()>integral_limit)&active[:,None],
+            feedback_amplitude_limited=proposal.raw_output.abs()>limit,
+            feedback_slew_limited=(proposal.raw_output.clamp(-limit,limit)-previous.output).abs()>slew,
+            wheel_nominal=nominal_speed.clone())
+        wheel_limit=M1_WHEEL_RADIUS_M*M1_WHEEL_SPEED_LIMIT_RAD_S
+        # Fixed nominal/yaw wheel values: intersect total headroom with the
+        # approved correction amplitude and actual prior correction slew.
+        lower=torch.maximum((-wheel_limit-nominal_speed).amax(-1),previous.output[:,0]-slew[:,0])
+        upper=torch.minimum((wheel_limit-nominal_speed).amin(-1),previous.output[:,0]+slew[:,0])
+        lower=torch.maximum(lower,q.new_full((1,),-cfg.output_limit_x))
+        upper=torch.minimum(upper,q.new_full((1,),cfg.output_limit_x))
+        headroom_ok=lower <= upper
+        def wheel_bound(p):
+            output=p.output.clone()
+            output[:,0]=torch.maximum(lower,torch.minimum(upper,output[:,0]))
+            # Keep a finite bounded diagnostic proposal even for empty intersections.
+            output[:,0]=torch.where(headroom_ok,output[:,0],p.output[:,0])
+            limited=p.limited.clone(); limited[:,0] |= (output[:,0] != p.output[:,0]) | ~headroom_ok
+            return replace(p,output=output,limited=limited)
+        proposal=wheel_bound(proposal)
+        evidence.update(feedback_limited=proposal.limited,
+            wheel_headroom_limited=int(bool(proposal.limited[0,0] and
+                ((proposal.output[0,0] != evidence['feedback_proposed_output'][0,0]) or not headroom_ok[0]))))
+        def execution_valid(ik,output):
+            speed=nominal_speed+output[:,0,None]
+            action,encoded=encode_targets(ik.q,speed,s.default_joint_pos[i:i+1])
+            actual=m1_action_targets(action,s.default_joint_pos[i:i+1])[:,LEG_COLUMNS]
+            continuous=((actual-s.last_applied_leg_target[i:i+1]).abs() <= self.cfg.joint_target_rate_rad_s*float(dt[0])).all(-1)
+            correction_slew=((output-previous.output).abs() <= slew+torch.finfo(q.dtype).eps).all(-1)
+            return encoded & continuous & headroom_ok & correction_slew
+        def solve(p):
+            return backtrack_feedback_reference(accepted,requested,previous.output,p.output,yaw,q,branch,
+                s.last_applied_leg_target[i:i+1],float(dt[0]),self.ik_cfg,execution_valid=execution_valid)
+        solved=solve(proposal)
+        evidence.update(feedback_first_backtrack_index=int(solved.backtrack_index[0]),
+                        feedback_first_transaction_valid=int(solved.valid[0]))
+        selected=select_integral(previous,proposal,safe=torch.ones_like(active),
+            transaction_valid=solved.valid,backtracked=solved.backtrack_index>0)
+        # Inactive successful transitions clear I while only slewing outputs.
+        if not bool(active[0]) and bool(solved.valid[0]): selected=torch.zeros_like(selected)
+        evidence['feedback_passes']=1
+        final=proposal
+        if not torch.equal(selected,proposal.integral_candidate):
+            final=wheel_bound(recompute_feedback(proposal.error_h,previous,dt,cfg,active=active,integral=selected))
+            solved=solve(final); evidence['feedback_passes']=2
+        evidence.update(feedback_integral_selected=selected,feedback_final_proposed_output=final.output,
+            command_requested=feedback_command(requested,final.output,yaw),command_attempted=solved.command,
+            attempted=solved.physical,ik=solved.command_ik,nominal_ik=solved.nominal_ik,
+            backtrack_index=int(solved.backtrack_index[0]),wheel_final=nominal_speed+solved.output[:,0,None])
+        return solved,selected
+
     def _diagnostics(self, s, i, row, evidence, valid, freeze, diagnostic):
         data = s.root_pos_w.new_full((1, len(TEACHER_DIAGNOSTIC_FIELDS)), float('nan'))
         values = dict(zip(TEACHER_DIAGNOSTIC_INTEGER_FIELDS, [-1]*len(TEACHER_DIAGNOSTIC_INTEGER_FIELDS)))
@@ -405,6 +502,11 @@ class ReferenceTeacher:
                 if kind != 'requested':
                     put(kind+'_body_wheel_', world_to_goal_body(ref),
                         tuple(f'{leg}_{axis}' for leg in range(4) for axis in ('x', 'y', 'z')))
+            command = row.get('accepted_command') if kind == 'accepted' else evidence.get('command_'+kind)
+            if command is not None:
+                put('command_'+kind+'_root_',torch.cat((command.body.pos_w,command.body.quat_w),-1),pose_fields)
+                put('command_'+kind+'_world_wheel_',command.wheels_w,
+                    tuple(f'{leg}_{axis}' for leg in range(4) for axis in ('x','y','z')))
         put('com_', s.com_pos_w[i], ('x', 'y', 'z'))
         put('last_applied_q_', s.last_applied_leg_target[i], tuple(str(j) for j in range(12)))
         put('accepted_q_', row.get('last_q'), tuple(str(j) for j in range(12)))
@@ -414,6 +516,21 @@ class ReferenceTeacher:
                           'workspace_ok', 'iterations', 'reason'):
                 put('ik_'+field+'_', getattr(result, field), tuple(str(j) for j in range(4)))
             put('attempted_q_', result.q, tuple(str(j) for j in range(12)))
+        nominal=evidence.get('nominal_ik')
+        if nominal is not None:
+            for name in ('residual_m','joint_limit_ok','branch_ok','extension_margin_rad','workspace_ok','iterations','reason'):
+                put('nominal_ik_'+name+'_',getattr(nominal,name),tuple(str(j) for j in range(4)))
+        for kind in ('error_h','integral_before','integral_candidate','integral_selected','raw_output',
+                     'proposed_output','output_before','limited','integral_limited','amplitude_limited',
+                     'slew_limited','final_proposed_output'):
+            put('feedback_'+kind+'_',evidence.get('feedback_'+kind),('x','y','z'))
+        put('feedback_integral_committed_',row['feedback'].integral,('x','y','z'))
+        put('feedback_output_committed_',row['feedback'].output,('x','y','z'))
+        for kind in ('nominal','final'):
+            put('wheel_'+kind+'_surface_speed_',evidence.get('wheel_'+kind),tuple(str(j) for j in range(4)))
+        for name in ('feedback_passes','wheel_headroom_limited','feedback_active',
+                     'feedback_first_backtrack_index','feedback_first_transaction_valid'):
+            values[name]=evidence.get(name,-1 if name == 'feedback_first_backtrack_index' else 0)
         put('support_slip_', evidence.get('slip'), tuple(f'{j}_{a}' for j in range(4) for a in ('x', 'y')))
         for name in ('measured_com_margin_m', 'predicted_com_margin_m', 'candidate_com_margin_m', 'candidate_index',
                      'candidate_count', 'backtrack_index'):
@@ -449,7 +566,8 @@ class ReferenceTeacher:
         if row is None or changed or (reset and (row['step'] != step or not row['reset'])):
             row = dict(episode=episode, step=-1, reset=False, target=-1, wheel=-1,
                        phase=Phase.APPROACH, age=0, body_age=0, lift_age=0, stable=0,
-                       prepared=False, failure=Reason.OK, invalid_streak=0)
+                       prepared=False, failure=Reason.OK, invalid_streak=0,
+                       feedback=FeedbackState(s.root_pos_w.new_zeros(1,3),s.root_pos_w.new_zeros(1,3)))
             self._rows[i] = row
         if row['step'] == step and row['reset'] == reset:
             return self._clone_output(row['output'])
@@ -490,6 +608,7 @@ class ReferenceTeacher:
         # Scratch state: tensors already stored on the row are immutable here.
         # No phase, reference, anchor or age change escapes a rejected transaction.
         work = dict(row)
+        decaying = row['phase'] == Phase.APPROACH and bool(row['feedback'].output.any())
         q, defaults = s.leg_pos[i:i+1], s.default_joint_pos[i:i+1]
         measured = self._reference(s, i)
         rpy = quaternion_rpy(measured.body.quat_w)
@@ -508,8 +627,9 @@ class ReferenceTeacher:
                 target, wheel = candidates[selected].tolist()
                 work.update(target=target, wheel=wheel, target_id=int(s.course_ids[i, target]),
                             phase=Phase.APPROACH, age=0, body_age=0, lift_age=0, stable=0, prepared=False)
-                for key in ('anchor', 'anchor_pose', 'wheel_anchor', 'support_origin', 'lift_start_z', 'goal'):
-                    work.pop(key, None)
+                if not decaying:
+                    for key in ('anchor', 'anchor_pose', 'wheel_anchor', 'support_origin', 'lift_start_z', 'goal'):
+                        work.pop(key, None)
         target, wheel, phase = work['target'], work['wheel'], work['phase']
         active = wheel >= 0
         support = [k for k in range(4) if k != wheel]
@@ -543,7 +663,7 @@ class ReferenceTeacher:
         if phase == Phase.APPROACH and active:
             distance = near_x-measured.wheels_w[0, wheel, 0]
             speed[:] = min(cfg.cruise_speed_m_s, max(0., float(distance)*cfg.approach_gain_s_inv))
-            if distance <= cfg.approach_capture_m:
+            if distance <= cfg.approach_capture_m and not decaying:
                 work.update(phase=Phase.BALANCE, age=0)
                 phase = Phase.BALANCE
                 speed.zero_()
@@ -568,8 +688,9 @@ class ReferenceTeacher:
             # this does not capture a world support anchor during motion.
             rotation = rpy_to_rotation_matrix(rpy)
             last = work.get('last_q', s.last_applied_leg_target[i:i+1])
-            accepted = PoseReference(measured.body, measured.body.pos_w[:, None]
-                                     +torch.einsum('bij,bkj->bki', rotation, body_feet(last)))
+            accepted = (work['accepted'] if decaying else
+                PoseReference(measured.body, measured.body.pos_w[:, None]
+                    +torch.einsum('bij,bkj->bki', rotation, body_feet(last))))
             requested = PoseReference(measured.body, measured.body.pos_w[:, None]
                                       +torch.einsum('bij,bkj->bki', rotation, body_feet(defaults[:, LEG_COLUMNS])))
         else:
@@ -697,37 +818,38 @@ class ReferenceTeacher:
                           and diagnostic is None and bool(s.recovered[i, target, wheel]))
 
         evidence['requested'] = requested
-        solved = backtrack_reference(accepted, requested, q, branch,
-            s.last_applied_leg_target[i:i+1], float(s.dt[i]), self.ik_cfg)
-        evidence.update(attempted=solved.reference, ik=solved.ik, backtrack_index=int(solved.backtrack_index[0]))
-        if active:
-            measured_rotation = rpy_to_rotation_matrix(rpy)
-            com_offset = torch.einsum('bij,bj->bi', measured_rotation.transpose(-1, -2),
-                                     s.com_pos_w[i:i+1]-measured.body.pos_w)
-            goal_rotation = rpy_to_rotation_matrix(quaternion_rpy(solved.reference.body.quat_w))
-            predicted = solved.reference.body.pos_w+torch.einsum('bij,bj->bi', goal_rotation, com_offset)
-            predicted_margin, _ = support_margin(predicted, solved.reference.wheels_w,
-                                                  torch.tensor([wheel], device=q.device))
-            evidence['predicted_com_margin_m'] = float(predicted_margin[0])
-        if not bool(solved.valid[0]):
-            return fail(Reason.IK_INVALID, FreezeReason.IK, count=True)
         if bool((speed != 0).any()):
             heading = work['yaw'] if work['prepared'] else rpy.new_zeros(1)
             yaw_error = rpy[:, 2]-heading
             yaw_error = torch.atan2(yaw_error.sin(), yaw_error.cos())
             speed += -cfg.yaw_gain_s_inv*yaw_error[:, None]*q.new_tensor([-.215, .215, -.215, .215])
-        action, encoded = encode_targets(solved.ik.q, speed, defaults)
+        solved,selected_integral=self._feedback_transaction(s,i,work,accepted,requested,q,branch,speed,evidence)
+        if active:
+            measured_rotation = rpy_to_rotation_matrix(rpy)
+            com_offset = torch.einsum('bij,bj->bi', measured_rotation.transpose(-1, -2),
+                                     s.com_pos_w[i:i+1]-measured.body.pos_w)
+            goal_rotation = rpy_to_rotation_matrix(quaternion_rpy(solved.physical.body.quat_w))
+            predicted = solved.physical.body.pos_w+torch.einsum('bij,bj->bi', goal_rotation, com_offset)
+            predicted_margin, _ = support_margin(predicted, solved.physical.wheels_w,
+                                                  torch.tensor([wheel], device=q.device))
+            evidence['predicted_com_margin_m'] = float(predicted_margin[0])
+        if not bool(solved.valid[0]):
+            return fail(Reason.IK_INVALID, FreezeReason.IK, count=True)
+        action, encoded = encode_targets(solved.command_ik.q, speed+solved.output[:,0,None], defaults)
         actual = m1_action_targets(action, defaults)[:, LEG_COLUMNS]
         continuous = bool(((actual-s.last_applied_leg_target[i:i+1]).abs() <= cfg.joint_target_rate_rad_s*float(s.dt[i])).all())
         if not bool(encoded[0]) or not continuous:
             return fail(Reason.ACTION_INVALID, FreezeReason.ACTION, count=True)
-        work.update(accepted=solved.reference, last_q=actual.clone(), branch_q=branch.clone(), invalid_streak=0)
+        work.update(accepted=solved.physical,accepted_command=solved.command,
+                    feedback=FeedbackState(selected_integral.clone(),solved.output.clone()),
+                    last_q=actual.clone(), branch_q=branch.clone(), invalid_streak=0)
         if work['prepared'] and phase != Phase.PASS:
             # Baseline for the next measured rolling increment, without moving
             # any preparation anchor. Old preparation slip is not PASS motion.
             work['support_previous'] = measured.wheels_w.clone()
         if finish:
             work.update(target=-1, wheel=-1, phase=Phase.APPROACH, age=0, body_age=0,
-                        lift_age=0, stable=0, prepared=False)
+                        lift_age=0, stable=0, prepared=False,
+                        feedback=FeedbackState(torch.zeros_like(selected_integral),solved.output.clone()))
         row.update(work)
         return self._output(s, i, row, action, True, Reason.OK, evidence, freeze, diagnostic)
