@@ -15,6 +15,9 @@ This controller's phase is never a crossing-success certificate.
 Native revision 1: LIFT additionally requires the complete transported body
 shift to be measured within 1cm, root speed <=.05m/s and recovered tilt/rate.
 These are preparation gates, not a new dwell time or a physical success claim.
+Native revision 2: BALANCE first brakes at live nominal joints. Only measured
+four-wheel bearing and stable motion lock the body reference and start the
+unchanged ramp. Braking time never advances interpolation or certifies success.
 """
 from dataclasses import asdict, dataclass, fields
 from enum import IntEnum
@@ -105,7 +108,7 @@ class TeacherConfig:
     @property
     def fingerprint(self):
         payload = dict(config=asdict(self), algorithm=REFERENCE_COMMIT,
-                       implementation='independent-dls-components-v3-native1-balance-readiness',
+                       implementation='independent-dls-components-v4-native2-brake-before-anchor',
                        asset_order=M1_ASSET_JOINT_NAMES, leg_scale=M1_LEG_ACTION_SCALE_RAD,
                        wheel_scale=M1_WHEEL_ACTION_SCALE_RAD_S)
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
@@ -358,7 +361,21 @@ class ReferenceTeacher:
                 distance = near_x-measured[0,wheel,0]
                 speed[:] = min(cfg.cruise_speed_m_s, max(0., float(distance)*cfg.approach_gain_s_inv))
                 if distance <= cfg.approach_capture_m:
-                    row.update(phase=Phase.BALANCE, age=0,
+                    row.update(phase=Phase.BALANCE, age=0, prepared=False,
+                               body_age=0, lift_age=0)
+                    # A new target must not inherit the previous target's anchor.
+                    for key in ('anchor','yaw','support_origin','lift_start_z','restore_q'):
+                        row.pop(key, None)
+            elif phase == Phase.BALANCE and not row['prepared']:
+                # Stop at live nominal before capturing a body-height/pose
+                # reference. This separates braking from body-shift IK; it
+                # does not impose a timed dwell or modify the LIFT gate below.
+                ready = bool(bearing.all())
+                ready &= bool(s.root_lin_vel_w[i].norm() <= cfg.balance_speed_limit_m_s)
+                ready &= bool(rpy[:,:2].abs().amax() <= cfg.recovery_tilt_rad)
+                ready &= bool(s.root_ang_vel_w[i,:2].abs().amax() <= cfg.recovery_rate_rad_s)
+                if ready:
+                    row.update(prepared=True,
                         anchor=s.root_pos_w[i:i+1].clone(), yaw=rpy[:,2].clone(),
                         support_origin=measured[:,support,:].mean(1).clone(),
                         lift_start_z=measured[0,wheel,2].clone(),
@@ -400,7 +417,10 @@ class ReferenceTeacher:
                     restore_complete = True
                     speed.zero_()
             phase = row['phase']
-            if row['target'] >= 0 and phase != Phase.APPROACH:
+            if phase == Phase.BALANCE and not row['prepared']:
+                # q_target is the live nominal pose; no IK and no clock advance.
+                speed.zero_()
+            elif row['target'] >= 0 and phase != Phase.APPROACH:
                 row['age'] += 1
                 age = row['age']
                 if phase == Phase.RESTORE:

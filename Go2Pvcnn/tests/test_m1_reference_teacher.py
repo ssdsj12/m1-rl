@@ -55,6 +55,8 @@ def teacher_in_lift():
     teacher, s = t.ReferenceTeacher(), state()
     s.wheel_pos_w[:,0,0] = .39
     assert teacher.step(s).phase.item() == t.Phase.BALANCE
+    s = advance(s)
+    assert teacher.step(s).phase.item() == t.Phase.BALANCE
     s = advance(measured_shift_ready(s))
     assert teacher.step(s).phase.item() == t.Phase.LIFT
     return teacher, advance(s)
@@ -441,7 +443,9 @@ def test_balance_reference_ramp_remains_continuous_when_measured_gate_advances()
     s = state()
     s.wheel_pos_w[:,0,0] = .39
     teacher = t.ReferenceTeacher()
-    a = teacher.step(s)
+    teacher.step(s)  # capture enters nominal braking preparation
+    s = advance(s)
+    a = teacher.step(s)  # measured ready: lock anchor and begin 1/30
     b = teacher.step(advance(measured_shift_ready(s)))
     assert a.phase.item() == t.Phase.BALANCE and b.phase.item() == t.Phase.LIFT
     # Two measured gates are allowed to advance, but do not skip 28 samples
@@ -457,6 +461,8 @@ def test_early_lift_gate_does_not_jump_to_full_lift_reference():
     s.wheel_pos_w[:,0,0] = .39
     teacher = t.ReferenceTeacher()
     teacher.step(s)
+    s = advance(s)
+    teacher.step(s)  # measured preparation, before supplying the body shift
     s = advance(measured_shift_ready(s))
     a = teacher.step(s)
     s = advance(s)
@@ -570,6 +576,8 @@ def test_balance_gate_requires_each_measured_component(unready):
     s.wheel_pos_w[:,0,0] = .39
     teacher = t.ReferenceTeacher()
     teacher.step(s)
+    s = advance(s)
+    teacher.step(s)  # start the ramp with a genuinely prepared observation
     s = advance(measured_shift_ready(s))
     if unready.startswith('position_'):
         if unready == 'position_norm':
@@ -601,6 +609,8 @@ def test_balance_clock_cannot_replace_preparation_measurements(unready):
     s.wheel_pos_w[:,0,0] = .39
     teacher = t.ReferenceTeacher()
     teacher.step(s)
+    s = advance(s)
+    teacher.step(s)
     if unready == 'velocity':
         s = measured_shift_ready(s)
         s.root_lin_vel_w[:,0] = .1
@@ -619,7 +629,9 @@ def test_ready_balance_gate_mirrors_all_wheels_and_is_not_minimum_dwell(wheel):
     s.wheel_pos_w[:,wheel,0] = .39
     teacher = t.ReferenceTeacher()
     assert teacher.step(s).phase.item() == t.Phase.BALANCE
-    # Full measured offset already exists: the second call may enter LIFT.
+    s = advance(s)
+    assert teacher.step(s).phase.item() == t.Phase.BALANCE
+    # Full measured offset exists after preparation: no minimum ramp dwell.
     s = advance(measured_shift_ready(s,wheel))
     # The reference follows actual rolling; translation cannot erase readiness.
     s.root_pos_w[:,:2] += .3
@@ -629,3 +641,95 @@ def test_ready_balance_gate_mirrors_all_wheels_and_is_not_minimum_dwell(wheel):
     assert out.phase.item() == t.Phase.LIFT and out.active_wheel.item() == wheel
     repeated = teacher.step(s)
     assert torch.equal(repeated.action,out.action) and torch.equal(repeated.phase,out.phase)
+
+
+@pytest.mark.parametrize('frame,velocity,rate', [
+    (35, [.27743432,.00102873,-.01792861], [.00235035,-.06839813,.01041066]),
+    (49, [.00263433,-.18288533,-.03328763], [-.13465767,-.46185583,-.08059801]),
+])
+def test_native_run2_moving_inputs_do_not_start_balance_ramp(frame, velocity, rate):
+    """Recorded run2 env0 motion measurements; not a physical counterfactual replay."""
+    t = api()
+    s = state()
+    s.wheel_pos_w[:,0,0] = .39
+    s.leg_pos[:] += .02  # preparation returns live nominal, not held actual q
+    s = replace(s, root_lin_vel_w=torch.tensor([velocity]), root_ang_vel_w=torch.tensor([rate]))
+    teacher = t.ReferenceTeacher()
+    for _ in range(35):
+        out = teacher.step(s)
+        assert out.valid.item() and out.phase.item() == t.Phase.BALANCE
+        assert not out.action.any()  # live nominal legs and stopped wheels
+        assert teacher._rows[0].get('body_age', 0) == 0
+        assert 'anchor' not in teacher._rows[0]
+        s = advance(s)
+
+
+@pytest.mark.parametrize('unready', ['target_unloaded','target_tangential','support_unloaded',
+    'speed_norm','roll','pitch','roll_rate','pitch_rate'])
+def test_balance_prep_needs_all_four_wheels_and_stable_motion(unready):
+    t = api()
+    s = state()
+    s.wheel_pos_w[:,0,0] = .39
+    if unready == 'target_unloaded':
+        s.wheel_force_w[:,0,2] = 30.
+    elif unready == 'target_tangential':
+        s.wheel_force_w[:,0,0] = 61.
+    elif unready == 'support_unloaded':
+        s.wheel_force_w[:,1,2] = 30.
+    elif unready == 'speed_norm':
+        s.root_lin_vel_w[:] = .03
+    elif unready in ('roll','pitch'):
+        s.root_quat_w[:,0] = torch.cos(torch.tensor(.16/2))
+        s.root_quat_w[:,1 if unready == 'roll' else 2] = torch.sin(torch.tensor(.16/2))
+    else:
+        s.root_ang_vel_w[:,0 if unready == 'roll_rate' else 1] = .201
+    teacher = t.ReferenceTeacher()
+    teacher.step(s)
+    out = teacher.step(advance(s))
+    assert out.valid.item() and not out.action.any()
+    assert 'anchor' not in teacher._rows[0]
+
+
+@pytest.mark.parametrize('wheel', range(4))
+def test_balance_prep_locks_late_once_and_starts_first_ramp_sample(wheel):
+    t = api()
+    s = state()
+    s.required_wheels.zero_()
+    s.required_wheels[:,0,wheel] = True
+    s.centers_top[:,0,0] = s.wheel_pos_w[:,wheel,0]+.05+.11915+.06
+    s.root_lin_vel_w[:,0] = .28
+    teacher = t.ReferenceTeacher()
+    first = teacher.step(s)
+    assert not first.action.any()
+    # Settled at a different position and height: no stale moving anchor.
+    s = advance(s, root_lin_vel_w=torch.zeros_like(s.root_lin_vel_w))
+    s.root_pos_w[:] += torch.tensor([.02,0.,-.01])
+    s.wheel_pos_w[:] += torch.tensor([.02,0.,-.01])
+    ready = teacher.step(s)
+    row = teacher._rows[0]
+    assert row['body_age'] == 1 and row['lift_age'] == 0
+    assert torch.equal(row['anchor'], s.root_pos_w)
+    assert torch.equal(row['support_origin'], s.wheel_pos_w[:,[k for k in range(4) if k != wheel]].mean(1))
+    # The first target uses measured feet and exactly 1/30 of the body shift.
+    expected = s.wheel_pos_w-s.root_pos_w[:,None]
+    expected -= torch.tensor([[[-.04 if wheel < 2 else .04, -.06 if wheel % 2 == 0 else .06, 0.]]])/30
+    q, valid = t.solve_ik_body(s.leg_pos, expected)
+    action, encoded = t.encode_targets(q, torch.zeros(1,4), s.default_joint_pos)
+    assert valid.item() and encoded.item() and ready.valid.item()
+    assert torch.allclose(ready.action, action, atol=1e-6)
+    assert torch.equal(teacher.step(s).action, ready.action) and row['body_age'] == 1
+    anchor = row['anchor'].clone()
+    s = advance(s)
+    teacher.step(s)
+    assert torch.equal(row['anchor'], anchor) and row['body_age'] == 2
+
+
+def test_reset_discards_previous_prepared_anchor_before_new_braking():
+    t = api()
+    teacher, s = teacher_in_lift()
+    s = advance(s, reset_mask=torch.ones(1,dtype=torch.bool), episode_id=torch.ones(1,dtype=torch.long))
+    assert teacher.step(s).reason.item() == t.Reason.RESET
+    s = advance(s, reset_mask=torch.zeros(1,dtype=torch.bool), root_lin_vel_w=torch.tensor([[.28,0.,0.]]))
+    out = teacher.step(s)
+    assert out.phase.item() == t.Phase.BALANCE and not out.action.any()
+    assert 'anchor' not in teacher._rows[0]
