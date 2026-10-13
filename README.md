@@ -1,5 +1,9 @@
 # M1 AME 越障学习
 
+## 2026-10-13 工作分支：`10-13`
+
+当天候选与后续支撑姿态/IK重设计改用`10-13`，`10-12`保留历史。当前教师仍未通过10cm验收；新架构处于设计阶段，未部署或开始学生训练。重设计拟采用统一坐标系的机身姿态目标、实测支撑准备和可达性受限IK；不改变机器人PD/物理或放宽成功判据。见[设计调查](notes/log/2026-10-13-m1-support-ik-redesign.md)。
+
 本仓库研究 M1 轮足机器人在 Isaac Lab 中的越障学习。2026-10-13 用户批准的新路线为：16维教师示范预训练、完全撤除教师、无教师验收后接续 AME + PPO。该路线目前仅在隔离候选目录实施与验收，尚未部署或启动学生训练；旧训练与自动监控保持暂停。历史纯 PPO 入口为 [`train_m1_cross_large_complex_ame.py`](Go2Pvcnn/scripts/train_m1_cross_large_complex_ame.py)，启动包装为 [`run_m1_pure_ppo.sh`](Go2Pvcnn/scripts/run_m1_pure_ppo.sh)，不得直接用旧入口恢复新方案。
 
 `Go2Pvcnn` 是沿用的目录名。其中历史 Go2、PVCNN、teacher 和 planner 实验仍保留。新教师只用于预训练与诊断，计划中的正式 PPO/play 不保留在线教师、IK、动作覆盖或模仿损失；不引入 AMP/MPC/WBC，不手动修改策略 std。代码或奖励验证通过不代表已经学会跨越。
