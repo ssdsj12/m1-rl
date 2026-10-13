@@ -3,7 +3,7 @@ from types import SimpleNamespace as NS
 import importlib.util
 import torch
 from ame_baseline import m1_ame_contract as c
-from extension.parallelism.m1_kinematics import M1_WHEEL_RADIUS_M
+from extension.parallelism.m1_kinematics import M1_WHEEL_RADIUS_M, M1_ASSET_JOINT_NAMES
 
 
 def test_reference_pose_and_new_learning_contract():
@@ -11,10 +11,23 @@ def test_reference_pose_and_new_learning_contract():
     assert c.M1_TRAINING_JOINT_POS == (0.,.3,-.6,0.)*2+(0.,-.3,.6,0.)*2
     assert M1_WHEEL_RADIUS_M == .0959
     info=c.m1_training_contract()
-    assert info['version'] == 2
+    # 1a2619a added bounded collision accounting to the existing reference
+    # contract. The reference pose/physics remained pinned at 31225e4 values.
+    assert info['version'] == 3
     assert info['policy_state_dim'] == 85 and info['critic_state_dim'] == 88
     assert info['reference_robot_commit'] == '8aeb845f73e39fd1e121758522ef05ee2378150f'
     assert info['learning_signal_version'] == 1
+    assert info['stance']=='reference_front_rear_inward_root062'
+    assert info['joint_names']==list(M1_ASSET_JOINT_NAMES)
+    assert info['joint_pos']==list(c.M1_TRAINING_JOINT_POS) and info['root_z']==.62
+    assert info['required_top_margin_m']==0. and info['obstacle_collision_reset'] is False
+    assert info['collision_budget']==dict(version=1,rate_per_s=5.,episode_budget=20.,
+        combination='max',immediate_reset=False,budget_terminal_extra_cost=0.,
+        other_failure_cost=20.,intermittent='retain_until_reset')
+    assert info['robot_physics']==dict(leg_motor='DCMotor',leg_pd=[120.,5.5],leg_effort=150.,
+        leg_velocity=20.,wheel_pd=[0.,30.],wheel_effort=200.,wheel_velocity=20.,
+        wheel_shape='cylinder_y',wheel_radius=.0959,wheel_width=.0465,
+        solver_iterations=[4,2],friction=[1.,1.],restitution=0.,mass_jitter=False)
 
 
 def test_reference_configuration_replaces_inherited_randomization_and_pd():

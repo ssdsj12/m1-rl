@@ -732,3 +732,193 @@ def test_request_target_roundtrip_uses_recorded_real_dtype_without_tolerance(dty
     sample['requested_processed_targets'][1]+=1e-10; write_trace(e)
     result=probe().verify_episode(e)
     assert not result['success']
+
+
+def diagnostic_runner(tmp_path,monkeypatch,scenario):
+    """Run the real scheduling/trace/video/result path with CPU command buffers.
+
+    Only simulator measurement/step and teacher output are fixtures; this does
+    not claim physical geometry. No UI/app, placement or native process exists.
+    """
+    import torch
+    import numpy as np
+    from types import SimpleNamespace as NS
+    from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES
+    import ame_baseline.m1_reference_teacher as teacher_module
+    module=probe(); run=object.__new__(module.NativeProbe)
+    run.torch=torch; run.output=tmp_path; run.teacher_cfg=teacher_module.TeacherConfig()
+    run.frames=torch.zeros(4,dtype=torch.long); run.episode=run.frames.clone(); run.attempt=run.frames.clone()
+    run.support_acquired=torch.zeros(4,dtype=torch.bool); run.inner_failed=run.support_acquired.clone()
+    run.recording={}; run.terminal={}; run.raw_joint_names=tuple(M1_ASSET_JOINT_NAMES)
+    run.wheels=list(range(4)); run.video_validated=True; run.started=[]; run.control_calls=0
+    run.env=NS(device='cpu',sim=NS(current_time=0.),seed=lambda seed:None,
+        command_manager=NS(get_command=lambda name:torch.zeros(4,3)))
+    asset=NS(joint_names=M1_ASSET_JOINT_NAMES,data=NS(root_pos_w=torch.zeros(4,3),
+        body_pos_w=torch.zeros(4,4,3),joint_pos_target=torch.zeros(4,16),joint_vel_target=torch.zeros(4,16)))
+    run.robot=asset
+    term=NS(_joint_names=M1_ASSET_JOINT_NAMES,_asset=asset,raw_actions=torch.zeros(4,16),processed_actions=torch.zeros(4,16))
+    def process(action): term.raw_actions.copy_(action); term.processed_actions.copy_(action)
+    def apply():
+        asset.data.joint_pos_target.copy_(term.processed_actions)
+        asset.data.joint_vel_target.copy_(term.processed_actions)
+    term.process_actions=process; term.apply_actions=apply
+    run.action_evidence=module.ActionEvidence(term,sim_time=lambda:run.env.sim.current_time)
+    run.bind_reset_identity=lambda rows:None
+    def stage(value): run.stage=value; run.started.append((value,run.diagnostic_wheel))
+    run.set_stage=stage
+    required=[[i,w] for i in range(8) for w in ((0,2) if i%2==0 else (1,3))]
+    def state(reset=None):
+        mask=torch.zeros(4,8,4,dtype=torch.bool)
+        if run.stage==3:
+            for target,wheel in required: mask[:,target,wheel]=True
+        return NS(course_ids=torch.arange(8).expand(4,-1),required_wheels=mask,
+            control_step=run.frames.clone(),episode_id=run.episode.clone(),
+            last_applied_leg_target=torch.zeros(4,12),default_joint_pos=torch.zeros(4,16))
+    run.state=state
+    class FixtureTeacher:
+        def __init__(self,cfg): self._rows=[{} for _ in range(4)]
+        def decide(self,state,wheel):
+            prepared=(scenario in ('prepared','bad-evidence') or (wheel is not None and wheel>0)
+                or scenario=='transient' and int(state.control_step[0])>=1)
+            self._rows=[dict(prepared=prepared,stable=0) for _ in range(4)]
+            data=torch.full((4,len(teacher_module.TEACHER_DIAGNOSTIC_FIELDS)),float('nan'))
+            for field,value in (('reference_valid',0 if scenario=='transient' and not prepared else 1),
+                    ('diagnostic_only',int(wheel is not None))):
+                data[:,teacher_module.TEACHER_DIAGNOSTIC_FIELDS.index(field)]=value
+            locked=torch.zeros(4,dtype=torch.bool)
+            if scenario in ('locked','acceptance-failure') and (wheel==0 or wheel is None): locked[0]=True
+            if scenario=='locked-last' and wheel==0: locked[3]=True
+            return NS(action=torch.zeros(4,16),active_target=torch.full((4,),-1,dtype=torch.long),
+                active_wheel=torch.full((4,),wheel or 0,dtype=torch.long),diagnostic=data,
+                failure_locked=locked,valid=torch.zeros(4,dtype=torch.bool))
+        def diagnostic_step(self,state,*,active_wheel,lift): return self.decide(state,active_wheel)
+        def step(self,state): return self.decide(state,None)
+    monkeypatch.setattr(teacher_module,'ReferenceTeacher',FixtureTeacher)
+    image=np.zeros((32,32,3),dtype=np.uint8); image[:16,:,0]=128
+    run.render_row=lambda row:image
+    def step(action):
+        run.control_calls+=1; run.frames+=1; term.process_actions(action)
+        for _ in range(4):
+            term.apply_actions(); run.action_evidence.observe_write(); run.action_evidence.observe_physics()
+            run.env.sim.current_time+=.005
+        run.action_evidence.observing=False
+        done=torch.full((4,),scenario=='acceptance-failure',dtype=torch.bool)
+        run.terminal={row:sample(row) for row in range(4)} if bool(done.any()) else {}
+        return None,None,done,None
+    run.step=step
+    def sample(row):
+        action=run.action_evidence.row(row,run.env.sim.current_time)
+        if scenario=='bad-evidence' and row==3: action['action_target_dtype']='unsupported'
+        return dict(schema_version=3,teacher_scope=run.scope,env_id=row,episode_id=int(run.episode[row]),
+            attempt_id=0,frame=int(run.frames[row]),sim_time=run.env.sim.current_time,
+            active_wheel=run.diagnostic_wheel or 0,phase=1,teacher_reason=5 if row==0 else 0,
+            teacher_valid=False,student_demonstration_usable=False,
+            failure_locked=bool(run.last_output.failure_locked[row]),Fz=[50.]*4,
+            wheel_position=[[0.,0.,0.]]*4,wheel_bottom=[0.]*4,obstacle_top=[.1]*8,
+            collision=False,support_lost=False,penetration=False,failure=False,timeout=False,
+            receipt=[],far_side_recovery=[],root=[0.,0.,.62,1.,0.,0.,0.]+[0.]*6,
+            raw_joint_names=list(M1_ASSET_JOINT_NAMES),joints=[0.]*16,**action)
+    run.sample=sample
+    run.reset_row=lambda row:None
+    return run
+
+
+def test_flat_preparation_critical_failure_drains_batch_and_never_starts_next_wheel(tmp_path,monkeypatch):
+    run=diagnostic_runner(tmp_path,monkeypatch,'locked')
+    run.teacher(acceptance=False,diagnostic_steps=20,scope='flat-preparation')
+    assert run.started==[(0,0)]
+    assert run.control_calls==6  # locking frame plus at most5 more control steps
+    result=json.loads((tmp_path/'result.json').read_text())
+    assert result['counted_episodes']==4 and result['diagnostic_stopped'] is True
+    assert result['diagnostic_stop']['env_id']==0
+    assert [x['wheel'] for x in result['not_run']]==[1,2,3]
+    records=[json.loads(path.read_text()) for path in tmp_path.glob('stage*.json')]
+    assert len(records)==4
+    assert [r['end'] for r in records if r['env_id']==0]==['teacher_failure_locked']
+    for record in records:
+        assert Path(record['video']['path']).is_file() and Path(record['trace']['path']).is_file()
+        assert len(record['samples'])==6 and not record['student_demonstration_usable']
+        if record['env_id']!=0:
+            assert record['end']=='diagnostic_interrupted'
+            assert not any(s['failure_locked'] or s['failure'] for s in record['samples'])
+            assert record['terminal']['diagnostic_interruption']['env_id']==0
+
+
+def test_flat_preparation_unmet_bound_stops_without_claiming_physical_failure(tmp_path,monkeypatch):
+    run=diagnostic_runner(tmp_path,monkeypatch,'unmet')
+    run.teacher(acceptance=False,diagnostic_steps=2,scope='flat-preparation')
+    assert run.started==[(0,0)] and run.control_calls==2
+    result=json.loads((tmp_path/'result.json').read_text())
+    assert result['diagnostic_stop']['reason']=='diagnostic_goal_unmet'
+    assert result['counted_episodes']==4 and len(result['not_run'])==3
+    for path in tmp_path.glob('stage*.json'):
+        record=json.loads(path.read_text())
+        assert not any(s['failure'] or s['failure_locked'] for s in record['samples'])
+
+
+def test_acceptance_gate_does_not_discard_fixed_200_failed_attempts(tmp_path,monkeypatch):
+    run=diagnostic_runner(tmp_path,monkeypatch,'acceptance-failure')
+    run.teacher(acceptance=True,diagnostic_steps=1,scope='course')
+    result=json.loads((tmp_path/'result.json').read_text())
+    assert run.started==[(0,None)]*5+[(3,None)]*5
+    assert result['counted_episodes']==200 and result['complete_full_denominator'] is True
+    assert result['milestone_a']=='FAIL'
+    assert result.get('diagnostic_stopped',False) is False
+
+
+def test_diagnostic_valid_false_successful_preparation_does_not_stop_next_wheel(tmp_path,monkeypatch):
+    run=diagnostic_runner(tmp_path,monkeypatch,'prepared')
+    run.teacher(acceptance=False,diagnostic_steps=3,scope='flat-preparation')
+    assert run.started==[(0,0),(0,1),(0,2),(0,3)]
+    result=json.loads((tmp_path/'result.json').read_text())
+    assert result['counted_episodes']==16 and not result.get('diagnostic_stopped',False)
+
+
+def test_unlocked_finite_ik_refusal_does_not_trigger_batch_stop(tmp_path,monkeypatch):
+    run=diagnostic_runner(tmp_path,monkeypatch,'transient')
+    run.teacher(acceptance=False,diagnostic_steps=3,scope='flat-preparation')
+    assert run.started==[(0,0),(0,1),(0,2),(0,3)] and run.control_calls==5
+    result=json.loads((tmp_path/'result.json').read_text())
+    assert not result['diagnostic_stopped'] and result['counted_episodes']==16
+
+
+def test_last_env_failure_is_latched_before_peer_finishes(tmp_path,monkeypatch):
+    run=diagnostic_runner(tmp_path,monkeypatch,'locked-last')
+    run.teacher(acceptance=False,diagnostic_steps=20,scope='flat-preparation')
+    assert run.started==[(0,0)] and run.control_calls==6
+    result=json.loads((tmp_path/'result.json').read_text())
+    assert result['diagnostic_stop']['env_id']==3 and result['counted_episodes']==4
+    for path in tmp_path.glob('stage*.json'):
+        record=json.loads(path.read_text())
+        if record['env_id']!=3:
+            assert record['end']=='diagnostic_interrupted' and record['diagnostic_interruption']['env_id']==3
+
+
+def test_late_evidence_failure_relabels_ended_peers_without_rewriting_trace(tmp_path,monkeypatch):
+    run=diagnostic_runner(tmp_path,monkeypatch,'bad-evidence')
+    run.teacher(acceptance=False,diagnostic_steps=3,scope='flat-preparation')
+    assert run.started==[(0,0)] and run.control_calls==1
+    result=json.loads((tmp_path/'result.json').read_text())
+    assert result['diagnostic_stop']['reason']=='evidence_invalid' and result['diagnostic_stop']['env_id']==3
+    for path in tmp_path.glob('stage*.json'):
+        record=json.loads(path.read_text())
+        assert probe().file_digest(record['trace']['path'])==record['trace']['sha256']
+        assert not record['student_demonstration_usable']
+        if record['env_id']==3:
+            assert record['end']=='diagnostic_evidence_failure'
+        else:
+            assert record['end']=='diagnostic_interrupted' and not record['verification']['errors']
+
+
+@pytest.mark.parametrize('flags,reason,physical',[
+    ({'failure_locked':True},'failure_locked',False),
+    ({'collision':True},'collision',True),
+    ({'failure_locked':True,'collision':True},'failure_locked',True),
+    ({'action_matches_request':False},'action_evidence_invalid',False),
+    ({'teacher_valid':False,'teacher_diagnostic':{'reference_valid':0}},None,False),
+])
+def test_diagnostic_gate_failure_classification_preserves_observed_physics(flags,reason,physical):
+    gate=probe().DiagnosticBatchGate(False)
+    gate.observe_sample(dict(env_id=2,episode_id=0,frame=7,**flags),7)
+    if reason is None: assert gate.failure is None
+    else: assert gate.failure['reason']==reason and gate.failure['physical_failure'] is physical

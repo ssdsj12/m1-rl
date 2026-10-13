@@ -57,6 +57,46 @@ class FailureDiagnosticBound:
     def reset(self,row): self.counts.pop(row,None)
 
 
+class DiagnosticBatchGate:
+    """Diagnostic-only stop latch; a peer interruption is not physical failure."""
+    def __init__(self,acceptance): self.acceptance=acceptance; self.failure=None
+
+    @staticmethod
+    def sample_reason(sample):
+        for reason in ('failure_locked','collision','support_lost','penetration','failure'):
+            if sample.get(reason,False): return reason
+        if sample.get('action_matches_request') is False or sample.get('applied_target_valid') is False:
+            return 'action_evidence_invalid'
+        return None
+
+    def latch(self,sample,step,reason,errors=None):
+        if not self.acceptance and self.failure is None:
+            self.failure=dict(env_id=sample['env_id'],episode_id=sample['episode_id'],
+                frame=sample['frame'],control_step=step,reason=reason,
+                physical_failure=any(sample.get(key,False) for key in ('collision','support_lost','penetration','failure')),
+                errors=list(errors or ()))
+
+    def observe_sample(self,sample,step):
+        reason=self.sample_reason(sample)
+        if reason: self.latch(sample,step,reason)
+
+    def observe_end(self,sample,end,step):
+        if ((end=='diagnostic_bound' or end=='natural_done' and sample.get('timeout',False))
+                and not sample.get('scope_observation_complete',False)):
+            self.latch(sample,step,'diagnostic_goal_unmet')
+
+    def observe_record(self,record,step):
+        errors=record['verification']['errors']
+        if errors: self.latch(record['terminal'],step,'evidence_invalid',errors)
+
+    def deadline(self,step):
+        return self.failure is not None and step-self.failure['control_step']>=5
+
+    def is_source(self,sample):
+        return self.failure is not None and (sample['env_id'],sample['episode_id'])==(
+            self.failure['env_id'],self.failure['episode_id'])
+
+
 def diagnostic_json(value):
     from ame_baseline.m1_reference_teacher import TEACHER_DIAGNOSTIC_FIELDS,TEACHER_DIAGNOSTIC_INTEGER_FIELDS
     if len(value)!=len(TEACHER_DIAGNOSTIC_FIELDS): raise ValueError('teacher diagnostic width mismatch')
@@ -1101,8 +1141,9 @@ class NativeProbe:
         self.scope=scope
         records=[]; t=self.torch
         schedule=teacher_schedule(scope,active_wheel)
+        gate=DiagnosticBatchGate(acceptance); batch_step=0
         try:
-            for stage,wheel in schedule:
+            for schedule_index,(stage,wheel) in enumerate(schedule):
                 self.diagnostic_wheel=wheel
                 for seed in (range(101,106) if acceptance else [101]):
                     self.env.seed(seed); self.set_stage(stage)
@@ -1111,6 +1152,7 @@ class NativeProbe:
                     self.bind_reset_identity(range(4))
                     self.failure_bound=FailureDiagnosticBound()
                     quotas=[5]*4 if acceptance else [1]*4
+                    batch_start=len(records)
                     required=[self.pairs(self.state().course_ids[i],self.state().required_wheels[i]) for i in range(4)]
                     def decide(state):
                         return teacher.step(state) if wheel is None else teacher.diagnostic_step(
@@ -1121,6 +1163,7 @@ class NativeProbe:
                     self.frames.zero_()
                     for row in range(4): self.begin_video(row,seed,stage)
                     while self.recording:
+                        batch_step+=1
                         input_time=float(self.env.sim.current_time)
                         input_state=self.state()
                         self.last_output=decide(input_state)
@@ -1128,9 +1171,14 @@ class NativeProbe:
                         command=self.env.command_manager.get_command('base_velocity')[:,0]
                         for row,rec in self.recording.items(): rec['command_distance']+=float(command[row])*.02
                         _,_,done,_=self.step(self.last_output.action)
-                        for row in list(self.recording):
-                            sample=self.terminal.get(row) if bool(done[row]) else self.sample(row)
+                        # Freeze and inspect the whole batch before ending/resetting
+                        # any row, so env ordering cannot hide a peer failure.
+                        batch_samples={row:self.terminal.get(row) if bool(done[row]) else self.sample(row)
+                            for row in list(self.recording)}
+                        for sample in batch_samples.values():
                             assert sample is not None, 'natural terminal snapshot lost before reset'
+                            gate.observe_sample(sample,batch_step)
+                        for row,sample in batch_samples.items():
                             rec=self.recording[row]; rec['samples'].append(sample)
                             diagnostic=sample.get('teacher_diagnostic',{})
                             reference_valid=diagnostic.get('reference_valid')==1
@@ -1164,19 +1212,29 @@ class NativeProbe:
                             sample['scope_observation_complete']=local_complete
                             sample['measured_local_lift_seen']=bool(rec['measured_lift_seen'])
                             sample['local_recovery_count']=int(rec['local_recovery_count'])
-                            rec['trace'].write(json.dumps(sample)+'\n'); rec['trace'].flush()
-                            if int(self.frames[row])%5==0 and not bool(done[row]): self.video_frame(row)
                             complete=(scope=='course' and stage==3 and len(required[row])==16 and
                                 {tuple(p) for p in required[row]} <= {tuple(p) for p in sample['receipt']} and
                                 {tuple(p) for p in required[row]} <= {tuple(p) for p in sample['far_side_recovery']})
                             horizon=scope=='course' and stage==0 and int(self.frames[row])==1000
                             failure_end=self.failure_bound.update(row,sample['failure_locked'])
                             diagnostic_end=not acceptance and int(self.frames[row])>=diagnostic_steps
-                            if bool(done[row]) or complete or horizon or diagnostic_end or failure_end or local_complete:
+                            batch_end=gate.deadline(batch_step)
+                            ending=bool(done[row]) or complete or horizon or diagnostic_end or failure_end or local_complete or batch_end
+                            end=None
+                            if ending:
                                 end='flat_horizon' if horizon else ('natural_done' if bool(done[row]) else
                                     ('teacher_failure_locked' if failure_end else 'task_complete' if complete else
-                                     'scope_observed' if local_complete else 'diagnostic_bound'))
+                                     'scope_observed' if local_complete else 'diagnostic_bound' if diagnostic_end else
+                                     'diagnostic_failure' if gate.is_source(sample) or gate.sample_reason(sample) else 'diagnostic_interrupted'))
+                                gate.observe_end(sample,end,batch_step)
+                                if gate.failure is not None and not gate.is_source(sample) and not gate.sample_reason(sample):
+                                    end='diagnostic_interrupted'
+                                    sample['diagnostic_interruption']=copy.deepcopy(gate.failure)
+                            rec['trace'].write(json.dumps(sample)+'\n'); rec['trace'].flush()
+                            if int(self.frames[row])%5==0 and not bool(done[row]): self.video_frame(row)
+                            if ending:
                                 record=self.finish_episode(row,required[row],end,bool(done[row]),sample['timeout'])
+                                gate.observe_record(record,batch_step)
                                 records.append(record); quotas[row]-=1
                                 print('TEACHER_EPISODE '+json.dumps({k:v for k,v in record.items() if k not in ('samples','terminal','video')}),flush=True)
                                 if quotas[row]>0:
@@ -1190,9 +1248,34 @@ class NativeProbe:
                                     saved=self.frames.clone(); self.frames[row]=-1
                                     decide(self.state(reset=mask)); self.frames.copy_(saved)
                                     self.begin_video(row,seed,stage)
+                    if gate.failure is not None:
+                        # Includes peers already finished before a later artifact
+                        # error. Update only the summary; trace/video stay intact.
+                        for record in records[batch_start:]:
+                            changed=False
+                            if gate.is_source(record['terminal']) and gate.failure['reason']=='evidence_invalid':
+                                record.update(end='diagnostic_evidence_failure',
+                                    diagnostic_failure=copy.deepcopy(gate.failure),student_demonstration_usable=False)
+                                changed=True
+                            elif (not gate.is_source(record['terminal']) and not record['verification']['errors']
+                                    and not any(gate.sample_reason(sample) for sample in record['samples'])):
+                                record.update(end='diagnostic_interrupted',
+                                    diagnostic_interruption=copy.deepcopy(gate.failure),student_demonstration_usable=False)
+                                changed=True
+                            if changed:
+                                record['verification']=verify_episode(record)
+                                self.write(Path(record['video']['path']).stem+'.json',record)
                     result=verify_suite(records,diagnostic=not acceptance)
+                    result.update(diagnostic_stopped=gate.failure is not None,
+                        diagnostic_stop=copy.deepcopy(gate.failure),
+                        not_run=[dict(stage=s,wheel=w,scope=scope,status='not_run',reason='prior_diagnostic_stop')
+                            for s,w in schedule[schedule_index+1:]] if gate.failure is not None else [])
                     self.write('result.json',result)
+                    if gate.failure is not None:
+                        print('MILESTONE_A '+json.dumps(result),flush=True)
+                        return result
             print('MILESTONE_A '+json.dumps(result),flush=True)
+            return result
         finally:
             for rec in self.recording.values():
                 rec['writer'].close(); rec['trace'].close()
