@@ -190,5 +190,3 @@ def solve_constrained_ik(q_seed, target_b, branch_q, cfg=None):
     return IKResult(q, (reason == int(IKReason.OK)).all(-1), residual,
                     joint_ok, branch_ok, extension_margin, workspace_ok,
                     iterations, reason)
-
-
