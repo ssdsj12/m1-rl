@@ -1,12 +1,15 @@
 """CPU tests for the native probe's fail-closed evidence verifier."""
 import copy
 import importlib.util
+import itertools
+import json
 from functools import lru_cache
 from pathlib import Path
 
 import pytest
 
 VIDEOS = {}
+TRACE_IDS = itertools.count()
 
 
 @pytest.fixture(scope='module', autouse=True)
@@ -33,6 +36,24 @@ def probe():
     return module
 
 
+def write_trace(record,rows=None):
+    """A real fixture artifact, rebound after intentional non-artifact mutations."""
+    if 'trace' not in record:
+        path=VIDEOS[10].parent/f'trace_{next(TRACE_IDS)}.jsonl'
+    else: path=Path(record['trace']['path'])
+    with path.open('w',encoding='utf-8') as stream:
+        for sample in record['samples'] if rows is None else rows:
+            stream.write(json.dumps(sample,separators=(',',':'))+'\n')
+    record['trace']=dict(path=str(path),bytes=path.stat().st_size,sha256=probe().file_digest(path))
+
+
+def verify_episode(record):
+    # These tests exercise other contracts with matching real trace evidence.
+    # Trace-tampering tests below call the verifier directly without rebinding.
+    write_trace(record)
+    return probe().verify_episode(record)
+
+
 def episode(stage=3, seed=101, episode_id=0):
     required = [[i, w] for i in range(8) for w in ((0, 2) if i % 2 == 0 else (1, 3))]
     frames = []
@@ -47,6 +68,8 @@ def episode(stage=3, seed=101, episode_id=0):
             applied_substeps=[dict(index=i,targets=[0.]*16,sim_time=(f-1)*.02+i*.005,
                 write_seen=True,physics_seen=True) for i in range(4)],
             action_process_count=1,physics_decimation=4,action_matches_request=True,
+            requested_processed_targets=[0.]*16,action_default_joint_pos=[0.]*16,
+            action_target_dtype='float32',
             teacher_diagnostic={**{n:None for n in TEACHER_DIAGNOSTIC_FIELDS},
                 'reference_valid':1,'diagnostic_only':0},last_applied_leg_target=[0.]*12,
             teacher_input_frame=f-1,teacher_input_episode_id=episode_id,teacher_input_sim_time=(f-1)*.02,
@@ -60,7 +83,7 @@ def episode(stage=3, seed=101, episode_id=0):
             root=[f*.006,0.,.62,1.,0.,0.,0.,.3,0.,0.,0.,0.,0.],
             far_side_recovery=required if f == count and stage else [],
             receipt=required if f == count and stage else []))
-    return dict(schema_version=3,teacher_scope='course',stage=stage, seed=seed, env_id=0, episode_id=episode_id,
+    record=dict(schema_version=3,teacher_scope='course',stage=stage, seed=seed, env_id=0, episode_id=episode_id,
         raw_joint_names=list(M1_ASSET_JOINT_NAMES),
         required=required if stage else [], samples=frames, end='task_complete' if stage else 'flat_horizon',
         timeout=stage == 0, natural_done=stage == 0,
@@ -69,10 +92,12 @@ def episode(stage=3, seed=101, episode_id=0):
         video=dict(path=str(VIDEOS[count]), sha256=probe().file_digest(VIDEOS[count]), bytes=VIDEOS[count].stat().st_size,
             isolated_robot=True, nonblack=True, frame_indices=list(range(0,count+1,5)),
             sim_times=[f*.02 for f in range(0,count+1,5)], first_frame=0, last_frame=count))
+    write_trace(record)
+    return record
 
 
 def test_accepts_only_full_receipt_episode():
-    assert probe().verify_episode(episode())['success']
+    assert verify_episode(episode())['success']
 
 
 @pytest.mark.parametrize('mutation', [
@@ -102,33 +127,33 @@ def test_accepts_only_full_receipt_episode():
 ])
 def test_rejects_false_success(mutation):
     e = episode(); mutation(e)
-    assert not probe().verify_episode(e)['success']
+    assert not verify_episode(e)['success']
 
 
 def test_flat_needs_actual_full_horizon_not_empty_required_vacuity():
     e = episode(0)
-    assert probe().verify_episode(e)['success']
+    assert verify_episode(e)['success']
     e['samples'] = e['samples'][:10]
-    assert not probe().verify_episode(e)['success']
+    assert not verify_episode(e)['success']
 
 
 def test_flat_stationary_full_horizon_is_not_locomotion_success():
     e=episode(0)
     for sample in e['samples']: sample['root'][0]=0.
     e['terminal']=copy.deepcopy(e['samples'][-1])
-    assert not probe().verify_episode(e)['success']
+    assert not verify_episode(e)['success']
 
 
 def test_missing_or_tampered_video_file_is_rejected():
     e=episode(); e['video']['path'] += '.missing'
-    assert not probe().verify_episode(e)['complete']
+    assert not verify_episode(e)['complete']
     e=episode(); e['video']['sha256']='f'*64
-    assert not probe().verify_episode(e)['complete']
+    assert not verify_episode(e)['complete']
 
 
 def test_stage3_cannot_change_the_16_required_obligations():
     e = episode(); e['required'] = e['required'][:1]
-    assert not probe().verify_episode(e)['success']
+    assert not verify_episode(e)['success']
 
 
 def test_flat_uses_same_post_step_origin_as_curriculum_gate():
@@ -136,7 +161,7 @@ def test_flat_uses_same_post_step_origin_as_curriculum_gate():
     e['samples'][-1]['root'][0]=4.201
     e['terminal']=copy.deepcopy(e['samples'][-1])
     # Gate captures start_x on first actual sample (.006), not the reset pose.
-    assert not probe().verify_episode(e)['success']
+    assert not verify_episode(e)['success']
 
 
 def test_suite_requires_unique_20_per_seed_and_both_stages():
@@ -145,7 +170,9 @@ def test_suite_requires_unique_20_per_seed_and_both_stages():
     assert module.verify_suite(records)['milestone_a'] == 'PASS'
     assert module.verify_suite(records[:-1])['milestone_a'] != 'PASS'
     assert module.verify_suite(records+[records[-1]])['milestone_a'] != 'PASS'
-    for e in records[100:106]: e['samples'][2]['collision'] = True
+    for e in records[100:106]:
+        e['samples'][2]['collision'] = True
+        write_trace(e)
     assert module.verify_suite(records)['milestone_a'] != 'PASS'
 
 
@@ -325,7 +352,7 @@ def test_probe_render_configuration_disables_temporal_reconstruction_only():
 ])
 def test_action_evidence_is_required_and_tied_to_precontrol_identity(change):
     e=episode(); change(e['samples'][2])
-    assert not probe().verify_episode(e)['success']
+    assert not verify_episode(e)['success']
 
 
 def test_action_evidence_freezes_real_processed_values_before_row_reset():
@@ -376,7 +403,7 @@ def test_action_evidence_freezes_real_processed_values_before_row_reset():
 ])
 def test_raw_joint_measurements_must_bind_unique_names_to_contract(change):
     e=episode(); change(e)
-    assert not probe().verify_episode(e)['success']
+    assert not verify_episode(e)['success']
 
 
 def test_raw_joint_snapshot_preserves_actual_order_and_old_buffers():
@@ -439,14 +466,14 @@ def test_apply_evidence_precedes_physics_and_survives_reset():
 
 def test_wrapper_changed_target_rejects_label():
     e=episode(); e['samples'][2]['action_matches_request']=False
-    assert not probe().verify_episode(e)['success']
-    assert not probe().verify_episode(e)['student_demonstration_usable']
+    assert not verify_episode(e)['success']
+    assert not verify_episode(e)['student_demonstration_usable']
 
 
 def test_locked_failure_counts_in_suite_denominator():
     e=episode(); e['end']='teacher_failure_locked'; e['samples'][-1]['failure_locked']=True
     e['terminal']=copy.deepcopy(e['samples'][-1])
-    assert probe().verify_episode(e)['complete']
+    assert verify_episode(e)['complete']
     result=probe().verify_suite([e])
     assert result['counted_episodes']==1 and result['locked_failures']==1
     bound=probe().FailureDiagnosticBound()
@@ -456,7 +483,7 @@ def test_locked_failure_counts_in_suite_denominator():
 @pytest.mark.parametrize('scope',['flat-preparation','single-wheel','first-obstacle','transitions'])
 def test_local_scope_cannot_claim_course_success(scope):
     e=episode(); e['teacher_scope']=scope
-    assert not probe().verify_episode(e)['success']
+    assert not verify_episode(e)['success']
     with pytest.raises(ValueError,match='course'):
         probe().validate_scope(scope,acceptance=True,active_wheel=None)
 
@@ -478,12 +505,12 @@ def test_reset_bootstrap_reads_real_buffers_without_step_or_nonreset_mutation():
 
 def test_missing_video_or_hash_fails_acceptance():
     e=episode(); e['video'].pop('sha256')
-    assert not probe().verify_episode(e)['success']
+    assert not verify_episode(e)['success']
 
 
 def test_old_schema_readable_without_new_field_fabrication():
     e=episode(); e.pop('schema_version')
-    result=probe().verify_episode(e)
+    result=verify_episode(e)
     assert not result['success'] and 'legacy schema lacks actual apply evidence' in result['errors']
 
 
@@ -493,6 +520,7 @@ def test_failed_early_attempt_stays_in_fixed_200_episode_denominator():
     failed['samples'][-1]['failure_locked']=True
     failed['samples'][2]['last_applied_leg_target']=[10.]*12
     failed['terminal']=copy.deepcopy(failed['samples'][-1])
+    write_trace(failed)
     result=probe().verify_suite(records)
     assert result['complete_full_denominator'] is True
     assert result['counted_episodes']==200 and result['locked_failures']==1
@@ -514,7 +542,7 @@ def test_failed_early_attempt_stays_in_fixed_200_episode_denominator():
 ])
 def test_actual_apply_contract_rejects_missing_or_inconsistent_substep_evidence(mutation):
     e=episode(); mutation(e['samples'][2])
-    assert not probe().verify_episode(e)['success']
+    assert not verify_episode(e)['success']
 
 
 def test_bootstrap_preserves_old_terminal_and_resets_multiple_rows():
@@ -591,7 +619,7 @@ def test_scope_schedule_preserves_original_stage_and_uses_all_preparation_wheels
 ])
 def test_label_must_agree_with_named_reference_valid_and_scope(mutation):
     e=episode(); mutation(e['samples'][2])
-    assert not probe().verify_episode(e)['success']
+    assert not verify_episode(e)['success']
 
 
 def test_empty_failed_attempt_counts_without_becoming_complete_evidence():
@@ -615,3 +643,92 @@ def test_bootstrap_preserves_bit_pattern_of_nonreset_actual_buffers():
     term.apply_actions=changed
     with pytest.raises(RuntimeError,match='non-reset actual target buffers'):
         evidence.bootstrap_reset(torch.tensor([True,False]))
+
+
+@pytest.mark.parametrize('mutate',[
+    lambda e:e.pop('trace'),
+    lambda e:e.update(trace=None),
+    lambda e:e['trace'].pop('sha256'),
+    lambda e:e['trace'].update(sha256='f'*64),
+    lambda e:e['trace'].update(bytes=1),
+    lambda e:e['trace'].update(path=e['trace']['path']+'.missing'),
+])
+def test_missing_or_tampered_trace_artifact_rejects_success_and_bc(mutate):
+    e=episode(); mutate(e)
+    result=probe().verify_episode(e)
+    assert not result['success'] and not result['student_demonstration_usable']
+
+
+def test_trace_content_tamper_is_rejected_without_trusting_metadata():
+    e=episode(); path=Path(e['trace']['path'])
+    path.write_text(path.read_text(encoding='utf-8').replace('"Fz":[50.0','"Fz":[51.0',1),encoding='utf-8')
+    result=probe().verify_episode(e)
+    assert not result['success'] and 'trace artifact verification failed' in result['errors']
+
+
+@pytest.mark.parametrize('mutate',[
+    lambda rows:rows[2]['teacher_diagnostic'].update(ik_residual_m_0=.123),
+    lambda rows:rows[2]['teacher_action'].__setitem__(0,.01),
+    lambda rows:rows.pop(),
+    lambda rows:rows.append(copy.deepcopy(rows[-1])),
+    lambda rows:rows[2].pop('teacher_diagnostic'),
+])
+def test_trace_rows_must_match_samples_even_after_valid_hash_refresh(mutate):
+    e=episode(); rows=copy.deepcopy(e['samples']); mutate(rows); write_trace(e,rows)
+    result=probe().verify_episode(e)
+    assert not result['success'] and 'trace records differ from samples' in result['errors']
+
+
+def test_invalid_json_trace_is_rejected():
+    e=episode(); path=Path(e['trace']['path']); path.write_text('{not json}\n',encoding='utf-8')
+    e['trace'].update(bytes=path.stat().st_size,sha256=probe().file_digest(path))
+    result=probe().verify_episode(e)
+    assert not result['success'] and 'trace artifact unreadable' in result['errors']
+
+
+def test_corresponding_nan_diagnostic_is_preserved_and_compared_without_dummy_values():
+    e=episode(); e['samples'][2]['teacher_diagnostic']['ik_residual_m_0']=float('nan')
+    write_trace(e)
+    assert probe().verify_episode(e)['success']
+    rows=copy.deepcopy(e['samples']); rows[2]['teacher_diagnostic']['ik_residual_m_0']=0.
+    write_trace(e,rows)
+    result=probe().verify_episode(e)
+    assert not result['success'] and 'trace records differ from samples' in result['errors']
+
+
+@pytest.mark.parametrize('mutate',[
+    lambda s:s['teacher_action'].__setitem__(1,.01),
+    lambda s:s['executed_action'].__setitem__(1,.01),
+    lambda s:s['requested_processed_targets'].__setitem__(1,.01),
+    lambda s:(s['teacher_action'].__setitem__(1,.01),s['executed_action'].__setitem__(1,.01)),
+    lambda s:s.pop('requested_processed_targets'),
+    lambda s:s.pop('action_default_joint_pos'),
+    lambda s:s.pop('action_target_dtype'),
+])
+def test_actual_request_execution_and_decoded_target_content_overrule_true_flag(mutate):
+    e=episode(); mutate(e['samples'][2]); write_trace(e)
+    assert e['samples'][2]['action_matches_request'] is True
+    result=probe().verify_episode(e)
+    assert not result['success'] and not result['student_demonstration_usable']
+
+
+@pytest.mark.parametrize('dtype',['float32','float64'])
+def test_request_target_roundtrip_uses_recorded_real_dtype_without_tolerance(dtype):
+    import torch
+    from ame_baseline.m1_ame_contract import m1_action_targets
+    e=episode(); sample=e['samples'][2]
+    sample['action_target_dtype']=dtype
+    sample['teacher_action'][1]=.01; sample['teacher_action'][3]=.3
+    action=torch.tensor([sample['teacher_action']],dtype=getattr(torch,dtype))
+    defaults=torch.tensor([sample['action_default_joint_pos']],dtype=getattr(torch,dtype))
+    sample['teacher_action']=action[0].tolist(); sample['executed_action']=action[0].tolist()
+    targets=m1_action_targets(action,defaults)[0].tolist()
+    sample['requested_processed_targets']=targets.copy(); sample['processed_targets']=targets.copy()
+    sample['applied_targets']=targets.copy()
+    for sub in sample['applied_substeps']: sub['targets']=targets.copy()
+    write_trace(e)
+    assert probe().verify_episode(e)['success']
+    # Smaller than physical slew tolerance: still a provenance contradiction.
+    sample['requested_processed_targets'][1]+=1e-10; write_trace(e)
+    result=probe().verify_episode(e)
+    assert not result['success']

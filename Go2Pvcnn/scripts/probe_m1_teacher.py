@@ -27,7 +27,7 @@ TEACHER_SCOPES = ('flat-preparation','single-wheel','first-obstacle','transition
 APPLY_KEYS = {'schema_version','teacher_scope','failure_locked','student_demonstration_usable',
     'applied_targets','applied_target_joint_names','applied_substeps','action_process_count',
     'physics_decimation','action_matches_request','applied_target_valid','teacher_diagnostic',
-    'last_applied_leg_target'}
+    'last_applied_leg_target','requested_processed_targets','action_default_joint_pos','action_target_dtype'}
 
 
 def validate_scope(scope, *, acceptance, active_wheel):
@@ -71,6 +71,52 @@ def digest(value):
 
 def file_digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def same_json_evidence(actual,expected):
+    """Exact corresponding values, with NaN equal only to NaN at the same key.
+
+    Missing measurement markers remain untouched. No field, array entry or
+    finite contradiction is omitted, filled or approximately compared.
+    """
+    if type(actual) is not type(expected): return False
+    if isinstance(actual,dict):
+        return actual.keys()==expected.keys() and all(same_json_evidence(actual[k],expected[k]) for k in actual)
+    if isinstance(actual,list):
+        return len(actual)==len(expected) and all(same_json_evidence(a,b) for a,b in zip(actual,expected))
+    if isinstance(actual,float) and math.isnan(actual): return math.isnan(expected)
+    return actual==expected
+
+
+def verify_trace(trace,samples):
+    """Read and hash current bytes; metadata alone never certifies trajectory."""
+    errors=[]
+    try:
+        path=Path(trace['path']); stat=path.stat(); raw=path.read_bytes()
+        if (not isinstance(trace.get('bytes'),int) or trace['bytes']<=0
+                or stat.st_size!=trace['bytes'] or len(raw)!=trace['bytes']
+                or hashlib.sha256(raw).hexdigest()!=trace['sha256']):
+            errors.append('trace artifact verification failed')
+        lines=raw.decode('utf-8-sig').splitlines()
+        matches=len(lines)==len(samples)
+        for index,line in enumerate(lines):
+            actual=json.loads(line)
+            if index>=len(samples) or not same_json_evidence(actual,samples[index]): matches=False
+        if not matches: errors.append('trace records differ from samples')
+    except (KeyError,OSError,ValueError,TypeError):
+        errors.append('trace artifact unreadable')
+    return errors
+
+
+@lru_cache(maxsize=256)
+def decoded_request_targets(action,defaults,dtype):
+    """Cache pure decoding for identical inputs only; never cache validity."""
+    import torch
+    from ame_baseline.m1_ame_contract import m1_action_targets
+    if dtype not in ('float32','float64'): raise ValueError('unsupported recorded action target dtype')
+    target=m1_action_targets(torch.tensor([action],dtype=getattr(torch,dtype)),
+        torch.tensor([defaults],dtype=getattr(torch,dtype)))
+    return tuple(target[0].tolist())
 
 
 @lru_cache(maxsize=256)
@@ -151,6 +197,21 @@ def verify_episode(record):
         if any(len(sample[key])!=16 or not all(math.isfinite(x) for x in sample[key])
                 for key in ('teacher_action','executed_action','processed_targets')):
             errors.append('missing or nonfinite action measurement')
+        if sample['teacher_action']!=sample['executed_action']:
+            errors.append('requested action differs from executed action')
+        if redesigned and {'requested_processed_targets','action_default_joint_pos','action_target_dtype'}<=sample.keys():
+            requested=sample['requested_processed_targets']; defaults=sample['action_default_joint_pos']
+            finite=lambda value:isinstance(value,list) and len(value)==16 and all(
+                isinstance(x,(float,int)) and not isinstance(x,bool) and math.isfinite(x) for x in value)
+            if not finite(requested) or not finite(defaults):
+                errors.append('missing or nonfinite requested target decoding evidence')
+            else:
+                try:
+                    decoded=decoded_request_targets(tuple(sample['teacher_action']),tuple(defaults),sample['action_target_dtype'])
+                    if list(decoded)!=requested or requested!=sample['processed_targets'] or requested!=sample.get('applied_targets'):
+                        errors.append('requested target decoding disagrees with processed or applied targets')
+                except (ValueError,TypeError,RuntimeError):
+                    errors.append('invalid requested target decoding evidence')
         if (sample['raw_joint_names']!=raw_names or len(sample['joints'])!=len(raw_names)
                 or not all(math.isfinite(x) for x in sample['joints'])):
             errors.append('raw joint measurement/name contract mismatch')
@@ -159,7 +220,8 @@ def verify_episode(record):
         if not all(math.isfinite(x) for key in ('Fz','wheel_bottom','obstacle_top','root') for x in sample[key]):
             errors.append('nonfinite physical measurement')
     terminal = record.get('terminal')
-    if terminal != samples[-1]: errors.append('missing or mismatched pre-reset terminal snapshot')
+    if not same_json_evidence(terminal,samples[-1]): errors.append('missing or mismatched pre-reset terminal snapshot')
+    errors.extend(verify_trace(record.get('trace') or {},samples))
     video = record.get('video') or {}
     indices = video.get('frame_indices', [])
     times = video.get('sim_times', [])
@@ -526,6 +588,10 @@ class ActionEvidence:
                 teacher_input_episode_id=int(state.episode_id[row]),teacher_input_sim_time=float(sim_time),
                 teacher_action=output.action[row].detach().clone().tolist(),
                 requested_processed_targets=requested,
+                action_default_joint_pos=state.default_joint_pos[row].detach().clone().tolist()
+                    if hasattr(state,'default_joint_pos') else None,
+                action_target_dtype=str(state.default_joint_pos.dtype).removeprefix('torch.')
+                    if hasattr(state,'default_joint_pos') else None,
                 last_applied_leg_target=state.last_applied_leg_target[row].detach().clone().tolist()
                     if hasattr(state,'last_applied_leg_target') else None,
                 teacher_diagnostic=diagnostic_json(output.diagnostic[row].tolist())
