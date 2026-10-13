@@ -24,3 +24,11 @@ Parent：[T306](../todo/T306-m1-ame-long-train-stability.md)。阶段：动作�
 - Candidate Ref：本次design-only提交；不改变Last Feature/Verified代码ref。
 - Key Files：上述规格与动作/合同源文件（源文件未修改）。
 - 下一步：用户审阅规格后writing-plans；不得重启旧训练或把设计提交当部署。
+
+## 2026-10-13 规格确认与实施计划
+
+用户已确认书面规格。[实施计划](../../docs/superpowers/plans/2026-10-13-m1-teacher-to-ppo.md)划分为新合同/教师原生验收、模仿与无教师学生验收、critic校准/PPO交接三个串行里程碑。已定位真实代码入口位于ame_baseline而非参考仓库tasks路径；现有ActorCriticAME共享CNN/MHA且含BatchNorm，critic校准须同时冻结共享权重和统计量，不能只冻结actor head。
+
+只读发现的接线风险已进入计划：runner在固定轮模式才保存旧action_contract，新16维须显式新合同；LearningCurriculumGate当前依次晋级0..4，新profile须保存(0,3)；CollisionBudget当前5*dt*signal，新profile须显式2*(signal>0)并保留旧模式以便历史诊断；旧get_mpc_teacher_action不得借此重新启用。
+
+本轮只写计划并自查规格覆盖，没有运行测试/修改runtime/部署/开训。设计f58f1fd为本地提交；预存监控/诊断notes和watcher不纳入本次文档提交。等待执行方式选择，不重复要求批准既定路线。
