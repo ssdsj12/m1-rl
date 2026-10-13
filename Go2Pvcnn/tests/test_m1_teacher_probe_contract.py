@@ -753,6 +753,10 @@ def diagnostic_runner(tmp_path,monkeypatch,scenario):
     run.wheels=list(range(4)); run.video_validated=True; run.started=[]; run.control_calls=0
     run.env=NS(device='cpu',sim=NS(current_time=0.),seed=lambda seed:None,
         command_manager=NS(get_command=lambda name:torch.zeros(4,3)))
+    flat_horizon=scenario.startswith('flat-horizon-')
+    if flat_horizon:
+        command=torch.zeros(4,3); command[:,0]=.3
+        run.env.command_manager.get_command=lambda name:command
     asset=NS(joint_names=M1_ASSET_JOINT_NAMES,data=NS(root_pos_w=torch.zeros(4,3),
         body_pos_w=torch.zeros(4,4,3),joint_pos_target=torch.zeros(4,16),joint_vel_target=torch.zeros(4,16)))
     run.robot=asset
@@ -790,7 +794,7 @@ def diagnostic_runner(tmp_path,monkeypatch,scenario):
             if scenario=='locked-last' and wheel==0: locked[3]=True
             return NS(action=torch.zeros(4,16),active_target=torch.full((4,),-1,dtype=torch.long),
                 active_wheel=torch.full((4,),wheel or 0,dtype=torch.long),diagnostic=data,
-                failure_locked=locked,valid=torch.zeros(4,dtype=torch.bool))
+                failure_locked=locked,valid=torch.full((4,),flat_horizon,dtype=torch.bool))
         def diagnostic_step(self,state,*,active_wheel,lift): return self.decide(state,active_wheel)
         def step(self,state): return self.decide(state,None)
     monkeypatch.setattr(teacher_module,'ReferenceTeacher',FixtureTeacher)
@@ -802,21 +806,24 @@ def diagnostic_runner(tmp_path,monkeypatch,scenario):
             term.apply_actions(); run.action_evidence.observe_write(); run.action_evidence.observe_physics()
             run.env.sim.current_time+=.005
         run.action_evidence.observing=False
-        done=torch.full((4,),scenario=='acceptance-failure',dtype=torch.bool)
+        done=torch.full((4,),scenario=='acceptance-failure' or flat_horizon and (
+            run.stage==3 or int(run.frames[0])>=1000),dtype=torch.bool)
         run.terminal={row:sample(row) for row in range(4)} if bool(done.any()) else {}
         return None,None,done,None
     run.step=step
     def sample(row):
         action=run.action_evidence.row(row,run.env.sim.current_time)
         if scenario=='bad-evidence' and row==3: action['action_target_dtype']='unsupported'
+        x=float(run.frames[row])*(.006 if scenario=='flat-horizon-good' else .003) if flat_horizon else 0.
         return dict(schema_version=3,teacher_scope=run.scope,env_id=row,episode_id=int(run.episode[row]),
             attempt_id=0,frame=int(run.frames[row]),sim_time=run.env.sim.current_time,
             active_wheel=run.diagnostic_wheel or 0,phase=1,teacher_reason=5 if row==0 else 0,
-            teacher_valid=False,student_demonstration_usable=False,
+            teacher_valid=flat_horizon,student_demonstration_usable=flat_horizon,
             failure_locked=bool(run.last_output.failure_locked[row]),Fz=[50.]*4,
             wheel_position=[[0.,0.,0.]]*4,wheel_bottom=[0.]*4,obstacle_top=[.1]*8,
-            collision=False,support_lost=False,penetration=False,failure=False,timeout=False,
-            receipt=[],far_side_recovery=[],root=[0.,0.,.62,1.,0.,0.,0.]+[0.]*6,
+            collision=False,support_lost=False,penetration=False,failure=False,
+            timeout=flat_horizon and run.stage==0 and int(run.frames[row])>=1000,
+            receipt=[],far_side_recovery=[],root=[x,0.,.62,1.,0.,0.,0.]+[0.]*6,
             raw_joint_names=list(M1_ASSET_JOINT_NAMES),joints=[0.]*16,**action)
     run.sample=sample
     run.reset_row=lambda row:None
@@ -922,3 +929,42 @@ def test_diagnostic_gate_failure_classification_preserves_observed_physics(flags
     gate.observe_sample(dict(env_id=2,episode_id=0,frame=7,**flags),7)
     if reason is None: assert gate.failure is None
     else: assert gate.failure['reason']==reason and gate.failure['physical_failure'] is physical
+
+
+def test_course_diagnostic_flat_horizon_unmet_success_stops_stage3_with_complete_evidence(tmp_path,monkeypatch):
+    run=diagnostic_runner(tmp_path,monkeypatch,'flat-horizon-unmet')
+    run.teacher(acceptance=False,diagnostic_steps=1000,scope='course')
+    first=json.loads((tmp_path/'stage0_seed101_env0_episode0.json').read_text())
+    assert first['end']=='flat_horizon' and len(first['samples'])==1000
+    assert first['verification']['complete'] is True and first['verification']['errors']==[]
+    assert first['verification']['success'] is False
+    progress=first['samples'][-1]['root'][0]-first['samples'][0]['root'][0]
+    assert progress<.7*first['command_distance']
+    assert run.started==[(0,None)] and run.control_calls==1000
+    result=json.loads((tmp_path/'result.json').read_text())
+    assert result['counted_episodes']==4 and result['diagnostic_stop']['reason']=='diagnostic_goal_unmet'
+    assert result['diagnostic_stop']['physical_failure'] is False
+    assert [item['stage'] for item in result['not_run']]==[3]
+    assert len(list(tmp_path.glob('stage0*.json')))==4 and not list(tmp_path.glob('stage3*'))
+    for path in tmp_path.glob('stage0*.json'):
+        record=json.loads(path.read_text())
+        assert Path(record['video']['path']).is_file()
+        assert probe().file_digest(record['trace']['path'])==record['trace']['sha256']
+
+
+def test_course_diagnostic_successful_flat_horizon_continues_stage3(tmp_path,monkeypatch):
+    run=diagnostic_runner(tmp_path,monkeypatch,'flat-horizon-good')
+    run.teacher(acceptance=False,diagnostic_steps=1000,scope='course')
+    first=json.loads((tmp_path/'stage0_seed101_env0_episode0.json').read_text())
+    assert first['verification']['success'] is True and first['verification']['errors']==[]
+    assert run.started==[(0,None),(3,None)] and run.control_calls==1001
+    result=json.loads((tmp_path/'result.json').read_text())
+    assert result['counted_episodes']==8 and result['flat_success']==4
+
+
+def test_formal_acceptance_does_not_latch_failed_flat_horizon():
+    gate=probe().DiagnosticBatchGate(True)
+    gate.observe_record(dict(stage=0,end='flat_horizon',
+        verification=dict(errors=[],success=False),
+        terminal=dict(env_id=0,episode_id=0,frame=1000)),1000)
+    assert gate.failure is None and not gate.deadline(1005)

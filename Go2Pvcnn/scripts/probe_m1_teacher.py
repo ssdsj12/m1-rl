@@ -88,6 +88,9 @@ class DiagnosticBatchGate:
     def observe_record(self,record,step):
         errors=record['verification']['errors']
         if errors: self.latch(record['terminal'],step,'evidence_invalid',errors)
+        elif (record.get('stage')==0 and record.get('end')=='flat_horizon'
+                and not record['verification']['success']):
+            self.latch(record['terminal'],step,'diagnostic_goal_unmet')
 
     def deadline(self,step):
         return self.failure is not None and step-self.failure['control_step']>=5
