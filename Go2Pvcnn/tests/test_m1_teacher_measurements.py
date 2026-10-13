@@ -23,24 +23,24 @@ def test_bad_mass_is_row_local():
     assert torch.isnan(com[1:]).all()
 
 
-def fixture():
+def fixture(batch=1):
     from test_m1_reference_teacher import state
     from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES
     from ame_baseline.m1_teacher_adapter import WHEEL_BODY_NAMES
-    s = state()
+    s = state(batch=batch)
     names = tuple(reversed(M1_ASSET_JOINT_NAMES))
     bodies = tuple(reversed(WHEEL_BODY_NAMES))
     robot = SimpleNamespace(joint_names=names, body_names=bodies,
-        root_physx_view=SimpleNamespace(get_masses=lambda: torch.tensor([[3., 1., 0., 0.]])),
+        root_physx_view=SimpleNamespace(get_masses=lambda: torch.tensor([[3., 1., 0., 0.]]).repeat(batch,1)),
         data=SimpleNamespace(root_pos_w=s.root_pos_w, root_quat_w=s.root_quat_w,
             root_lin_vel_w=s.root_lin_vel_w, root_ang_vel_w=s.root_ang_vel_w,
             joint_pos=s.default_joint_pos.flip(-1), default_joint_pos=s.default_joint_pos.flip(-1),
             body_pos_w=s.wheel_pos_w.flip(1), body_quat_w=s.wheel_quat_w.flip(1),
-            body_com_pos_w=torch.tensor([[[0., 0., 0.], [4., 0., 0.], [8., 0., 0.], [9., 0., 0.]]]),
-            default_root_state=torch.tensor([[0., 0., .62]+[0.]*10])))
+            body_com_pos_w=torch.tensor([[[0., 0., 0.], [4., 0., 0.], [8., 0., 0.], [9., 0., 0.]]]).repeat(batch,1,1),
+            default_root_state=torch.tensor([[0., 0., .62]+[0.]*10]).repeat(batch,1)))
     sensor = SimpleNamespace(body_names=bodies, data=SimpleNamespace(net_forces_w=s.wheel_force_w.flip(1)))
     class Scene(dict):
-        env_origins = torch.zeros(1, 3)
+        env_origins = torch.zeros(batch, 3)
     calls = dict(step=0, reset=0)
     def forbidden(name):
         def call(*args, **kwargs):
@@ -56,6 +56,44 @@ def fixture():
     kwargs = dict(control_step=s.control_step, episode_id=s.episode_id,
                   reset_mask=s.reset_mask, collision=s.collision)
     return wrapper, s, kwargs, calls
+
+
+def test_adapter_normalizes_mass_tensor_at_pure_boundary(monkeypatch):
+    from ame_baseline import m1_teacher_adapter as adapter
+    wrapper, s, kwargs, _ = fixture()
+    raw = torch.tensor([[3., 1., 0., 0.]], dtype=torch.float64)
+    wrapper.unwrapped.scene['robot'].root_physx_view.get_masses = lambda: raw
+    pure = adapter.mass_weighted_com
+    seen = []
+    def checked(pos, masses):
+        assert masses.device == pos.device
+        assert masses.dtype == pos.dtype
+        seen.append(masses)
+        return pure(pos, masses)
+    monkeypatch.setattr(adapter, 'mass_weighted_com', checked)
+    result = adapter.ReferenceTeacherAdapter(wrapper).snapshot(**kwargs,
+        last_applied_leg_target=s.last_applied_leg_target, applied_target_valid=s.applied_target_valid)
+    assert len(seen) == 1 and result.com_pos_w.dtype == torch.float32
+    assert torch.equal(result.com_pos_w, torch.tensor([[1., 0., 0.]]))
+    assert raw.dtype == torch.float64
+
+
+@pytest.mark.parametrize('bad', ['root_quaternion', 'wheel_quaternion', 'target'])
+def test_snapshot_invalidity_is_row_local(bad):
+    from ame_baseline.m1_teacher_adapter import ReferenceTeacherAdapter
+    wrapper, s, kwargs, _ = fixture(batch=2)
+    robot = wrapper.unwrapped.scene['robot']
+    if bad == 'root_quaternion':
+        robot.data.root_quat_w[0].zero_()
+    elif bad == 'wheel_quaternion':
+        robot.data.body_quat_w[0,0].zero_()
+    else:
+        s.last_applied_leg_target[0,0] = float('nan')
+    result = ReferenceTeacherAdapter(wrapper).snapshot(**kwargs,
+        last_applied_leg_target=s.last_applied_leg_target, applied_target_valid=s.applied_target_valid)
+    assert result.measurement_valid.tolist() == ([True, True] if bad == 'target' else [False, True])
+    assert result.applied_target_valid.tolist() == ([False, True] if bad == 'target' else [True, True])
+    assert torch.equal(result.com_pos_w[1], torch.tensor([1., 0., 0.]))
 
 
 def test_snapshot_clones_named_targets_and_never_steps():
@@ -101,13 +139,17 @@ def test_snapshot_marks_bad_evidence_invalid(bad):
     assert not flag.item()
 
 
-@pytest.mark.parametrize('bad', ['mass_shape', 'body_shape', 'target_shape', 'valid_dtype', 'names'])
+@pytest.mark.parametrize('bad', ['mass_type', 'mass_dtype', 'mass_shape', 'body_shape', 'target_shape', 'valid_dtype', 'names'])
 def test_snapshot_rejects_malformed_contract(bad):
     from ame_baseline.m1_teacher_adapter import ReferenceTeacherAdapter
     wrapper, s, kwargs, _ = fixture()
     robot = wrapper.unwrapped.scene['robot']
     kwargs.update(last_applied_leg_target=s.last_applied_leg_target, applied_target_valid=s.applied_target_valid)
-    if bad == 'mass_shape':
+    if bad == 'mass_type':
+        robot.root_physx_view.get_masses = lambda: [[3.,1.,0.,0.]]
+    elif bad == 'mass_dtype':
+        robot.root_physx_view.get_masses = lambda: torch.ones(1,4, dtype=torch.long)
+    elif bad == 'mass_shape':
         robot.root_physx_view.get_masses = lambda: torch.ones(1,3)
     elif bad == 'body_shape':
         robot.data.body_com_pos_w = torch.zeros(1,3,3)

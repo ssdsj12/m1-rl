@@ -66,10 +66,17 @@ class ReferenceTeacherAdapter:
             measured = torch.zeros(b, dtype=torch.bool, device=data.root_pos_w.device)
         else:
             masses = mass_view.get_masses()
-            if (body_com.shape != (b,len(body_names),3)
-                    or body_com.device != data.root_pos_w.device):
-                raise ValueError('body_com_pos_w has invalid articulation body shape or device')
-            com, measured = mass_weighted_com(body_com, masses)
+            if (not isinstance(body_com, torch.Tensor)
+                    or body_com.shape != (b,len(body_names),3)
+                    or body_com.device != data.root_pos_w.device
+                    or not body_com.is_floating_point()):
+                raise ValueError('body_com_pos_w has invalid articulation body shape, device or dtype')
+            if (not isinstance(masses, torch.Tensor)
+                    or masses.shape != (b,len(body_names)) or not masses.is_floating_point()):
+                raise ValueError('masses have invalid articulation body shape or dtype')
+            # PhysX may expose CPU masses beside device-local body COM buffers.
+            # Normalize this boundary only; the pure function remains strict.
+            com, measured = mass_weighted_com(body_com, masses.to(body_com))
         applied = last_applied_leg_target[:,target_ids].clone()
         nominal_z = data.default_root_state[:,2]+env.scene.env_origins[:,2]
         state = TeacherState(
