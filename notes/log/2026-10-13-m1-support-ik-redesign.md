@@ -35,8 +35,9 @@ run3四个10cm回合仍未进入LIFT，先IK_INVALID58/59，再unsafe87；无rec
 - [x] 用户确认推荐架构，允许教师主动降低、前后及侧移机身。
 - [x] 按确认方案写[正式规格](../../docs/superpowers/specs/2026-10-13-m1-support-ik-redesign-design.md)，明确坐标、支撑、IK接口和有界失败处理。
 - [x] 规格自审：明确预测COM近似、候选搜索上限、执行目标连续性及诊断退出不改环境reset。
-- [ ] 用户审阅书面规格及本版新增数值边界。
-- [ ] writing-plans形成实施计划，再按子代理实现/规格/质量审查执行。
+- [x] 用户审阅并确认书面规格及本版新增数值边界。
+- [x] writing-plans形成[实施计划](../../docs/superpowers/plans/2026-10-13-m1-support-ik-redesign.md)，完成范围/接口/反例覆盖自审。
+- [ ] 用户审阅实施计划，随后按已指定子代理方式实现/规格/质量审查。
 
 ## 本次验证
 
@@ -47,3 +48,9 @@ run3四个10cm回合仍未进入LIFT，先IK_INVALID58/59，再unsafe87；无rec
 用户回复“确认，允许”，本轮完成书面设计，不重复询问架构许可。文档基线`58a564b`。首版提出机身前后±4cm/侧移±6cm/降低最多8cm、实测COM投影10mm余量、近伸直膝角.10rad及执行腿目标2.5rad/s连续性约束；这些是待审与待物理验证的教师参数，不是已取得效果。全部四腿联合可达性与原2mm残差保持，无解冻结，连续5步无解锁定示范失败。
 
 按brainstorming流程先由用户审阅已保存规格，再写子代理实施计划。没有改runtime/生产，没有GPU或学生训练；既有失败教师验收仍阻断BC。原有dirty notes/watchers不混入本次文档提交。仅检查文档diff、相对链接和范围，不把文档检查称作运行测试。
+
+## 书面规格确认后：执行计划
+
+用户再次回复“确认”，本轮将书面规格标为已批准，并形成六项计划：真实测量/执行目标、受约束IK、机身参考、状态提交、诊断证据、分级原生验收。沿用已指定子代理方式，每项先RED/GREEN后规格与质量审查；主代理独占GPU调度。计划明确当前host/candidate/Python和实际apply目标来源，未读取或修改全局配置。
+
+Baseline Ref：`cb6fde98452efd8fb076eddbd1c8f4fc654ee971`（已独立确认远端10-13）。本轮仅计划/规格状态/README变更；Key Files为`docs/superpowers/plans/2026-10-13-m1-support-ik-redesign.md`与对应spec。Last Feature/Verified Ref不变。文档检查为相对链接、占位符、diff及规格覆盖，不是CPU控制测试。按writing-plans要求等待计划审阅，不重复询问执行方式；原生A未通过仍不允许学生训练。
