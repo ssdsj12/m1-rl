@@ -255,6 +255,13 @@ def test_invalid_numeric_configuration_is_rejected(field, value):
         replace(ik.IKConfig(), **{field: value})
 
 
+@pytest.mark.parametrize('field,value', [('damping', .1), ('damping', 1e-300),
+                                       ('fd_epsilon', .01), ('fd_epsilon', 1e-300)])
+def test_dls_parameters_are_locked_to_approved_constants(field, value):
+    with pytest.raises(ValueError):
+        replace(ik.IKConfig(), **{field: value})
+
+
 def test_stricter_guard_keeps_margin_at_spec_boundary():
     q = nominal()
     q[:, 2] = -.15

@@ -35,6 +35,8 @@ class IKConfig:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
                 raise ValueError(f'{name} must be finite and positive')
+        if self.damping != .05 or self.fd_epsilon != 1e-4:
+            raise ValueError('damping and fd_epsilon are fixed at .05 and 1e-4')
         if type(self.ik_iterations) is not int or not 1 <= self.ik_iterations <= 32:
             raise ValueError('ik_iterations must be an integer in [1,32]')
         if self.dq_component_limit_rad > .25 or self.ik_tolerance_m > .002 or self.min_knee_abs_rad < .10:
