@@ -21,7 +21,7 @@ SAMPLE_KEYS = {'env_id','episode_id','attempt_id','frame','sim_time','active_whe
     'failure','teacher_valid','far_side_recovery','receipt','root',
     'teacher_input_frame','teacher_input_episode_id','teacher_input_sim_time',
     'teacher_action','executed_action','processed_targets','action_joint_names',
-    'processed_target_joint_names','active_target','teacher_ages_after_decision'}
+    'processed_target_joint_names','active_target','teacher_ages_after_decision','raw_joint_names','joints'}
 
 
 def digest(value):
@@ -49,6 +49,9 @@ def verify_episode(record):
     """Evidence validation and success are distinct; failures still count episodes."""
     errors = []
     from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES
+    raw_names=record.get('raw_joint_names',[])
+    if len(raw_names)!=16 or len(set(raw_names))!=16 or set(raw_names)!=set(M1_ASSET_JOINT_NAMES):
+        errors.append('missing unique raw joint contract')
     samples = record.get('samples', [])
     stage = record.get('stage')
     if not samples or stage not in (0,3):
@@ -71,6 +74,9 @@ def verify_episode(record):
         if any(len(sample[key])!=16 or not all(math.isfinite(x) for x in sample[key])
                 for key in ('teacher_action','executed_action','processed_targets')):
             errors.append('missing or nonfinite action measurement')
+        if (sample['raw_joint_names']!=raw_names or len(sample['joints'])!=len(raw_names)
+                or not all(math.isfinite(x) for x in sample['joints'])):
+            errors.append('raw joint measurement/name contract mismatch')
         if len(sample['Fz'])!=4 or len(sample['wheel_bottom'])!=4 or len(sample['root'])!=13:
             errors.append('missing physical measurement dimensions')
         if not all(math.isfinite(x) for key in ('Fz','wheel_bottom','obstacle_top','root') for x in sample[key]):
@@ -308,6 +314,12 @@ def main():
         launcher.app.close()
 
 
+def raw_joint_snapshot(robot,row):
+    """Actual PhysX joint order, distinct from the action term's named order."""
+    return dict(raw_joint_names=list(robot.joint_names),
+        joints=robot.data.joint_pos[row].detach().clone().tolist())
+
+
 class ActionEvidence:
     """Observe the actual term once, before physics and automatic row resets.
 
@@ -358,6 +370,7 @@ class NativeProbe:
         from extension.parallelism.rl_adapter import resolve_named_indices
         self.torch=torch; self.env=env; self.w=wrapper; self.output=output
         self.robot=env.scene['robot']; self.sensor=env.scene['contact_forces']
+        self.raw_joint_names=tuple(self.robot.joint_names)
         self.adapter=ReferenceTeacherAdapter(wrapper); self.teacher_cfg=TeacherConfig()
         self.wheels=list(resolve_named_indices(tuple(self.robot.body_names),WHEEL_BODY_NAMES))
         self.contacts=list(resolve_named_indices(tuple(self.sensor.body_names),WHEEL_BODY_NAMES))
@@ -469,7 +482,9 @@ class NativeProbe:
         assert obs.shape==(4,1621)
         critic=extra['observations']['critic']
         assert critic.shape==(4,1624),critic.shape
-        result=dict(joint_names=list(term._joint_names),actions=w.num_actions,policy=list(obs.shape),
+        assert len(self.raw_joint_names)==16 and set(self.raw_joint_names)==set(term._joint_names)
+        result=dict(joint_names=list(term._joint_names),action_joint_names=list(term._joint_names),
+            raw_joint_names=list(self.raw_joint_names),actions=w.num_actions,policy=list(obs.shape),
             critic=list(critic.shape),pd=pd,dt=env.physics_dt,decimation=env.cfg.decimation,
             step_dt=env.step_dt,max_episode_steps=env.max_episode_length,
             collision=env._m1_collision_budget.contract,observation_components=dimensions)
@@ -715,7 +730,7 @@ class NativeProbe:
             collision=bool(snap['signal'][row]>0),support_lost=lost,penetration=penetration,
             failure=failure,timeout=timeout,termination_terms=failures,budget={k:v[row].tolist() for k,v in snap.items()},
             receipt=self.pairs(ids,receipt),far_side_recovery=self.pairs(ids,receipt&far),
-            root=self.robot.data.root_state_w[row].tolist(),joints=self.robot.data.joint_pos[row].tolist(),
+            root=self.robot.data.root_state_w[row].tolist(),**raw_joint_snapshot(self.robot,row),
             course_ids=ids.tolist(),**self.action_evidence.row(row,float(env.sim.current_time)))
 
     def begin_video(self,row,seed,stage):
@@ -742,6 +757,7 @@ class NativeProbe:
             isolated_robot=self.video_validated,nonblack=self.video_validated,
             frame_indices=rec['indices'],sim_times=rec['times'],first_frame=rec['indices'][0],last_frame=rec['indices'][-1])
         result=dict(stage=rec['stage'],seed=rec['seed'],env_id=row,episode_id=int(self.episode[row]),
+            raw_joint_names=list(self.raw_joint_names),
             required=required,samples=rec['samples'],terminal=rec['samples'][-1],video=video,
             initial_root=rec['initial_root'],command_distance=rec['command_distance'],
             end=end,natural_done=natural,timeout=timeout)

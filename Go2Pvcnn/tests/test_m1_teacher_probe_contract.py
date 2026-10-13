@@ -43,6 +43,7 @@ def episode(stage=3, seed=101, episode_id=0):
             teacher_input_frame=f-1,teacher_input_episode_id=episode_id,teacher_input_sim_time=(f-1)*.02,
             teacher_action=[0.]*16,executed_action=[0.]*16,processed_targets=[0.]*16,
             action_joint_names=list(M1_ASSET_JOINT_NAMES),processed_target_joint_names=list(M1_ASSET_JOINT_NAMES),
+            raw_joint_names=list(M1_ASSET_JOINT_NAMES),joints=[0.]*16,
             active_target=0,teacher_ages_after_decision=dict(age=0,body_age=-1,lift_age=-1),
             sim_time=f*.02, active_wheel=0, Fz=[50.]*4, wheel_bottom=[0.]*4,
             obstacle_top=[.10]*8, collision=False, support_lost=False,
@@ -51,6 +52,7 @@ def episode(stage=3, seed=101, episode_id=0):
             far_side_recovery=required if f == count and stage else [],
             receipt=required if f == count and stage else []))
     return dict(stage=stage, seed=seed, env_id=0, episode_id=episode_id,
+        raw_joint_names=list(M1_ASSET_JOINT_NAMES),
         required=required if stage else [], samples=frames, end='task_complete' if stage else 'flat_horizon',
         timeout=stage == 0, natural_done=stage == 0,
         initial_root=[0.,0.,.62], command_distance=count*.006,
@@ -357,3 +359,29 @@ def test_action_evidence_freezes_real_processed_values_before_row_reset():
         evidence.row(0,10.04)
     with pytest.raises(AssertionError,match='once'):
         term.process_actions(executed)
+
+
+@pytest.mark.parametrize('change',[
+    lambda e:e['samples'][2].pop('raw_joint_names'),
+    lambda e:e['samples'][2].update(raw_joint_names=list(reversed(e['raw_joint_names']))),
+    lambda e:e['samples'][2].update(joints=[]),
+    lambda e:e['samples'][2].update(joints=[float('nan')]*16),
+    lambda e:e.pop('raw_joint_names'),
+    lambda e:e.update(raw_joint_names=[e['raw_joint_names'][0]]*16),
+])
+def test_raw_joint_measurements_must_bind_unique_names_to_contract(change):
+    e=episode(); change(e)
+    assert not probe().verify_episode(e)['success']
+
+
+def test_raw_joint_snapshot_preserves_actual_order_and_old_buffers():
+    import torch
+    from types import SimpleNamespace
+    module=probe()
+    assert hasattr(module,'raw_joint_snapshot'), 'actual raw joint names snapshot missing'
+    # Deliberately unlike action order; observer must not sort or guess it.
+    names=['rear_knee','front_abad','wheel']
+    robot=SimpleNamespace(joint_names=names,data=SimpleNamespace(joint_pos=torch.tensor([[1.,2.,3.]])))
+    result=module.raw_joint_snapshot(robot,0)
+    robot.joint_names.reverse(); robot.data.joint_pos.zero_()
+    assert result==dict(raw_joint_names=['rear_knee','front_abad','wheel'],joints=[1.,2.,3.])
