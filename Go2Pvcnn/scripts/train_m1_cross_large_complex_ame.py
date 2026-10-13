@@ -30,6 +30,8 @@ def _parse_args():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--course-profile", choices=("mixed", "fixed", "flat-first"), default="mixed",
                         help="M1 mixed reference terrain with flat density x1.5; fixed is diagnostic only.")
+    parser.add_argument("--training-profile", choices=("legacy", "teacher_student_16_10cm"), default="legacy")
+    parser.add_argument("--training-phase", choices=("bc", "withdrawal", "critic_calibration", "ppo"), default="ppo")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--keep_std", action="store_true")
@@ -74,6 +76,15 @@ def _yaml_safe(value):
     return str(value)
 
 
+def _validate_student_training_request(args):
+    if args.training_profile == 'teacher_student_16_10cm':
+        from ame_baseline.m1_teacher_profile import validate_profile_environment
+        validate_profile_environment()
+        if args.training_phase != 'ppo' or not args.resume:
+            raise ValueError('Student PPO requires --resume of an explicitly converted '
+                             'Task 8 PPO checkpoint with --training-phase ppo')
+
+
 def main() -> int:
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     args = _parse_args()
@@ -83,6 +94,7 @@ def main() -> int:
         raise ValueError("--resume requires --checkpoint")
     if args.checkpoint and not args.resume:
         raise ValueError("--checkpoint requires --resume; refusing to silently train from scratch")
+    _validate_student_training_request(args)
 
     if str(args.device).startswith("cuda"):
         import torch
@@ -112,14 +124,20 @@ def main() -> int:
             torch.backends.cudnn.allow_tf32 = True
 
         _register_runtime_env(gym, "Isaac-M1-Cross-Large-Complex-AME-v0", M1AmeCrossLargeComplexEnvCfg)
-        env_cfg = M1AmeCrossLargeComplexEnvCfg()
-        if args.course_profile == "mixed":
+        student_profile = args.training_profile == 'teacher_student_16_10cm'
+        if student_profile:
+            from ame_baseline.m1_teacher_profile import build_teacher_student_env_cfg
+            env_cfg = build_teacher_student_env_cfg(training_phase=args.training_phase)
+        else:
+            env_cfg = M1AmeCrossLargeComplexEnvCfg()
+        if not student_profile and args.course_profile == "mixed":
             from ame_baseline.m1_mixed_course import configure_mixed_terrain
             configure_mixed_terrain(env_cfg)
-        elif args.course_profile == "flat-first":
+        elif not student_profile and args.course_profile == "flat-first":
             from ame_baseline.m1_mixed_course import configure_flat_first_terrain
             configure_flat_first_terrain(env_cfg)
-        print(f"[M1] course_profile={args.course_profile}; robot=m1; action_dim={env_cfg.action_dim}; fixed_wheel_speed_m_s={env_cfg.m1_fixed_wheel_speed_m_s}; fixed_abad={env_cfg.m1_fixed_abad}", flush=True)
+        course_profile = 'flat-first' if student_profile else args.course_profile
+        print(f"[M1] training_profile={args.training_profile}; training_phase={args.training_phase}; course_profile={course_profile}; robot=m1; action_dim={env_cfg.action_dim}; fixed_wheel_speed_m_s={env_cfg.m1_fixed_wheel_speed_m_s}; fixed_abad={env_cfg.m1_fixed_abad}", flush=True)
         env_cfg.scene.num_envs = args.num_envs
         env_cfg.sim.device = device
         env_cfg.seed = args.seed
@@ -144,7 +162,10 @@ def main() -> int:
         if wrapped_env.num_actions != env_cfg.action_dim:
             raise RuntimeError('Runtime action manager does not match configured action contract')
         print(f"[M1] runtime_actions={wrapped_env.num_actions}; fixed_wheel_speed_m_s={env_cfg.m1_fixed_wheel_speed_m_s}", flush=True)
-        if args.course_profile == "flat-first" and not args.resume:
+        if student_profile:
+            from ame_baseline.m1_teacher_profile import require_teacher_student_backend
+            require_teacher_student_backend(env.unwrapped)
+        if course_profile == "flat-first" and not args.resume:
             terrain = env.unwrapped.scene.terrain
             from extension.semantic_course import terrain_column_names_from_generator
             names = terrain_column_names_from_generator(terrain.cfg.terrain_generator)
@@ -181,8 +202,8 @@ def main() -> int:
             # changing the M1 geometry and reward terms.  Reset them by
             # default for a resumed adaptation; set M1_LOAD_OPTIMIZER=1 only
             # when continuing an identical configuration.
-            load_optimizer = os.environ.get("M1_LOAD_OPTIMIZER", "0") == "1"
-            runner.load(str(checkpoint), load_optimizer=load_optimizer, keep_std=args.keep_std)
+            load_optimizer = student_profile or os.environ.get("M1_LOAD_OPTIMIZER", "0") == "1"
+            runner.load(str(checkpoint), load_optimizer=load_optimizer, keep_std=student_profile or args.keep_std)
             print(f"[AME] resumed checkpoint={checkpoint}", flush=True)
 
         print("Starting Training - m1_cross_large_complex_ame", flush=True)

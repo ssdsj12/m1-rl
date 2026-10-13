@@ -58,6 +58,14 @@ class AmeOnPolicyRunner(on_policy_runner.OnPolicyRunner):
         unwrapped = getattr(getattr(self, 'env', None), 'unwrapped', None)
         return bool(getattr(getattr(unwrapped, 'cfg', None), 'm1_fixed_abad', False))
 
+    def _student_contract(self):
+        unwrapped = getattr(getattr(self, 'env', None), 'unwrapped', None)
+        return getattr(getattr(unwrapped, 'cfg', None), 'm1_student_contract', None)
+
+    def _training_phase(self):
+        unwrapped = getattr(getattr(self, 'env', None), 'unwrapped', None)
+        return getattr(getattr(unwrapped, 'cfg', None), 'training_phase', None)
+
     def save(self, path, infos=None):
         destination = Path(path)
         base_checkpoint = destination.with_name(
@@ -78,6 +86,13 @@ class AmeOnPolicyRunner(on_policy_runner.OnPolicyRunner):
             checkpoint["ame_num_critic_obs"] = self.alg.actor_critic.map_dim + self.alg.actor_critic.critic_state_dim
             checkpoint["ame_num_actions"] = int(self.alg.actor_critic.std.numel())
             checkpoint["next_iter"] = self.current_learning_iteration + 1
+            student = self._student_contract()
+            if student is not None:
+                from .m1_teacher_contract import require_contract
+                checkpoint['m1_student_contract'] = student
+                checkpoint['training_phase'] = self._training_phase()
+                checkpoint['m1_student_contract'] = require_contract(
+                    checkpoint, expected_phase=self._training_phase())
             training_contract = self._training_contract()
             if training_contract is not None:
                 checkpoint['m1_training_contract'] = training_contract
@@ -103,6 +118,14 @@ class AmeOnPolicyRunner(on_policy_runner.OnPolicyRunner):
 
     def load(self, path, load_optimizer=True, keep_std=True):
         checkpoint = torch.load(path, map_location=self.device)
+        student = self._student_contract()
+        if student is not None:
+            from .m1_teacher_contract import require_contract, student_contract
+            if student != student_contract():
+                raise ValueError('Invalid runtime M1 student contract')
+            require_contract(checkpoint, expected_phase=self._training_phase())
+        elif checkpoint.get('m1_student_contract') is not None:
+            raise ValueError('M1 student contract requires the teacher/student runtime profile')
         from .m1_ame_contract import validate_training_contract
         validate_training_contract(checkpoint, self._training_contract())
         from .m1_fixed_wheel_checkpoint import validate_action_contract
