@@ -7,6 +7,7 @@ import argparse
 from collections import Counter
 from dataclasses import asdict
 import hashlib
+import importlib.machinery
 import json
 import math
 from pathlib import Path
@@ -147,6 +148,86 @@ def validate_paths(candidate, python, output):
     return candidate, output
 
 
+CANDIDATE_DOMAINS = frozenset(('ame_baseline','extension','rsl_rl','tracking','go2_pvcnn'))
+
+
+def candidate_module_record(candidate, name, origin, locations=None):
+    """Validate the executed file, not just the script or configured PYTHONPATH."""
+    root=name.split('.')[0]
+    base=candidate/'rsl_rl' if root=='rsl_rl' else candidate
+    stem=base.joinpath(*name.split('.'))
+    allowed=(stem.with_suffix('.py'),stem/'__init__.py')
+    if not origin:
+        # Real repository namespaces (for example go2_pvcnn.sensor) have no
+        # __file__. They must have exactly their candidate-only package path.
+        paths=[Path(p).resolve() for p in locations or ()]
+        if (paths==[stem.resolve()] and stem.is_dir() and candidate in stem.resolve().parents):
+            return dict(kind='namespace',path=None,sha256=None,locations=[str(p) for p in paths])
+        raise ValueError(f'{name} has no verifiable source file; outside candidate contract')
+    actual=Path(origin).resolve()
+    if (candidate not in actual.parents or actual not in [p.resolve() for p in allowed]
+            or not actual.is_file()):
+        raise ValueError(f'{name} loaded outside candidate: {actual}')
+    return dict(kind='source',path=str(actual),sha256=file_digest(actual))
+
+
+def loaded_candidate_modules(candidate):
+    candidate=Path(candidate).resolve()
+    return {name:candidate_module_record(candidate,name,getattr(module,'__file__',None),getattr(module,'__path__',None))
+        for name,module in sorted(list(sys.modules.items()))
+        if name.split('.')[0] in CANDIDATE_DOMAINS and module is not None}
+
+
+class CandidateSourceFinder:
+    """Resolve candidate domains before any foreign module body can execute."""
+    def __init__(self,candidate): self.candidate=candidate
+
+    def find_spec(self,fullname,path=None,target=None):
+        if fullname.split('.')[0] not in CANDIDATE_DOMAINS: return None
+        spec=importlib.machinery.PathFinder.find_spec(fullname,path,target)
+        if spec is None: raise ModuleNotFoundError(f'candidate module unavailable: {fullname}')
+        candidate_module_record(self.candidate,fullname,spec.origin,spec.submodule_search_locations)
+        return spec
+
+
+def bind_candidate_imports(candidate):
+    candidate=Path(candidate).resolve()
+    loaded_candidate_modules(candidate)  # Reject cached foreign modules first.
+    roots=[str(candidate),str(candidate/'rsl_rl')]
+    sys.path[:]=roots+[p for p in sys.path if str(Path(p or '.').resolve()) not in roots]
+    if not any(isinstance(f,CandidateSourceFinder) and f.candidate==candidate for f in sys.meta_path):
+        sys.meta_path.insert(0,CandidateSourceFinder(candidate))
+
+
+def cylinder_penetration_witness(pos,quat,centers_top,half_extents,radius=.0959,thickness=.0465):
+    """Positive witness: the SAME actual cylinder point is inside XY and below top.
+
+    Finite sampling is not a separation certificate. False means no witness,
+    never a claim of clearance. It cannot turn a conservative clears=False
+    result or an unrelated global bottom/XY point into penetration evidence.
+    One micrometre only excludes floating-point tangency from this diagnostic;
+    production collision, zero-clearance and strict receipts are untouched.
+    """
+    import torch
+    if (pos.ndim!=3 or pos.shape[-1]!=3 or quat.shape!=pos.shape[:-1]+(4,)
+            or centers_top.shape!=(pos.shape[0],3) or half_extents.shape!=(pos.shape[0],2)
+            or any(not bool(torch.isfinite(v).all()) for v in (pos,quat,centers_top,half_extents))
+            or bool((half_extents<=0).any()) or bool((quat.norm(dim=-1)<1e-8).any())):
+        raise ValueError('finite aligned cylinder and positive box geometry required')
+    angle=torch.arange(32,device=pos.device,dtype=pos.dtype)*(2*torch.pi/32)
+    rings=[torch.stack((radius*angle.cos(),torch.full_like(angle,y),radius*angle.sin()),-1)
+        for y in (-thickness/2,0.,thickness/2)]
+    points=torch.cat((*rings,pos.new_tensor([[0,0,0],[0,-thickness/2,0],[0,thickness/2,0]])))
+    q=quat/quat.norm(dim=-1,keepdim=True)
+    local=points[None,None].expand(pos.shape[0],pos.shape[1],-1,-1)
+    xyz=q[...,1:][:,:,None].expand_as(local)
+    uv=torch.cross(xyz,local,dim=-1)
+    world=local+2*(q[...,0,None,None]*uv+torch.cross(xyz,uv,dim=-1))+pos[:,:,None]
+    inside_xy=((world[...,:2]-centers_top[:,None,None,:2]).abs()<half_extents[:,None,None]-1e-6).all(-1)
+    below_top=world[...,2]<centers_top[:,None,None,2]-1e-6
+    return (inside_xy & below_top).any(-1)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--candidate', required=True)
@@ -154,6 +235,9 @@ def main():
     parser.add_argument('--output', required=True)
     parser.add_argument('--mode', choices=('smoke','contract','teacher','acceptance'), default='smoke')
     parser.add_argument('--diagnostic-steps', type=int, default=200)
+    preliminary,_=parser.parse_known_args()
+    candidate,output=validate_paths(preliminary.candidate,preliminary.python,preliminary.output)
+    bind_candidate_imports(candidate)
     from isaaclab.app import AppLauncher
     AppLauncher.add_app_launcher_args(parser)
     args = parser.parse_args()
@@ -163,6 +247,7 @@ def main():
     launcher = AppLauncher(args)
     env = None
     try:
+        loaded_candidate_modules(candidate)
         import torch
         from isaaclab.envs import ManagerBasedRLEnv
         from ame_baseline.m1_teacher_profile import build_teacher_student_env_cfg
@@ -172,6 +257,7 @@ def main():
         cfg.commands.base_velocity.debug_vis=False
         env = ManagerBasedRLEnv(cfg=cfg, render_mode='rgb_array')
         wrapper = AmeRslRlEnvWrapper(env)
+        loaded_candidate_modules(candidate)
         with torch.inference_mode():
             run = NativeProbe(env,wrapper,output,candidate)
             run.contract()
@@ -182,6 +268,7 @@ def main():
                 run.teacher(acceptance=args.mode=='acceptance', diagnostic_steps=args.diagnostic_steps)
             else:
                 run.write('result.json',dict(mode=args.mode, native_contract=True, milestone_a='NOT_RUN'))
+            run.write('imported_modules.json',loaded_candidate_modules(candidate))
     except BaseException as exc:
         (output/'failure.json').write_text(json.dumps(dict(type=type(exc).__name__,message=str(exc))),encoding='utf-8')
         raise
@@ -209,11 +296,12 @@ class NativeProbe:
         self.inner_failed=torch.zeros_like(self.support_acquired)
         self.last_output=None; self.current_stage=0
         self.tracker_calls=0; self.video_validated=False
-        files={str(p.relative_to(candidate)):file_digest(p) for folder in ('ame_baseline','extension')
+        files={str(p.relative_to(candidate)):file_digest(p) for folder in CANDIDATE_DOMAINS
             for p in sorted((candidate/folder).rglob('*.py'))}
         files['scripts/probe_m1_teacher.py']=file_digest(Path(__file__))
         self.write('source.json',dict(candidate=str(candidate),python=sys.executable,files=files,
             code_sha256=digest(files),teacher=asdict(self.teacher_cfg),teacher_hash=self.teacher_cfg.fingerprint,
+            loaded_modules=loaded_candidate_modules(candidate),
             effective_cfg_sha256=digest(env.cfg.to_dict()),effective_cfg=env.cfg.to_dict()))
         print('CANDIDATE_SOURCE '+json.dumps(dict(candidate=str(candidate),python=sys.executable,
             code_sha256=digest(files),teacher_hash=self.teacher_cfg.fingerprint)),flush=True)
@@ -490,7 +578,7 @@ class NativeProbe:
 
     def sample(self,row):
         from ame_baseline.m1_collision_budget import current_collision_snapshot
-        from ame_baseline.m1_reference_geometry import cylinder_bottom, cylinder_box_xy_witness
+        from ame_baseline.m1_reference_geometry import cylinder_bottom
         env,t=self.env,self.torch; course=self.w._m1_current_course()
         force=self.sensor.data.net_forces_w[row,self.contacts]
         position=self.robot.data.body_pos_w[row:row+1,self.wheels]
@@ -510,9 +598,9 @@ class NativeProbe:
         top=course['landing_centers_top'][row,landing]
         half=course['landing_half_extents'][row,landing]
         if top.shape[0]:
-            xy=cylinder_box_xy_witness(position.expand(top.shape[0],-1,-1),
+            witness=cylinder_penetration_witness(position.expand(top.shape[0],-1,-1),
                 quat.expand(top.shape[0],-1,-1),top,half,radius=.0959,thickness=.0465)
-            penetration=bool((xy & (bottom[None,:]<top[:,2,None])).any())
+            penetration=bool(witness.any())
         snap=current_collision_snapshot(env)
         output=self.last_output
         failures={name:bool(env.termination_manager.get_term(name)[row])

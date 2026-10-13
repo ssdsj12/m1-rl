@@ -169,3 +169,94 @@ def test_native_step_rejects_hidden_extra_physics_advance():
         return torch.zeros(4,1621),torch.zeros(4),torch.zeros(4),{}
     run.w=SimpleNamespace(step=extra_step)
     with pytest.raises(AssertionError): run.step(torch.zeros(4,16))
+
+
+@pytest.mark.parametrize('center,quat,expected', [
+    ((-.13,0.,.19),(1.,0.,0.,0.),False),  # round leading edge is separated
+    ((0.,0.,.15),(1.,0.,0.,0.),True),
+    ((0.,0.,.1959),(1.,0.,0.,0.),False),  # top tangency
+    ((.1459,0.,.05),(1.,0.,0.,0.),False),  # side tangency
+    ((.145,0.,.05),(1.,0.,0.,0.),True),
+    ((0.,0.,.11),(.70710678,.70710678,0.,0.),True),
+    ((-.13,0.,.19),(.70710678,.70710678,0.,0.),False),
+])
+def test_penetration_requires_one_actual_cylinder_point_inside_box(center,quat,expected):
+    import torch
+    module=probe()
+    assert hasattr(module,'cylinder_penetration_witness'), 'positive same-point witness missing'
+    pos=torch.tensor([[center]]); rotation=torch.tensor([[quat]])
+    top=torch.tensor([[0.,0.,.1]]); half=torch.tensor([[.05,.09]])
+    assert bool(module.cylinder_penetration_witness(pos,rotation,top,half)[0,0]) is expected
+
+
+def test_round_edge_regression_and_unknown_are_not_penetration_certificates():
+    import torch
+    from ame_baseline.m1_reference_geometry import cylinder_bottom,cylinder_box_xy_witness,cylinder_clears_box
+    rotation=torch.tensor([[[1.,0.,0.,0.]]])
+    top=torch.tensor([[0.,0.,.1]]); half=torch.tensor([[.05,.09]])
+    separated=torch.tensor([[[-.13,0.,.19]]])
+    assert bool(cylinder_box_xy_witness(separated,rotation,top,half)[0,0])
+    assert bool(cylinder_bottom(separated,rotation)[0,0]<.1)
+    assert bool(cylinder_clears_box(separated,rotation,top,half)[0,0])
+    assert not bool(probe().cylinder_penetration_witness(separated,rotation,top,half)[0,0])
+    # A sub-sampling sliver has neither a separation certificate nor a sampled
+    # penetration witness. The production strict/collision gates still apply.
+    unknown=torch.tensor([[[.14585,0.,.1]]])
+    assert not bool(cylinder_clears_box(unknown,rotation,top,half)[0,0])
+    assert not bool(probe().cylinder_penetration_witness(unknown,rotation,top,half)[0,0])
+
+
+@pytest.mark.parametrize('domain',['ame_baseline','extension','rsl_rl','tracking','go2_pvcnn'])
+def test_candidate_binding_rejects_preloaded_foreign_domain(domain,tmp_path,monkeypatch):
+    import sys
+    from types import ModuleType
+    module=probe()
+    assert hasattr(module,'bind_candidate_imports'), 'candidate import binding missing'
+    foreign=ModuleType(domain+'.foreign_probe')
+    foreign.__file__=str(tmp_path/domain/'foreign_probe.py')
+    monkeypatch.setitem(sys.modules,foreign.__name__,foreign)
+    with pytest.raises(ValueError,match='outside candidate'):
+        module.bind_candidate_imports(Path(__file__).parents[1])
+
+
+def test_candidate_binding_precedes_hostile_pythonpath_and_records_loaded_file(tmp_path):
+    import subprocess
+    import sys
+    import os
+    module=probe()
+    assert hasattr(module,'bind_candidate_imports'), 'candidate import binding missing'
+    candidate=Path(__file__).parents[1]
+    foreign=tmp_path/'ame_baseline'; foreign.mkdir()
+    (foreign/'__init__.py').write_text("raise RuntimeError('foreign package executed')",encoding='utf-8')
+    # A child starts without pytest's already-imported candidate modules.
+    code='''import importlib.util,json,sys
+from pathlib import Path
+candidate=Path(sys.argv[1]); foreign=sys.argv[2]
+sys.path.insert(0,foreign)
+spec=importlib.util.spec_from_file_location('probe',candidate/'scripts/probe_m1_teacher.py')
+probe=importlib.util.module_from_spec(spec); spec.loader.exec_module(probe)
+probe.bind_candidate_imports(candidate)
+import ame_baseline.m1_collision_budget
+manifest=probe.loaded_candidate_modules(candidate)
+item=manifest['ame_baseline.m1_collision_budget']
+assert Path(item['path']) == (candidate/'ame_baseline/m1_collision_budget.py').resolve()
+assert item['sha256'] == probe.file_digest(candidate/'ame_baseline/m1_collision_budget.py')
+assert sys.path[:2] == [str(candidate.resolve()),str((candidate/'rsl_rl').resolve())]
+'''
+    result=subprocess.run([sys.executable,'-c',code,str(candidate),str(tmp_path)],
+        env={**os.environ,'PYTHONPATH':str(tmp_path),'CUDA_VISIBLE_DEVICES':''},capture_output=True,text=True)
+    assert result.returncode==0,result.stdout+result.stderr
+
+
+def test_candidate_namespace_package_has_only_candidate_search_locations(tmp_path,monkeypatch):
+    import sys
+    from types import ModuleType
+    candidate=Path(__file__).parents[1].resolve()
+    namespace=ModuleType('go2_pvcnn.sensor')
+    namespace.__path__=[str(candidate/'go2_pvcnn/sensor')]
+    monkeypatch.setitem(sys.modules,namespace.__name__,namespace)
+    record=probe().loaded_candidate_modules(candidate)[namespace.__name__]
+    assert record['kind']=='namespace' and record['locations']==namespace.__path__
+    namespace.__path__.append(str(tmp_path/'go2_pvcnn/sensor'))
+    with pytest.raises(ValueError,match='outside candidate'):
+        probe().loaded_candidate_modules(candidate)
