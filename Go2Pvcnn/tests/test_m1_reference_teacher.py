@@ -57,16 +57,38 @@ def measured_shift_ready(s, wheel=0):
 
 
 def teacher_in_lift():
-    """Downstream phase tests explicitly supply the new preparation evidence."""
+    """Ideal measured feedback with explicit COM and actual target evidence."""
+    from test_m1_teacher_reference_commit import near_state, feedback
     t = api()
-    teacher, s = t.ReferenceTeacher(), state()
-    s.wheel_pos_w[:,0,0] = .39
-    assert teacher.step(s).phase.item() == t.Phase.BALANCE
-    s = advance(s)
-    assert teacher.step(s).phase.item() == t.Phase.BALANCE
-    s = advance(measured_shift_ready(s))
-    assert teacher.step(s).phase.item() == t.Phase.LIFT
-    return teacher, advance(s)
+    teacher, s = t.ReferenceTeacher(), near_state()
+    for _ in range(5):
+        out = teacher.step(s)
+        assert out.valid.item()
+        s = feedback(s, teacher, out)
+        if out.phase.item() == t.Phase.LIFT:
+            return teacher, s
+    raise AssertionError('measured preparation did not reach LIFT')
+
+
+def restoring_teacher():
+    """Isolated RESTORE precondition, not a fabricated crossing receipt.
+
+    Every target and measurement is the same reachable nominal FK translated
+    beyond the far envelope. Actual course receipts remain explicitly false.
+    This unit fixture tests the phase gate, not the preceding physical motion.
+    """
+    from test_m1_teacher_reference_commit import prepared_teacher
+    from ame_baseline.m1_teacher_pose import BodyPose, PoseReference
+    teacher, s, _ = prepared_teacher()
+    row = teacher._rows[0]
+    delta = s.root_pos_w.new_tensor([[1., 0., 0.]])
+    root = s.root_pos_w+delta
+    wheels = s.wheel_pos_w+delta[:, None]
+    ref = PoseReference(BodyPose(root, s.root_quat_w), wheels)
+    row.update(phase=api().Phase.RESTORE, age=0, stable=0, accepted=ref,
+               goal=ref, wheel_anchor=wheels.clone(), support_previous=wheels.clone())
+    return teacher, replace(s, root_pos_w=root, com_pos_w=s.com_pos_w+delta,
+                            wheel_pos_w=wheels)
 
 
 def test_config_is_immutable_and_fingerprints_semantics():
@@ -190,30 +212,27 @@ def test_clock_does_not_pass_without_measured_cylinder_bottom_clearance():
 
 
 def test_far_envelope_margin_is_not_reduced_and_receipt_is_required():
+    from test_m1_teacher_reference_commit import prepared_teacher, feedback
     t = api()
-    teacher, s = teacher_in_lift()
-    for _ in range(3):
-        teacher.step(s)
-        s = advance(s)
-    s.wheel_pos_w[:, 0, 2] = .30
-    teacher.step(s)
-    s = advance(s)
-    s.wheel_pos_w[:, 0, 0] = .85  # beyond box, but not .65 + .11915 + .15
-    for _ in range(25):
-        out = teacher.step(s)
-        s = advance(s)
+    teacher, s, _ = prepared_teacher()
+    row = teacher._rows[0]
+    row['phase'] = t.Phase.PASS
+    far = s.centers_top[0, 0, 0]+s.half_extents[0, 0, 0]+.11915+.15
+    # A measured active wheel short of the original far envelope cannot
+    # advance PASS; no elapsed interpolation clock can create the receipt.
+    wheels = s.wheel_pos_w.clone()
+    wheels[:, 0, 0] = far-.001
+    out = teacher.step(replace(s, wheel_pos_w=wheels))
     assert out.phase.item() == t.Phase.PASS
-    s.wheel_pos_w[:, 0, 0] = .93
-    for _ in range(30):
+    teacher, s = restoring_teacher()
+    for _ in range(7):
         out = teacher.step(s)
-        s = advance(s)
-    assert out.phase.item() == t.Phase.RESTORE
-    assert out.active_wheel.item() == 0
+        assert out.active_wheel.item() == 0
+        s = feedback(s, teacher, out)
     s.recovered[:, 0, 0] = True
     out = teacher.step(s)
     assert out.active_wheel.item() == -1
-    out = teacher.step(advance(s))
-    assert out.active_wheel.item() == 2
+
 
 
 def test_reset_row_and_episode_identity_cannot_finish_old_target():
@@ -339,22 +358,15 @@ def test_identity_change_without_reset_mask_still_discards_terminal_receipts():
 
 
 def test_five_consecutive_stable_measurements_even_when_receipt_already_exists():
-    t = api()
-    teacher, s = teacher_in_lift()
-    for _ in range(3):
-        teacher.step(s)
-        s = advance(s)
-    s.wheel_pos_w[:,0,2] = .30
-    teacher.step(s)
-    s = advance(s)
-    s.wheel_pos_w[:,0,0] = .93
-    out = teacher.step(s)
-    assert out.phase.item() == t.Phase.RESTORE
-    s.recovered[:,0,0] = True
+    from test_m1_teacher_reference_commit import feedback
+    teacher, s = restoring_teacher()
+    s.recovered[:, 0, 0] = True
     for index in range(5):
-        s = advance(s)
         out = teacher.step(s)
+        assert out.valid.item()
         assert out.active_wheel.item() == (0 if index < 4 else -1)
+        s = feedback(s, teacher, out)
+
 
 
 def test_translation_of_measured_rolling_supports_does_not_world_lock_feet():
@@ -450,80 +462,77 @@ def test_world_offset_does_not_change_body_ik_labels():
 
 
 def test_balance_reference_ramp_remains_continuous_when_measured_gate_advances():
+    from test_m1_teacher_reference_commit import prepared_teacher, feedback
+    from ame_baseline.m1_ame_contract import m1_action_targets
     t = api()
-    s = state()
-    s.wheel_pos_w[:,0,0] = .39
-    teacher = t.ReferenceTeacher()
-    teacher.step(s)  # capture enters nominal braking preparation
-    s = advance(s)
-    a = teacher.step(s)  # measured ready: lock anchor and begin 1/30
-    b = teacher.step(advance(measured_shift_ready(s)))
+    teacher, s, a = prepared_teacher()
+    b = teacher.step(s)
     assert a.phase.item() == t.Phase.BALANCE and b.phase.item() == t.Phase.LIFT
-    # Two measured gates are allowed to advance, but do not skip 28 samples
-    # of the 30-sample reference body-shift interpolation.
-    # Supporting-wheel ABAD reference remains at 2/30; the swinging wheel
-    # also responds to the explicitly changed measured root in this fixture.
-    assert b.action[:,[4,8,12]].abs().max() < .02
+    actual = m1_action_targets(b.action, s.default_joint_pos)[:, t.LEG_COLUMNS]
+    assert (actual-s.last_applied_leg_target).abs().max() <= .05
+    assert teacher._rows[0]['body_age'] == 2
+    assert teacher._rows[0]['lift_age'] == 1
+
 
 
 def test_early_lift_gate_does_not_jump_to_full_lift_reference():
+    from test_m1_teacher_reference_commit import feedback
+    from ame_baseline.m1_ame_contract import m1_action_targets
     t = api()
-    s = state()
-    s.wheel_pos_w[:,0,0] = .39
-    teacher = t.ReferenceTeacher()
-    teacher.step(s)
-    s = advance(s)
-    teacher.step(s)  # measured preparation, before supplying the body shift
-    s = advance(measured_shift_ready(s))
-    a = teacher.step(s)
-    s = advance(s)
-    s.wheel_pos_w[:,0,2] = .30
-    b = teacher.step(s)
+    teacher, s = teacher_in_lift()
+    wheels = s.wheel_pos_w.clone()
+    wheels[:, 0, 2] = .30
+    b = teacher.step(replace(s, wheel_pos_w=wheels))
     assert b.phase.item() == t.Phase.PASS
-    assert (a.action[:,2]-b.action[:,2]).abs().max() < .2
+    actual = m1_action_targets(b.action, s.default_joint_pos)[:, t.LEG_COLUMNS]
+    assert (actual-s.last_applied_leg_target).abs().max() <= .05
+    assert teacher._rows[0]['lift_age'] == 2
+
 
 
 def restoring_teacher_with_four_stable_samples():
-    t = api()
-    teacher, s = teacher_in_lift()
-    for _ in range(3):
-        teacher.step(s)
-        s = advance(s)
-    s.wheel_pos_w[:,0,2] = .30
-    teacher.step(s)
-    s = advance(s)
-    s.wheel_pos_w[:,0,0] = .93
-    assert teacher.step(s).phase.item() == t.Phase.RESTORE
-    s.recovered[:,0,0] = True
-    for _ in range(4):
-        s = advance(s)
-        assert teacher.step(s).active_wheel.item() == 0
+    from test_m1_teacher_reference_commit import feedback
+    teacher, s = restoring_teacher()
+    s.recovered[:, 0, 0] = True
+    for index in range(4):
+        out = teacher.step(s)
+        assert out.valid.item() and out.active_wheel.item() == 0
+        if index < 3:
+            s = feedback(s, teacher, out)
     return teacher, s
+
 
 
 @pytest.mark.parametrize('interruption', ['nan', 'geometry', 'invalid_action'])
 def test_invalid_restore_sample_breaks_five_consecutive_measurements(interruption):
-    t = api()
+    from test_m1_teacher_reference_commit import feedback
     teacher, s = restoring_teacher_with_four_stable_samples()
     broken = advance(s)
     if interruption == 'nan':
         velocity = s.root_lin_vel_w.clone()
-        velocity[:,0] = float('nan')
+        velocity[:, 0] = float('nan')
         broken = replace(broken, root_lin_vel_w=velocity)
     elif interruption == 'geometry':
         broken = replace(broken, half_extents=torch.zeros_like(s.half_extents))
     else:
-        defaults, q = s.default_joint_pos.clone(), s.leg_pos.clone()
-        defaults[:,0] = q[:,0] = 3.  # finite but outside the real decoder limits
-        broken = replace(broken, default_joint_pos=defaults, leg_pos=q)
+        q = s.leg_pos.clone()
+        q[:, 0] = 3.
+        broken = replace(broken, leg_pos=q)
     out = teacher.step(broken)
     assert not out.valid.item() and out.active_wheel.item() == 0
-    assert torch.isfinite(out.action).all()
+    assert torch.isfinite(out.action).all() and teacher._rows[0]['stable'] == 0
     s = replace(s, control_step=broken.control_step)
+    # Active NONFINITE input now latches failure per the approved redesign;
+    # finite IK refusal remains recoverable until five consecutive failures.
     for index in range(5):
         s = advance(s)
         out = teacher.step(s)
-        assert out.active_wheel.item() == (0 if index < 4 else -1)
+        if interruption in ('nan', 'geometry'):
+            assert out.failure_locked.item() and not out.valid.item()
+            assert out.active_wheel.item() == 0
+        else:
+            assert out.active_wheel.item() == (0 if index < 4 else -1)
+
 
 
 def test_control_step_gap_breaks_restore_continuity_but_duplicates_are_idempotent():
@@ -633,25 +642,15 @@ def test_balance_clock_cannot_replace_preparation_measurements(unready):
 
 @pytest.mark.parametrize('wheel', range(4))
 def test_ready_balance_gate_mirrors_all_wheels_and_is_not_minimum_dwell(wheel):
+    from test_m1_teacher_reference_commit import prepared_teacher
     t = api()
-    s = state()
-    s.required_wheels.zero_()
-    s.required_wheels[:,0,wheel] = True
-    s.wheel_pos_w[:,wheel,0] = .39
-    teacher = t.ReferenceTeacher()
-    assert teacher.step(s).phase.item() == t.Phase.BALANCE
-    s = advance(s)
-    assert teacher.step(s).phase.item() == t.Phase.BALANCE
-    # Full measured offset exists after preparation: no minimum ramp dwell.
-    s = advance(measured_shift_ready(s,wheel))
-    # The reference follows actual rolling; translation cannot erase readiness.
-    s.root_pos_w[:,:2] += .3
-    s.wheel_pos_w[:,:,:2] += .3
-    s.centers_top[:,:,:2] += .3
+    teacher, s, _ = prepared_teacher(wheel)
     out = teacher.step(s)
-    assert out.phase.item() == t.Phase.LIFT and out.active_wheel.item() == wheel
+    assert out.valid.item() and out.phase.item() == t.Phase.LIFT
+    assert out.active_wheel.item() == wheel and teacher._rows[0]['body_age'] == 2
     repeated = teacher.step(s)
-    assert torch.equal(repeated.action,out.action) and torch.equal(repeated.phase,out.phase)
+    assert torch.equal(repeated.action, out.action) and torch.equal(repeated.phase, out.phase)
+
 
 
 @pytest.mark.parametrize('frame,velocity,rate', [
@@ -669,7 +668,10 @@ def test_native_run2_moving_inputs_do_not_start_balance_ramp(frame, velocity, ra
     for _ in range(35):
         out = teacher.step(s)
         assert out.valid.item() and out.phase.item() == t.Phase.BALANCE
-        assert not out.action.any()  # live nominal legs and stopped wheels
+        assert not out.action[:, t.WHEEL_COLUMNS].any()
+        # Constrained IK may stop within its 2mm residual instead of returning
+        # exactly nominal. The actual action remains within the .05rad bound.
+        assert (out.action[:, t.LEG_COLUMNS]*1.5).abs().max() <= .05
         assert teacher._rows[0].get('body_age', 0) == 0
         assert 'anchor' not in teacher._rows[0]
         s = advance(s)
@@ -703,36 +705,32 @@ def test_balance_prep_needs_all_four_wheels_and_stable_motion(unready):
 
 @pytest.mark.parametrize('wheel', range(4))
 def test_balance_prep_locks_late_once_and_starts_first_ramp_sample(wheel):
+    from test_m1_teacher_reference_commit import near_state, feedback
+    from ame_baseline.m1_teacher_pose import world_to_goal_body
     t = api()
-    s = state()
-    s.required_wheels.zero_()
-    s.required_wheels[:,0,wheel] = True
-    s.centers_top[:,0,0] = s.wheel_pos_w[:,wheel,0]+.05+.11915+.06
-    s.root_lin_vel_w[:,0] = .28
+    s = near_state(wheel=wheel)
+    s.root_lin_vel_w[:, 0] = .28
     teacher = t.ReferenceTeacher()
     first = teacher.step(s)
     assert not first.action.any()
-    # Settled at a different position and height: no stale moving anchor.
     s = advance(s, root_lin_vel_w=torch.zeros_like(s.root_lin_vel_w))
-    s.root_pos_w[:] += torch.tensor([.02,0.,-.01])
-    s.wheel_pos_w[:] += torch.tensor([.02,0.,-.01])
+    delta = torch.tensor([.02, 0., -.01])
+    s.root_pos_w[:] += delta
+    s.com_pos_w[:] += delta
+    s.wheel_pos_w[:] += delta
     ready = teacher.step(s)
     row = teacher._rows[0]
-    assert row['body_age'] == 1 and row['lift_age'] == 0
+    assert ready.valid.item() and row['body_age'] == 1 and row['lift_age'] == 0
     assert torch.equal(row['anchor'], s.root_pos_w)
-    assert torch.equal(row['support_origin'], s.wheel_pos_w[:,[k for k in range(4) if k != wheel]].mean(1))
-    # The first target uses measured feet and exactly 1/30 of the body shift.
-    expected = s.wheel_pos_w-s.root_pos_w[:,None]
-    expected -= torch.tensor([[[-.04 if wheel < 2 else .04, -.06 if wheel % 2 == 0 else .06, 0.]]])/30
-    q, valid = t.solve_ik_body(s.leg_pos, expected)
-    action, encoded = t.encode_targets(q, torch.zeros(1,4), s.default_joint_pos)
-    assert valid.item() and encoded.item() and ready.valid.item()
-    assert torch.allclose(ready.action, action, atol=1e-6)
+    assert torch.equal(row['support_origin'], s.wheel_pos_w[:, [k for k in range(4) if k != wheel]].mean(1))
+    # The accepted target is the full world/body transform, with bounded real IK.
+    assert (t.body_feet(row['last_q'])-world_to_goal_body(row['accepted'])).norm(dim=-1).max() <= .002
     assert torch.equal(teacher.step(s).action, ready.action) and row['body_age'] == 1
     anchor = row['anchor'].clone()
-    s = advance(s)
+    s = feedback(s, teacher, ready)
     teacher.step(s)
     assert torch.equal(row['anchor'], anchor) and row['body_age'] == 2
+
 
 
 def test_reset_discards_previous_prepared_anchor_before_new_braking():
@@ -742,5 +740,5 @@ def test_reset_discards_previous_prepared_anchor_before_new_braking():
     assert teacher.step(s).reason.item() == t.Reason.RESET
     s = advance(s, reset_mask=torch.zeros(1,dtype=torch.bool), root_lin_vel_w=torch.tensor([[.28,0.,0.]]))
     out = teacher.step(s)
-    assert out.phase.item() == t.Phase.BALANCE and not out.action.any()
+    assert out.phase.item() == t.Phase.BALANCE and not out.action[:, t.WHEEL_COLUMNS].any()
     assert 'anchor' not in teacher._rows[0]

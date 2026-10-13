@@ -12,12 +12,10 @@ clipping, and the live 1.50 action decoder, not reference .8 scaling.
 timers. Measured gates may advance earlier. The five stable RESTORE samples
 overlap its interpolation and still require an existing strict receipt.
 This controller's phase is never a crossing-success certificate.
-Native revision 1: LIFT additionally requires the complete transported body
-shift to be measured within 1cm, root speed <=.05m/s and recovered tilt/rate.
-These are preparation gates, not a new dwell time or a physical success claim.
-Native revision 2: BALANCE first brakes at live nominal joints. Only measured
-four-wheel bearing and stable motion lock the body reference and start the
-unchanged ramp. Braking time never advances interpolation or certifies success.
+Support-IK revision: explicit world references, real measured COM and loads,
+bounded four-leg IK and actual executed-target continuity precede every commit.
+Legacy solve_ik_body/body_shift_error remain compatibility math only; live
+teacher execution uses the constrained pose path in every phase.
 """
 from dataclasses import asdict, dataclass, fields
 from enum import IntEnum
@@ -36,7 +34,9 @@ from .m1_ame_contract import (M1_LEG_ACTION_SCALE_RAD, M1_WHEEL_ACTION_SCALE_RAD
     M1_WHEEL_SPEED_LIMIT_RAD_S, m1_action_targets)
 from .m1_reference_geometry import cylinder_bottom
 from .m1_crossing_landing import crossing_touchdown_safe
-from .m1_teacher_ik import body_feet, body_jacobian, dls_step
+from .m1_teacher_ik import body_feet, body_jacobian, dls_step, IKConfig
+from .m1_teacher_pose import (BodyPose, PoseReference, world_to_goal_body,
+    choose_support_pose, backtrack_reference, support_margin)
 
 LEG_COLUMNS = list(resolve_named_indices(M1_ASSET_JOINT_NAMES, M1_PLANNER_JOINT_NAMES))
 WHEEL_COLUMNS = list(resolve_named_indices(M1_ASSET_JOINT_NAMES, M1_WHEEL_JOINT_NAMES))
@@ -61,6 +61,43 @@ class Reason(IntEnum):
     ACTION_INVALID = 6
     TARGET_CHANGED = 7
     STALE_STEP = 8
+    MEASUREMENT_INVALID = 9
+    APPLIED_TARGET_INVALID = 10
+
+
+class FreezeReason(IntEnum):
+    NONE = 0
+    BRAKING = 1
+    TRACKING = 2
+    IK = 3
+    ACTION = 4
+    SAFETY = 5
+    RESET = 6
+    LOCKED = 7
+    PREPARATION = 8
+
+
+# Columns have stable names. Discrete columns are explicitly declared below;
+# consumers must resolve names, never infer meanings from numeric positions.
+TEACHER_DIAGNOSTIC_FIELDS = tuple(
+    [f'{kind}_root_{axis}' for kind in ('measured', 'requested', 'attempted', 'accepted')
+     for axis in ('x', 'y', 'z', 'qw', 'qx', 'qy', 'qz')]
+    + [f'{kind}_wheel_{leg}_{axis}' for kind in ('requested_world', 'attempted_world',
+       'attempted_body', 'accepted_world', 'accepted_body')
+       for leg in range(4) for axis in ('x', 'y', 'z')]
+    + [f'com_{axis}' for axis in ('x', 'y', 'z')]
+    + ['measured_com_margin_m', 'predicted_com_margin_m', 'candidate_com_margin_m']
+    + [f'ik_{name}_{leg}' for name in ('residual_m', 'joint_limit_ok', 'branch_ok',
+       'extension_margin_rad', 'workspace_ok', 'iterations', 'reason') for leg in range(4)]
+    + [f'{kind}_q_{joint}' for kind in ('attempted', 'accepted', 'last_applied') for joint in range(12)]
+    + [f'support_slip_{leg}_{axis}' for leg in range(4) for axis in ('x', 'y')]
+    + ['candidate_index', 'candidate_count', 'backtrack_index', 'invalid_streak',
+       'freeze_reason', 'reference_valid', 'diagnostic_only', 'age', 'body_age', 'lift_age'])
+TEACHER_DIAGNOSTIC_INTEGER_FIELDS = tuple(
+    [f'ik_{name}_{leg}' for name in ('joint_limit_ok', 'branch_ok', 'workspace_ok',
+       'iterations', 'reason') for leg in range(4)]
+    + ['candidate_index', 'candidate_count', 'backtrack_index', 'invalid_streak',
+       'freeze_reason', 'reference_valid', 'diagnostic_only', 'age', 'body_age', 'lift_age'])
 
 
 @dataclass(frozen=True)
@@ -96,20 +133,34 @@ class TeacherConfig:
     recovery_pose_rad: float = .15
     recovery_height_m: float = .08
     stable_samples: int = 5
+    body_lowering_max_m: float = .08
+    com_margin_m: float = .01
+    min_knee_abs_rad: float = .10
+    joint_target_rate_rad_s: float = 2.5
+    backtrack_steps: int = 8
+    candidate_limit: int = 126
+    invalid_lock_steps: int = 5
 
     def __post_init__(self):
         if any(not isinstance(v, (int, float)) or not 0 < v < float('inf') for v in asdict(self).values()):
             raise ValueError('teacher configuration values must be positive and finite')
-        for name in ('balance_steps', 'lift_steps', 'pass_steps', 'restore_steps', 'ik_iterations', 'stable_samples'):
-            if not isinstance(getattr(self, name), int):
+        for name in ('balance_steps', 'lift_steps', 'pass_steps', 'restore_steps', 'ik_iterations',
+                     'stable_samples', 'backtrack_steps', 'candidate_limit', 'invalid_lock_steps'):
+            if type(getattr(self, name)) is not int:
                 raise ValueError(f'{name} must be an integer')
         if self.body_shift_lateral_m > .06 or self.body_shift_longitudinal_m > .04:
             raise ValueError('body shift exceeds approved envelope')
+        IKConfig(**{f.name: getattr(self, f.name) for f in fields(IKConfig)})
+        fixed = dict(body_shift_lateral_m=.06, body_shift_longitudinal_m=.04,
+                     body_lowering_max_m=.08, com_margin_m=.01, joint_target_rate_rad_s=2.5,
+                     backtrack_steps=8, candidate_limit=126, invalid_lock_steps=5)
+        if any(getattr(self, k) != v for k, v in fixed.items()):
+            raise ValueError('pose search, continuity and failure bounds are fixed by the approved design')
 
     @property
     def fingerprint(self):
         payload = dict(config=asdict(self), algorithm=REFERENCE_COMMIT,
-                       implementation='independent-dls-components-v4-native2-brake-before-anchor',
+                       implementation='support-ik-transaction-v5', diagnostic_fields=TEACHER_DIAGNOSTIC_FIELDS,
                        asset_order=M1_ASSET_JOINT_NAMES, leg_scale=M1_LEG_ACTION_SCALE_RAD,
                        wheel_scale=M1_WHEEL_ACTION_SCALE_RAD_S)
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
@@ -187,6 +238,8 @@ class TeacherOutput:
     active_wheel: torch.Tensor
     active_target: torch.Tensor
     reason: torch.Tensor
+    diagnostic: torch.Tensor
+    failure_locked: torch.Tensor
 
 
 def quaternion_rpy(quat):
@@ -246,223 +299,406 @@ def body_shift_error(anchor, actual, yaw, active_wheel, fraction, cfg):
 
 
 class ReferenceTeacher:
-    """One locked required box/wheel per row. No environment mutations."""
+    """Per-episode transactional references; only validated execution commits."""
     def __init__(self, cfg=None):
         self.cfg = cfg or TeacherConfig()
+        self.ik_cfg = IKConfig(**{f.name: getattr(self.cfg, f.name) for f in fields(IKConfig)})
         self._rows = None
+        self._mode = None
 
     @torch.no_grad()
     def step(self, state):
+        return self._batch(state, None)
+
+    @torch.no_grad()
+    def diagnostic_step(self, state, *, active_wheel, lift):
+        """Local fixture only: never emits course/BC labels or creates receipts."""
+        if type(active_wheel) is not int or active_wheel not in range(4) or type(lift) is not bool:
+            raise ValueError('diagnostic wheel must be 0..3 and lift must be bool')
+        return self._batch(state, (active_wheel, lift))
+
+    def _batch(self, state, diagnostic):
         state.validate()
+        mode = ('course',) if diagnostic is None else ('diagnostic', diagnostic[0])
+        if self._mode is not None and self._mode != mode:
+            raise ValueError('use a separate teacher for course and each diagnostic wheel')
+        self._mode = mode
         b = state.root_pos_w.shape[0]
         if self._rows is None:
             self._rows = [None]*b
         if len(self._rows) != b:
             raise ValueError('batch size changed; use a new teacher')
-        outputs = []
-        for i in range(b):
-            outputs.append(self._step_row(state, i))
-        return TeacherOutput(*(torch.cat([getattr(o,f.name) for o in outputs],0) for f in fields(TeacherOutput)))
-
-    def _step_row(self, s, i):
-        cfg = self.cfg
-        row = self._rows[i]
-        episode, step = int(s.episode_id[i]), int(s.control_step[i])
-        reset = bool(s.reset_mask[i])
-        identity_changed = row is not None and row['episode'] != episode
-        if row is None or row['episode'] != episode or (reset and row['step'] != step):
-            row = dict(episode=episode, step=-1, reset=False, target=-1, wheel=-1,
-                       phase=Phase.APPROACH, age=0, stable=0, failure=Reason.OK)
-            self._rows[i] = row
-        if row['step'] == step and row['reset'] == reset:
-            # Clone cache so callers cannot mutate the stored label/phase.
-            return TeacherOutput(*(getattr(row['output'],f.name).clone() for f in fields(TeacherOutput)))
-        if step < row['step']:
-            row['failure'] = Reason.STALE_STEP
-        if step != row['step'] + 1:
-            # Unobserved control steps cannot establish consecutive recovery.
-            # The duplicate-step cache above neither clears nor advances it.
-            row['stable'] = 0
-        row['step'], row['reset'] = step, reset
-        q = s.leg_pos[i:i+1]
-        defaults = s.default_joint_pos[i:i+1]
-        reason = row['failure']
-        finite = all(bool(torch.isfinite(getattr(s,f.name)[i]).all()) for f in fields(s)
-                     if getattr(s,f.name).is_floating_point())
-        finite = finite and bool(s.root_quat_w[i].norm() > 1e-8) and bool((s.wheel_quat_w[i].norm(dim=-1)>1e-8).all())
-        if reset or identity_changed:
-            row.update(target=-1, wheel=-1, phase=Phase.APPROACH, stable=0, age=0, failure=Reason.OK)
-            reason = Reason.RESET
-        elif not finite:
-            reason = Reason.NONFINITE
-        elif bool(s.collision[i]):
-            reason = row['failure'] = Reason.COLLISION
-        if reason != Reason.OK:
-            return self._output(s, i, row, torch.zeros_like(defaults), False, reason)
-
-        rpy = quaternion_rpy(s.root_quat_w[i:i+1])
-        rotation = rpy_to_rotation_matrix(rpy)
-        force = s.wheel_force_w[i:i+1].norm(dim=-1)
-        pending = s.required_wheels[i] & s.course_valid[i,:,None] & ~s.recovered[i]
-        if row['target'] < 0 and bool(pending.any()):
-            candidates = pending.nonzero()
-            # Ordered world-X boxes; within each box the front wheel precedes rear.
-            choice = (s.centers_top[i,candidates[:,0],0]*8 + candidates[:,1]*1e-4).argmin()
-            target, wheel = candidates[choice].tolist()
-            row.update(target=target, wheel=wheel, target_id=int(s.course_ids[i,target]),
-                       phase=Phase.APPROACH, age=0, stable=0)
-        target, wheel = row['target'], row['wheel']
-        q_target = defaults[:,LEG_COLUMNS].clone()
-        speed = q.new_full((1,4), cfg.flat_speed_m_s)
-        ik_valid = True
-        restore_complete = False
-        if target >= 0:
-            if (not bool(s.course_valid[i,target]) or int(s.course_ids[i,target]) != row['target_id']
-                    or not bool(s.required_wheels[i,target,wheel])):
-                row['failure'] = Reason.TARGET_CHANGED
-                return self._output(s,i,row,torch.zeros_like(defaults),False,row['failure'])
-            center, half = s.centers_top[i,target], s.half_extents[i,target]
-            if bool((half <= 0).any()):
-                return self._output(s,i,row,torch.zeros_like(defaults),False,Reason.NONFINITE)
-            measured = s.wheel_pos_w[i:i+1]
-            bottom = cylinder_bottom(measured, s.wheel_quat_w[i:i+1])[0,wheel]
-            support = [k for k in range(4) if k != wheel]
-            upward = s.wheel_force_w[i,:,2]
-            horizontal = s.wheel_force_w[i,:,:2].norm(dim=-1)
-            bearing = (upward > cfg.support_min_force_n) & (horizontal <= cfg.support_max_tangential_ratio*upward)
-            support_ready = bool(bearing[support].all())
-            phase = row['phase']
-            if phase >= Phase.LIFT and not support_ready:
-                row['failure'] = Reason.SUPPORT_LOST
-                return self._output(s,i,row,torch.zeros_like(defaults),False,row['failure'])
-            near_x = center[0]-half[0]-M1_WHEEL_HORIZONTAL_ENVELOPE_M-cfg.approach_gap_m
-            far_x = center[0]+half[0]+M1_WHEEL_HORIZONTAL_ENVELOPE_M+cfg.far_margin_m
-            if phase == Phase.APPROACH:
-                distance = near_x-measured[0,wheel,0]
-                speed[:] = min(cfg.cruise_speed_m_s, max(0., float(distance)*cfg.approach_gain_s_inv))
-                if distance <= cfg.approach_capture_m:
-                    row.update(phase=Phase.BALANCE, age=0, prepared=False,
-                               body_age=0, lift_age=0)
-                    # A new target must not inherit the previous target's anchor.
-                    for key in ('anchor','yaw','support_origin','lift_start_z','restore_q'):
-                        row.pop(key, None)
-            elif phase == Phase.BALANCE and not row['prepared']:
-                # Stop at live nominal before capturing a body-height/pose
-                # reference. This separates braking from body-shift IK; it
-                # does not impose a timed dwell or modify the LIFT gate below.
-                ready = bool(bearing.all())
-                ready &= bool(s.root_lin_vel_w[i].norm() <= cfg.balance_speed_limit_m_s)
-                ready &= bool(rpy[:,:2].abs().amax() <= cfg.recovery_tilt_rad)
-                ready &= bool(s.root_ang_vel_w[i,:2].abs().amax() <= cfg.recovery_rate_rad_s)
-                if ready:
-                    row.update(prepared=True,
-                        anchor=s.root_pos_w[i:i+1].clone(), yaw=rpy[:,2].clone(),
-                        support_origin=measured[:,support,:].mean(1).clone(),
-                        lift_start_z=measured[0,wheel,2].clone(),
-                        restore_q=q.clone(), body_age=0, lift_age=0)
-            elif phase == Phase.BALANCE:
-                # Three loaded wheels alone did not establish a prepared
-                # support transfer in native run1. Test the *full* shifted
-                # root goal, not the near-zero beginning of its ramp.
-                transported = row['anchor'].clone()
-                transported[:,:2] += (measured[:,support].mean(1)-row['support_origin'])[:,:2]
-                full_error = body_shift_error(transported, s.root_pos_w[i:i+1], row['yaw'],
-                    torch.tensor([wheel],device=q.device), q.new_ones(1), cfg)
-                ready = support_ready
-                ready &= bool(full_error[:,:2].norm(dim=-1)[0] <= cfg.balance_position_tolerance_m)
-                ready &= bool(s.root_lin_vel_w[i].norm() <= cfg.balance_speed_limit_m_s)
-                ready &= bool(rpy[:,:2].abs().amax() <= cfg.recovery_tilt_rad)
-                ready &= bool(s.root_ang_vel_w[i,:2].abs().amax() <= cfg.recovery_rate_rad_s)
-                if ready:
-                    row.update(phase=Phase.LIFT, age=0)
-            elif phase == Phase.LIFT and bottom > center[2]:
-                row.update(phase=Phase.PASS, age=0)
-            elif phase == Phase.PASS and measured[0,wheel,0] > far_x:
-                row.update(phase=Phase.RESTORE, age=0, restore_q=q.clone())
-            elif phase == Phase.RESTORE:
-                safe = crossing_touchdown_safe(support_contact=force > cfg.target_min_force_n,
-                    support_force=force, target_wheel=torch.tensor([wheel],device=q.device),
-                    target_min_force=cfg.target_min_force_n, support_min_force=cfg.support_min_force_n)
-                stable = bool(safe[0]) and bool(rpy[:,:2].abs().amax() <= cfg.recovery_tilt_rad)
-                stable &= bool((horizontal <= cfg.support_max_tangential_ratio*upward).all())
-                stable &= bool(upward[wheel] > cfg.target_min_force_n)
-                stable &= bool(s.root_ang_vel_w[i,:2].abs().amax() <= cfg.recovery_rate_rad_s)
-                stable &= bool((q-defaults[:,LEG_COLUMNS]).abs().amax() <= cfg.recovery_pose_rad)
-                stable &= bool((s.root_pos_w[i,2]-s.nominal_root_z_w[i]).abs() <= cfg.recovery_height_m)
-                stable &= bool(measured[0,wheel,0] > far_x)
-                row['stable'] = row['stable']+1 if stable else 0
-                if row['stable'] >= cfg.stable_samples and bool(s.recovered[i,target,wheel]):
-                    # Defer release until the final action is validated; a
-                    # clipped/invalid label cannot finish this observation.
-                    restore_complete = True
-                    speed.zero_()
-            phase = row['phase']
-            if phase == Phase.BALANCE and not row['prepared']:
-                # q_target is the live nominal pose; no IK and no clock advance.
-                speed.zero_()
-            elif row['target'] >= 0 and phase != Phase.APPROACH:
-                row['age'] += 1
-                age = row['age']
-                if phase == Phase.RESTORE:
-                    alpha = min(1., age/cfg.restore_steps)
-                    q_target = row['restore_q']*(1-alpha)+defaults[:,LEG_COLUMNS]*alpha
-                    speed.zero_()
-                else:
-                    # Reference interpolation clocks continue across measured
-                    # transitions; early LIFT/PASS never jump to full offsets.
-                    row['body_age'] += 1
-                    alpha = min(1., row['body_age']/cfg.balance_steps)
-                    # Transport contact reference with measured rolling supports.
-                    # It is never a world-fixed stance-foot anchor.
-                    transported = row['anchor'].clone()
-                    transported[:,:2] += (measured[:,support].mean(1)-row['support_origin'])[:,:2]
-                    error = body_shift_error(transported, s.root_pos_w[i:i+1], row['yaw'],
-                        torch.tensor([wheel],device=q.device), q.new_tensor([alpha]), cfg)
-                    target_body = torch.einsum('bij,bkj->bki', rotation.transpose(-1,-2), measured-s.root_pos_w[i:i+1,None])
-                    # Opposite wheel displacement produces the requested body shift.
-                    target_body -= error[:,None]
-                    if phase >= Phase.LIFT:
-                        row['lift_age'] += 1
-                        lift_alpha = min(1., row['lift_age']/cfg.lift_steps)
-                        max_lift = cfg.front_max_lift_m if wheel < 2 else cfg.rear_max_lift_m
-                        desired_z = s.ground_z[i,target]+M1_WHEEL_RADIUS_M+max_lift
-                        desired_z = row['lift_start_z']+(desired_z-row['lift_start_z'])*lift_alpha
-                        # swing_with_body: the body rolls across; no forced far-X IK.
-                        nominal = body_feet(defaults[:,LEG_COLUMNS])[:,wheel]
-                        target_body[:,wheel,:2] = nominal[:,:2]-error[:,:2]
-                        desired_world = measured[:,wheel].clone()
-                        desired_world[:,2] = desired_z
-                        local = torch.einsum('bij,bj->bi', rotation.transpose(-1,-2), desired_world-s.root_pos_w[i:i+1])
-                        target_body[:,wheel,2] = local[:,2]
-                    q_target, ok = solve_ik_body(q, target_body, cfg)
-                    ik_valid = bool(ok[0])
-                    speed.zero_()
-                    if phase == Phase.PASS:
-                        speed[:] = cfg.pass_speed_m_s*min(1., age/cfg.pass_steps)
-        # Gentle heading correction is bounded by the same action contract.
-        if bool((speed != 0).any()):
-            speed += -cfg.yaw_gain_s_inv*rpy[:,2,None]*q.new_tensor([-.215,.215,-.215,.215])
-        if restore_complete:
-            q_target = defaults[:,LEG_COLUMNS].clone()
-        action, encoded = encode_targets(q_target, speed, defaults)
-        valid = ik_valid and bool(encoded[0])
-        reason = Reason.OK if valid else (Reason.IK_INVALID if not ik_valid else Reason.ACTION_INVALID)
-        if not valid:
-            # Hold current finite/legal joints when possible, stop all wheels.
-            action, _ = encode_targets(torch.nan_to_num(q), torch.zeros_like(speed), defaults)
-        elif restore_complete:
-            row.update(target=-1, wheel=-1, phase=Phase.APPROACH, age=0, stable=0)
-        return self._output(s,i,row,action,valid,reason)
+        outputs = [self._step_row(state, i, diagnostic) for i in range(b)]
+        return TeacherOutput(*(torch.cat([getattr(o, f.name) for o in outputs], 0)
+                               for f in fields(TeacherOutput)))
 
     @staticmethod
-    def _output(s, i, row, action, valid, reason):
+    def _reference(s, i):
+        return PoseReference(BodyPose(s.root_pos_w[i:i+1].clone(), s.root_quat_w[i:i+1].clone()),
+                             s.wheel_pos_w[i:i+1].clone())
+
+    @staticmethod
+    def _clone_output(out):
+        return TeacherOutput(*(getattr(out, f.name).clone() for f in fields(TeacherOutput)))
+
+    def _tracked(self, s, i, ref):
+        cfg = self.cfg
+        position = (s.root_pos_w[i:i+1]-ref.body.pos_w).norm(dim=-1)
+        a = quaternion_rpy(s.root_quat_w[i:i+1])
+        b = quaternion_rpy(ref.body.quat_w)
+        angular = torch.atan2((a-b).sin(), (a-b).cos()).abs().amax()
+        return bool(position[0] <= cfg.balance_position_tolerance_m and angular <= cfg.recovery_pose_rad)
+
+    def _quiet(self, s, i):
+        cfg = self.cfg
+        rpy = quaternion_rpy(s.root_quat_w[i:i+1])
+        return bool(s.root_lin_vel_w[i].norm() <= cfg.balance_speed_limit_m_s
+                    and rpy[:, :2].abs().amax() <= cfg.recovery_tilt_rad
+                    and s.root_ang_vel_w[i, :2].abs().amax() <= cfg.recovery_rate_rad_s)
+
+    def _fallback(self, s, i, row):
+        # A finite action with valid=False is only a best-effort stopped output.
+        # If no legal continuous held target exists there is no safety claim.
+        defaults = s.default_joint_pos[i:i+1]
+        last = row.get('last_q')
+        if last is None:
+            last = s.last_applied_leg_target[i:i+1]
+        action, encoded = encode_targets(last, last.new_zeros(1, 4), defaults)
+        continuous = bool(s.applied_target_valid[i] and
+            torch.isfinite(s.last_applied_leg_target[i]).all() and
+            ((last-s.last_applied_leg_target[i:i+1]).abs() <= self.cfg.joint_target_rate_rad_s*float(s.dt[i])).all())
+        return action if bool(encoded[0]) and continuous else torch.zeros_like(defaults)
+
+    def _diagnostics(self, s, i, row, evidence, valid, freeze, diagnostic):
+        data = s.root_pos_w.new_full((1, len(TEACHER_DIAGNOSTIC_FIELDS)), float('nan'))
+        values = dict(zip(TEACHER_DIAGNOSTIC_INTEGER_FIELDS, [-1]*len(TEACHER_DIAGNOSTIC_INTEGER_FIELDS)))
+        def put(prefix, tensor, suffixes):
+            if tensor is not None:
+                values.update(zip((prefix+x for x in suffixes), tensor.reshape(-1).tolist()))
+        pose_fields = ('x', 'y', 'z', 'qw', 'qx', 'qy', 'qz')
+        put('measured_root_', torch.cat((s.root_pos_w[i], s.root_quat_w[i])), pose_fields)
+        for kind in ('requested', 'attempted', 'accepted'):
+            ref = row.get('accepted') if kind == 'accepted' else evidence.get(kind)
+            if ref is not None:
+                put(kind+'_root_', torch.cat((ref.body.pos_w, ref.body.quat_w), -1), pose_fields)
+                put(kind+'_world_wheel_', ref.wheels_w,
+                    tuple(f'{leg}_{axis}' for leg in range(4) for axis in ('x', 'y', 'z')))
+                if kind != 'requested':
+                    put(kind+'_body_wheel_', world_to_goal_body(ref),
+                        tuple(f'{leg}_{axis}' for leg in range(4) for axis in ('x', 'y', 'z')))
+        put('com_', s.com_pos_w[i], ('x', 'y', 'z'))
+        put('last_applied_q_', s.last_applied_leg_target[i], tuple(str(j) for j in range(12)))
+        put('accepted_q_', row.get('last_q'), tuple(str(j) for j in range(12)))
+        result = evidence.get('ik')
+        if result is not None:
+            for field in ('residual_m', 'joint_limit_ok', 'branch_ok', 'extension_margin_rad',
+                          'workspace_ok', 'iterations', 'reason'):
+                put('ik_'+field+'_', getattr(result, field), tuple(str(j) for j in range(4)))
+            put('attempted_q_', result.q, tuple(str(j) for j in range(12)))
+        put('support_slip_', evidence.get('slip'), tuple(f'{j}_{a}' for j in range(4) for a in ('x', 'y')))
+        for name in ('measured_com_margin_m', 'predicted_com_margin_m', 'candidate_com_margin_m', 'candidate_index',
+                     'candidate_count', 'backtrack_index'):
+            if name in evidence:
+                values[name] = evidence[name]
+        values.update(invalid_streak=row['invalid_streak'], freeze_reason=int(freeze),
+                      reference_valid=int(valid), diagnostic_only=int(diagnostic is not None),
+                      age=row['age'], body_age=row['body_age'], lift_age=row['lift_age'])
+        for name, value in values.items():
+            data[0, TEACHER_DIAGNOSTIC_FIELDS.index(name)] = value
+        return data
+
+    def _output(self, s, i, row, action, valid, reason, evidence, freeze, diagnostic):
         if not valid:
-            # All early returns and final encoding/IK failures break the same
-            # consecutive-measurement run, including transient NONFINITE.
             row['stable'] = 0
         device = s.root_pos_w.device
-        out = TeacherOutput(action.clone(), torch.tensor([valid],device=device),
-            torch.tensor([int(row['phase'])],device=device), torch.tensor([row['wheel']],device=device),
-            torch.tensor([row['target']],device=device), torch.tensor([int(reason)],device=device))
+        out = TeacherOutput(action.clone(), torch.tensor([valid and diagnostic is None], device=device),
+            torch.tensor([int(row['phase'])], device=device), torch.tensor([row['wheel']], device=device),
+            torch.tensor([row['target'] if diagnostic is None else -1], device=device),
+            torch.tensor([int(reason)], device=device),
+            self._diagnostics(s, i, row, evidence, valid, freeze, diagnostic),
+            torch.tensor([row['failure'] != Reason.OK], device=device))
         row['output'] = out
-        return TeacherOutput(*(getattr(out,f.name).clone() for f in fields(TeacherOutput)))
+        return self._clone_output(out)
+
+    def _step_row(self, s, i, diagnostic):
+        cfg, evidence = self.cfg, {}
+        row = self._rows[i]
+        episode, step, reset = int(s.episode_id[i]), int(s.control_step[i]), bool(s.reset_mask[i])
+        changed = row is not None and row['episode'] != episode
+        if row is None or changed or (reset and (row['step'] != step or not row['reset'])):
+            row = dict(episode=episode, step=-1, reset=False, target=-1, wheel=-1,
+                       phase=Phase.APPROACH, age=0, body_age=0, lift_age=0, stable=0,
+                       prepared=False, failure=Reason.OK, invalid_streak=0)
+            self._rows[i] = row
+        if row['step'] == step and row['reset'] == reset:
+            return self._clone_output(row['output'])
+        if step < row['step']:
+            row['failure'] = Reason.STALE_STEP
+        if step != row['step']+1:
+            row['stable'] = 0
+            row['invalid_streak'] = 0
+        row['step'], row['reset'] = step, reset
+
+        def fail(reason, freeze, lock=False, count=False):
+            if count:
+                row['invalid_streak'] += 1
+                lock |= row['invalid_streak'] >= cfg.invalid_lock_steps
+            if lock:
+                row['failure'] = reason
+            return self._output(s, i, row, self._fallback(s, i, row), False, reason,
+                                evidence, freeze, diagnostic)
+
+        if reset or changed:
+            return fail(Reason.RESET, FreezeReason.RESET)
+        if row['failure'] != Reason.OK:
+            return fail(row['failure'], FreezeReason.LOCKED)
+        finite = all(bool(torch.isfinite(getattr(s, f.name)[i]).all()) for f in fields(s)
+                     if getattr(s, f.name).is_floating_point())
+        finite &= bool((s.root_quat_w[i].norm()-1).abs() <= 1e-3)
+        finite &= bool(((s.wheel_quat_w[i].norm(dim=-1)-1).abs() <= 1e-3).all())
+        if not finite:
+            return fail(Reason.NONFINITE, FreezeReason.SAFETY, lock=row['prepared'], count=True)
+        if not bool(s.measurement_valid[i]):
+            return fail(Reason.MEASUREMENT_INVALID, FreezeReason.SAFETY, lock=row['prepared'], count=True)
+        if not bool(s.applied_target_valid[i]):
+            return fail(Reason.APPLIED_TARGET_INVALID, FreezeReason.SAFETY, count=True)
+        if bool(s.collision[i]):
+            return fail(Reason.COLLISION, FreezeReason.SAFETY, lock=True)
+
+        # Scratch state: tensors already stored on the row are immutable here.
+        # No phase, reference, anchor or age change escapes a rejected transaction.
+        work = dict(row)
+        q, defaults = s.leg_pos[i:i+1], s.default_joint_pos[i:i+1]
+        measured = self._reference(s, i)
+        rpy = quaternion_rpy(measured.body.quat_w)
+        upward = s.wheel_force_w[i, :, 2]
+        horizontal = s.wheel_force_w[i, :, :2].norm(dim=-1)
+        bearing = (upward > cfg.support_min_force_n) & (horizontal <= cfg.support_max_tangential_ratio*upward)
+        if diagnostic is not None:
+            work.update(wheel=diagnostic[0], target=-1)
+            if work['phase'] == Phase.APPROACH:
+                work.update(phase=Phase.BALANCE, age=0)
+        elif work['target'] < 0:
+            pending = s.required_wheels[i] & s.course_valid[i, :, None] & ~s.recovered[i]
+            if bool(pending.any()):
+                candidates = pending.nonzero()
+                selected = (s.centers_top[i, candidates[:, 0], 0]*8+candidates[:, 1]*1e-4).argmin()
+                target, wheel = candidates[selected].tolist()
+                work.update(target=target, wheel=wheel, target_id=int(s.course_ids[i, target]),
+                            phase=Phase.APPROACH, age=0, body_age=0, lift_age=0, stable=0, prepared=False)
+                for key in ('anchor', 'anchor_pose', 'wheel_anchor', 'support_origin', 'lift_start_z', 'goal'):
+                    work.pop(key, None)
+        target, wheel, phase = work['target'], work['wheel'], work['phase']
+        active = wheel >= 0
+        support = [k for k in range(4) if k != wheel]
+        support_ready = active and bool(bearing[support].all())
+        if active:
+            margin, margin_valid = support_margin(s.com_pos_w[i:i+1], measured.wheels_w,
+                                                  torch.tensor([wheel], device=q.device))
+            evidence['measured_com_margin_m'] = float(margin[0])
+            measured_com_ok = bool(margin_valid[0] and margin[0] >= cfg.com_margin_m)
+        else:
+            measured_com_ok = False
+        if row['prepared'] and not support_ready:
+            return fail(Reason.SUPPORT_LOST, FreezeReason.SAFETY, lock=True)
+        near_x = far_x = bottom = None
+        if diagnostic is None and active:
+            if (target >= s.course_valid.shape[1] or not bool(s.course_valid[i, target])
+                    or int(s.course_ids[i, target]) != work['target_id']
+                    or not bool(s.required_wheels[i, target, wheel])):
+                return fail(Reason.TARGET_CHANGED, FreezeReason.SAFETY, lock=True)
+            center, half = s.centers_top[i, target], s.half_extents[i, target]
+            if bool((half <= 0).any()):
+                return fail(Reason.NONFINITE, FreezeReason.SAFETY, lock=row['prepared'], count=True)
+            near_x = center[0]-half[0]-M1_WHEEL_HORIZONTAL_ENVELOPE_M-cfg.approach_gap_m
+            far_x = center[0]+half[0]+M1_WHEEL_HORIZONTAL_ENVELOPE_M+cfg.far_margin_m
+            bottom = cylinder_bottom(measured.wheels_w, s.wheel_quat_w[i:i+1])[0, wheel]
+        speed = q.new_full((1, 4), cfg.flat_speed_m_s)
+        freeze, finish = FreezeReason.NONE, False
+        accepted = work.get('accepted', measured)
+        branch = work.get('branch_q', q)
+        tracked = self._tracked(s, i, accepted)
+        if phase == Phase.APPROACH and active:
+            distance = near_x-measured.wheels_w[0, wheel, 0]
+            speed[:] = min(cfg.cruise_speed_m_s, max(0., float(distance)*cfg.approach_gain_s_inv))
+            if distance <= cfg.approach_capture_m:
+                work.update(phase=Phase.BALANCE, age=0)
+                phase = Phase.BALANCE
+                speed.zero_()
+                # The next measured sample, not the capture transition itself,
+                # decides whether braking has finished.
+        if phase == Phase.BALANCE and not work['prepared']:
+            speed.zero_()
+            freeze = FreezeReason.BRAKING
+            was_balancing = row['phase'] == Phase.BALANCE or diagnostic is not None
+            if was_balancing and bool(bearing.all()) and self._quiet(s, i):
+                yaw = rpy[:, 2]
+                work.update(prepared=True, anchor=measured.body.pos_w.clone(), anchor_pose=measured.body,
+                            yaw=yaw.clone(), wheel_anchor=measured.wheels_w.clone(),
+                            support_origin=measured.wheels_w[:, support].mean(1).clone(),
+                            support_previous=measured.wheels_w.clone(),
+                            lift_start_z=measured.wheels_w[0, wheel, 2].clone(),
+                            branch_q=q.clone(), body_age=0, lift_age=0)
+                accepted, branch, tracked = measured, q, True
+        if not work['prepared']:
+            # Rolling and braking have the same constrained IK/slew transaction.
+            # Re-express the previous commanded joint geometry at measured root;
+            # this does not capture a world support anchor during motion.
+            rotation = rpy_to_rotation_matrix(rpy)
+            last = work.get('last_q', s.last_applied_leg_target[i:i+1])
+            accepted = PoseReference(measured.body, measured.body.pos_w[:, None]
+                                     +torch.einsum('bij,bkj->bki', rotation, body_feet(last)))
+            requested = PoseReference(measured.body, measured.body.pos_w[:, None]
+                                      +torch.einsum('bij,bkj->bki', rotation, body_feet(defaults[:, LEG_COLUMNS])))
+        else:
+            speed.zero_()
+            goal = work.get('goal', accepted)
+            if phase == Phase.BALANCE:
+                choice = choose_support_pose(measured.body, work['anchor_pose'], accepted.body,
+                    s.com_pos_w[i:i+1], work['wheel_anchor'], torch.tensor([wheel], device=q.device),
+                    s.nominal_root_z_w[i:i+1], q, branch, self.ik_cfg)
+                evidence.update(requested=choice.reference, attempted=choice.reference, ik=choice.ik,
+                    predicted_com_margin_m=float(choice.predicted_margin_m[0]),
+                    candidate_com_margin_m=float(choice.predicted_margin_m[0]),
+                    candidate_index=int(choice.candidate_index[0]), candidate_count=int(choice.candidate_count[0]))
+                if not bool(choice.valid[0]):
+                    return fail(Reason.IK_INVALID, FreezeReason.IK, count=True)
+                # Explicit level attitude; the accepted-pose search candidate
+                # may retain captured tilt, which must not become a new goal.
+                yaw = work['yaw']
+                level = torch.stack((torch.cos(yaw/2), torch.zeros_like(yaw),
+                                     torch.zeros_like(yaw), torch.sin(yaw/2)), -1)
+                goal = PoseReference(BodyPose(choice.reference.body.pos_w, level), choice.reference.wheels_w)
+                work['goal'] = goal
+                ready = tracked and self._tracked(s, i, goal) and measured_com_ok and support_ready and self._quiet(s, i)
+                if ready and row['prepared'] and (diagnostic is None or diagnostic[1]):
+                    work.update(phase=Phase.LIFT, age=0)
+                    phase = Phase.LIFT
+                else:
+                    freeze = FreezeReason.PREPARATION
+            elif phase == Phase.LIFT:
+                if diagnostic is None:
+                    clear = bool(bottom > center[2])
+                else:
+                    height = cfg.front_max_lift_m if wheel < 2 else cfg.rear_max_lift_m
+                    clear = bool(measured.wheels_w[0, wheel, 2] >= work['lift_start_z']+height-cfg.ik_tolerance_m)
+                if clear and tracked:
+                    work.update(phase=Phase.PASS if diagnostic is None else Phase.RESTORE, age=0)
+                    phase = work['phase']
+            elif phase == Phase.PASS and tracked and measured.wheels_w[0, wheel, 0] > far_x:
+                work.update(phase=Phase.RESTORE, age=0)
+                phase = Phase.RESTORE
+
+            if tracked:
+                work['age'] += 1
+                if phase != Phase.RESTORE:
+                    work['body_age'] += 1
+                if phase in (Phase.LIFT, Phase.PASS):
+                    work['lift_age'] += 1
+            else:
+                freeze = FreezeReason.TRACKING
+
+            # Progress advances only from measured previous accepted root pose.
+            # Wheel/body targets are all world coordinates until the one full
+            # desired-body transform in backtrack_reference.
+            root_goal = goal.body.pos_w
+            quat_goal = goal.body.quat_w
+            wheels_goal = work['wheel_anchor'].clone()
+            if phase == Phase.PASS:
+                displacement = measured.wheels_w[:, support, :2]-work['support_previous'][:, support, :2]
+                common = displacement.mean(1)
+                slip = q.new_zeros(1, 4, 2)
+                slip[:, support] = displacement-common[:, None]
+                evidence['slip'] = slip
+                anchor_w = work['wheel_anchor'].clone()
+                anchor_w[:, :, :2] += common[:, None]
+                work['wheel_anchor'] = anchor_w
+                work['support_previous'] = measured.wheels_w.clone()
+                root_goal = goal.body.pos_w.clone()
+                root_goal[:, :2] += common
+                goal = PoseReference(BodyPose(root_goal, quat_goal), anchor_w)
+                work['goal'] = goal
+                # Transport both ends by the same common rolling displacement;
+                # this introduces no artificial support-joint motion or tilt.
+                p = accepted.body.pos_w.clone()
+                p[:, :2] += common
+                w = accepted.wheels_w.clone()
+                w[:, :, :2] += common[:, None]
+                accepted = PoseReference(BodyPose(p, accepted.body.quat_w), w)
+                wheels_goal = anchor_w.clone()
+                speed[:] = cfg.pass_speed_m_s*min(1., work['age']/cfg.pass_steps)
+            if phase in (Phase.LIFT, Phase.PASS):
+                maximum = cfg.front_max_lift_m if wheel < 2 else cfg.rear_max_lift_m
+                end_z = (work['lift_start_z']+maximum if diagnostic is not None
+                         else s.ground_z[i, target]+M1_WHEEL_RADIUS_M+maximum)
+                wheels_goal[0, wheel, 2] = work['lift_start_z']+(end_z-work['lift_start_z'])*min(1., work['lift_age']/cfg.lift_steps)
+            if phase == Phase.RESTORE:
+                root_goal = work['anchor'].clone()
+                # Preserve rolling displacement in XY while restoring captured
+                # height and heading through the very same world reference IK.
+                root_goal[:, :2] += work['wheel_anchor'][:, support, :2].mean(1)-work['support_origin'][:, :2]
+                quat_goal = goal.body.quat_w
+                wheels_goal = work['wheel_anchor'].clone()
+            horizon = cfg.restore_steps if phase == Phase.RESTORE else cfg.balance_steps
+            remaining = max(1, horizon-work['age']+1) if phase == Phase.RESTORE else max(1, horizon-work['body_age']+1)
+            alpha = 1./remaining if tracked else 0.
+            position = accepted.body.pos_w+alpha*(root_goal-accepted.body.pos_w)
+            # Short-arc normalized interpolation is sufficient for <=.15rad
+            # captured tilt; backtracking itself uses exact shortest-arc SLERP.
+            end = torch.where((accepted.body.quat_w*quat_goal).sum(-1, keepdim=True) < 0, -quat_goal, quat_goal)
+            quat = accepted.body.quat_w+alpha*(end-accepted.body.quat_w)
+            quat = quat/quat.norm(dim=-1, keepdim=True)
+            if not tracked:
+                wheels_goal = accepted.wheels_w
+            if phase == Phase.RESTORE:
+                wheels_goal = accepted.wheels_w+alpha*(wheels_goal-accepted.wheels_w)
+            requested = PoseReference(BodyPose(position, quat), wheels_goal)
+
+            if phase == Phase.RESTORE:
+                safe = crossing_touchdown_safe(support_contact=s.wheel_force_w[i:i+1].norm(dim=-1) > cfg.target_min_force_n,
+                    support_force=s.wheel_force_w[i:i+1].norm(dim=-1),
+                    target_wheel=torch.tensor([wheel], device=q.device),
+                    target_min_force=cfg.target_min_force_n, support_min_force=cfg.support_min_force_n)
+                stable = bool(safe[0]) and tracked
+                stable &= bool(rpy[:, :2].abs().amax() <= cfg.recovery_tilt_rad)
+                stable &= bool(s.root_ang_vel_w[i, :2].abs().amax() <= cfg.recovery_rate_rad_s)
+                stable &= bool((horizontal <= cfg.support_max_tangential_ratio*upward).all() and upward[wheel] > cfg.target_min_force_n)
+                stable &= bool((q-defaults[:, LEG_COLUMNS]).abs().amax() <= cfg.recovery_pose_rad)
+                stable &= bool((s.root_pos_w[i, 2]-s.nominal_root_z_w[i]).abs() <= cfg.recovery_height_m)
+                stable &= diagnostic is not None or bool(measured.wheels_w[0, wheel, 0] > far_x)
+                work['stable'] = work['stable']+1 if stable else 0
+                finish = (work['stable'] >= cfg.stable_samples
+                          and diagnostic is None and bool(s.recovered[i, target, wheel]))
+
+        evidence['requested'] = requested
+        solved = backtrack_reference(accepted, requested, q, branch,
+            s.last_applied_leg_target[i:i+1], float(s.dt[i]), self.ik_cfg)
+        evidence.update(attempted=solved.reference, ik=solved.ik, backtrack_index=int(solved.backtrack_index[0]))
+        if active:
+            measured_rotation = rpy_to_rotation_matrix(rpy)
+            com_offset = torch.einsum('bij,bj->bi', measured_rotation.transpose(-1, -2),
+                                     s.com_pos_w[i:i+1]-measured.body.pos_w)
+            goal_rotation = rpy_to_rotation_matrix(quaternion_rpy(solved.reference.body.quat_w))
+            predicted = solved.reference.body.pos_w+torch.einsum('bij,bj->bi', goal_rotation, com_offset)
+            predicted_margin, _ = support_margin(predicted, solved.reference.wheels_w,
+                                                  torch.tensor([wheel], device=q.device))
+            evidence['predicted_com_margin_m'] = float(predicted_margin[0])
+        if not bool(solved.valid[0]):
+            return fail(Reason.IK_INVALID, FreezeReason.IK, count=True)
+        if bool((speed != 0).any()):
+            speed += -cfg.yaw_gain_s_inv*rpy[:, 2, None]*q.new_tensor([-.215, .215, -.215, .215])
+        action, encoded = encode_targets(solved.ik.q, speed, defaults)
+        actual = m1_action_targets(action, defaults)[:, LEG_COLUMNS]
+        continuous = bool(((actual-s.last_applied_leg_target[i:i+1]).abs() <= cfg.joint_target_rate_rad_s*float(s.dt[i])).all())
+        if not bool(encoded[0]) or not continuous:
+            return fail(Reason.ACTION_INVALID, FreezeReason.ACTION, count=True)
+        work.update(accepted=solved.reference, last_q=actual.clone(), branch_q=branch.clone(), invalid_streak=0)
+        if work['prepared'] and phase != Phase.PASS:
+            # Baseline for the next measured rolling increment, without moving
+            # any preparation anchor. Old preparation slip is not PASS motion.
+            work['support_previous'] = measured.wheels_w.clone()
+        if finish:
+            work.update(target=-1, wheel=-1, phase=Phase.APPROACH, age=0, body_age=0,
+                        lift_age=0, stable=0, prepared=False)
+        row.update(work)
+        return self._output(s, i, row, action, True, Reason.OK, evidence, freeze, diagnostic)
