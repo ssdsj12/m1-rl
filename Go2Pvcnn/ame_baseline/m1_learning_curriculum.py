@@ -9,12 +9,27 @@ import torch
 import math
 
 
+LEGACY_STAGE_SEQUENCE = (0, 1, 2, 3, 4)
+
+
+def _stage_sequence(value):
+    try:
+        sequence = tuple(value)
+    except TypeError as exc:
+        raise ValueError('stage_sequence must be a nonempty integer sequence') from exc
+    if (not sequence or any(type(stage) is not int or not 0 <= stage <= 4 for stage in sequence)
+            or sequence[0] != 0 or any(a >= b for a, b in zip(sequence, sequence[1:]))):
+        raise ValueError('stage_sequence must start at 0 and strictly increase within 0..4')
+    return sequence
+
+
 class LearningCurriculumGate:
-    def __init__(self, num_envs, device, *, window_size=2048):
+    def __init__(self, num_envs, device, *, window_size=2048, stage_sequence=LEGACY_STAGE_SEQUENCE):
         if num_envs < 1 or window_size < 2048:
             raise ValueError('positive environments and at least 2048 episodes required')
         self.device = torch.device(device)
         self.window_size = int(window_size)
+        self.stage_sequence = _stage_sequence(stage_sequence)
         self.stage = 0
         self.streak = 0
         self.steps = torch.zeros(num_envs, dtype=torch.long, device=device)
@@ -76,8 +91,8 @@ class LearningCurriculumGate:
                 # Speed error remains telemetry, not a promotion requirement.
                 good = self.last['pass_rate'] >= .9 and strict_ok
                 self.streak = min(self.streak + 1, 3) if good else 0
-                if self.streak >= 3 and self.stage < 4:
-                    self.stage += 1
+                if self.streak >= 3 and self.stage != self.stage_sequence[-1]:
+                    self.stage = self.stage_sequence[self.stage_sequence.index(self.stage) + 1]
                     self.streak = 0
                 self.window_count = self.window_pass = self.window_attempts = self.window_successes = 0
                 self.window_error = self.window_duration = 0.
@@ -97,34 +112,53 @@ class LearningCurriculumGate:
 
     def metrics(self):
         result = self._window_metrics() if self.window_count else self.last.copy()
+        # Preserve historical unprefixed diagnostics; expose complete and
+        # in-progress windows separately so consumers need not mix denominators.
+        result.update({f'last_{key}': value for key, value in self.last.items()})
+        result.update({f'pending_{key}': value for key, value in self._window_metrics().items()})
         result.update(stage=float(self.stage), qualifying_streak=float(self.streak))
         return result
 
     def state_dict(self):
         names = ('stage', 'streak', 'window_count', 'window_pass', 'window_error',
                  'window_duration', 'window_attempts', 'window_successes')
-        return {'version': 1, **{name: getattr(self, name) for name in names}, 'last': self.last.copy()}
+        return {'version': 2, 'stage_sequence': list(self.stage_sequence),
+                **{name: getattr(self, name) for name in names}, 'last': self.last.copy()}
 
     def load_state_dict(self, state):
         expected = self.state_dict()
-        if not isinstance(state, dict) or state.keys() != expected.keys() or state['version'] != 1:
+        if not isinstance(state, dict) or type(state.get('version')) is not int:
             raise ValueError('invalid or missing learning curriculum checkpoint metadata')
-        for name in expected.keys() - {'version', 'last'}:
+        if state['version'] == 1:
+            if (self.stage_sequence != LEGACY_STAGE_SEQUENCE
+                    or state.keys() != expected.keys() - {'stage_sequence'}):
+                raise ValueError('legacy curriculum checkpoint requires the legacy stage_sequence')
+        elif state['version'] == 2:
+            if (state.keys() != expected.keys()
+                    or _stage_sequence(state['stage_sequence']) != self.stage_sequence):
+                raise ValueError('curriculum checkpoint stage_sequence mismatch')
+        else:
+            raise ValueError('invalid curriculum checkpoint version')
+        scalar_names = expected.keys() - {'version', 'last', 'stage_sequence'}
+        for name in scalar_names:
             value = state[name]
-            if not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
                 raise ValueError(f'invalid curriculum {name}')
         for name in ('stage', 'streak', 'window_count', 'window_pass', 'window_attempts', 'window_successes'):
-            if not isinstance(state[name], int):
+            if type(state[name]) is not int:
                 raise ValueError(f'curriculum {name} must be integer')
-        if (state['stage'] > 4 or state['streak'] > 3 or state['window_count'] >= self.window_size
+        if (state['stage'] not in self.stage_sequence or state['streak'] > 3 or state['window_count'] >= self.window_size
                 or state['window_pass'] > state['window_count']
                 or state['window_successes'] > state['window_attempts']):
             raise ValueError('invalid curriculum checkpoint bounds')
         last = state['last']
         if (not isinstance(last, dict) or last.keys() != self.last.keys()
-                or not all(isinstance(v, (int, float)) and math.isfinite(v) and v >= 0 for v in last.values())):
+                or not all(type(v) in (int, float) and math.isfinite(v) and v >= 0 for v in last.values())):
             raise ValueError('invalid curriculum checkpoint metrics')
-        for name in expected.keys() - {'version', 'last'}:
+        if (last['pass_rate'] > 1 or last['strict_success_rate'] > 1
+                or last['strict_successes'] > last['strict_attempts']):
+            raise ValueError('invalid curriculum checkpoint metric bounds')
+        for name in scalar_names:
             setattr(self, name, state[name])
         self.last = last.copy()
         self.steps.zero_()
@@ -137,7 +171,8 @@ class LearningCurriculumGate:
 
 def _gate(env):
     if not hasattr(env, '_m1_learning_gate'):
-        env._m1_learning_gate = LearningCurriculumGate(env.num_envs, env.device)
+        sequence = getattr(getattr(env, 'cfg', None), 'm1_learning_stage_sequence', LEGACY_STAGE_SEQUENCE)
+        env._m1_learning_gate = LearningCurriculumGate(env.num_envs, env.device, stage_sequence=sequence)
     return env._m1_learning_gate
 
 

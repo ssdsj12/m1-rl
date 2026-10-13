@@ -4,10 +4,25 @@ import math
 import torch
 
 
-def collision_budget_contract():
-    return dict(version=1, rate_per_s=5., episode_budget=20., combination='max',
-                immediate_reset=False, budget_terminal_extra_cost=0.,
-                other_failure_cost=20., intermittent='retain_until_reset')
+EPISODE_BUDGET = 20.
+
+
+def _validate_cost_per_step(value):
+    if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))
+                              or not math.isfinite(value) or value <= 0):
+        raise ValueError('finite positive cost_per_step required')
+    return None if value is None else float(value)
+
+
+def collision_budget_contract(*, cost_per_step=None):
+    cost_per_step = _validate_cost_per_step(cost_per_step)
+    contract = dict(version=1, rate_per_s=5., episode_budget=EPISODE_BUDGET, combination='max',
+                    immediate_reset=False, budget_terminal_extra_cost=0.,
+                    other_failure_cost=20., intermittent='retain_until_reset')
+    if cost_per_step is not None:
+        contract.pop('rate_per_s')
+        contract.update(version=2, mode='per_control_step', cost_per_step=cost_per_step)
+    return contract
 
 
 def combine_collision_signals(geometry, contact):
@@ -17,13 +32,23 @@ def combine_collision_signals(geometry, contact):
 
 
 class CollisionBudget:
-    def __init__(self, n, device, dt):
+    def __init__(self, n, device, dt, *, cost_per_step=None):
         if not math.isfinite(dt) or dt <= 0:
             raise ValueError('finite positive dt required')
         self.dt=float(dt)
+        self._cost_per_step = _validate_cost_per_step(cost_per_step)
         self.total=torch.zeros(n,device=device,dtype=torch.float64)
         self.step=None
         self.snapshot=None
+
+    @property
+    def cost_per_step(self):
+        return self._cost_per_step
+
+    @property
+    def contract(self):
+        """A fresh contract derived from the settings used by update()."""
+        return collision_budget_contract(cost_per_step=self.cost_per_step)
 
     @torch.no_grad()
     def update(self, signal, step):
@@ -34,13 +59,14 @@ class CollisionBudget:
         if self.step is not None and step < self.step:
             raise ValueError('control step must be monotonic')
         clean=combine_collision_signals(signal,torch.zeros_like(signal)).double()
-        remaining=(20.-self.total).clamp_min(0.)
-        requested=5.*self.dt*clean
+        remaining=(EPISODE_BUDGET-self.total).clamp_min(0.)
+        requested=(5.*self.dt*clean if self.cost_per_step is None
+                   else self.cost_per_step*(clean > 0).to(clean.dtype))
         cost=torch.minimum(requested,remaining)
         # Close only roundoff at the budget boundary, not a physical tolerance.
         exhausted=(remaining-requested<=1e-10)
         cost=torch.where(exhausted,remaining,cost)
-        self.total=torch.where(exhausted,torch.full_like(self.total,20.),self.total+cost)
+        self.total=torch.where(exhausted,torch.full_like(self.total,EPISODE_BUDGET),self.total+cost)
         self.step=step
         self.snapshot=dict(cost=cost.float(),total=self.total.float().clone(),
                            exhausted=exhausted.clone(),signal=clean.float().clone())

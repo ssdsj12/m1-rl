@@ -1,8 +1,4 @@
-"""Opt-in student config; runtime support is checked before any rollout.
-
-The profile declares the requested Task 2 backends, but does not implement
-their collision accounting or curriculum progression.
-"""
+"""Opt-in student config; effective backend contracts are checked before rollout."""
 import os
 
 from .m1_teacher_contract import PHASES, PROFILE, student_contract
@@ -18,10 +14,9 @@ def validate_profile_environment():
 def student_training_contract():
     """Keep the reference physics, observation and pose contract intact."""
     from .m1_ame_contract import m1_training_contract
+    from .m1_collision_budget import collision_budget_contract
     contract = m1_training_contract()
-    collision = dict(contract['collision_budget'])
-    collision.pop('rate_per_s')
-    collision.update(version=2, mode='per_control_step', cost_per_step=2.)
+    collision = collision_budget_contract(cost_per_step=2.)
     contract.update(version=5, profile=PROFILE, stage_sequence=[0, 3],
                     collision_budget=collision, student_contract=student_contract())
     return contract
@@ -66,7 +61,7 @@ def build_teacher_student_env_cfg(*, training_phase='bc'):
 
 
 def require_teacher_student_backend(env):
-    """Fail closed until Task 2 provides real, persisted backend contracts.
+    """Fail closed unless actual backends expose the requested contracts.
 
     CollisionBudget.contract must describe its effective instance settings;
     LearningCurriculumGate.stage_sequence must also appear in state_dict().
