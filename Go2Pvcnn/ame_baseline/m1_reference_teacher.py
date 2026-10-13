@@ -100,7 +100,7 @@ class TeacherConfig:
     @property
     def fingerprint(self):
         payload = dict(config=asdict(self), algorithm=REFERENCE_COMMIT,
-                       implementation='independent-dls-components-v1-measured-gates',
+                       implementation='independent-dls-components-v2-consecutive-measured-gates',
                        asset_order=M1_ASSET_JOINT_NAMES, leg_scale=M1_LEG_ACTION_SCALE_RAD,
                        wheel_scale=M1_WHEEL_ACTION_SCALE_RAD_S)
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
@@ -291,6 +291,10 @@ class ReferenceTeacher:
             return TeacherOutput(*(getattr(row['output'],f.name).clone() for f in fields(TeacherOutput)))
         if step < row['step']:
             row['failure'] = Reason.STALE_STEP
+        if step != row['step'] + 1:
+            # Unobserved control steps cannot establish consecutive recovery.
+            # The duplicate-step cache above neither clears nor advances it.
+            row['stable'] = 0
         row['step'], row['reset'] = step, reset
         q = s.leg_pos[i:i+1]
         defaults = s.default_joint_pos[i:i+1]
@@ -323,6 +327,7 @@ class ReferenceTeacher:
         q_target = defaults[:,LEG_COLUMNS].clone()
         speed = q.new_full((1,4), cfg.flat_speed_m_s)
         ik_valid = True
+        restore_complete = False
         if target >= 0:
             if (not bool(s.course_valid[i,target]) or int(s.course_ids[i,target]) != row['target_id']
                     or not bool(s.required_wheels[i,target,wheel])):
@@ -372,7 +377,9 @@ class ReferenceTeacher:
                 stable &= bool(measured[0,wheel,0] > far_x)
                 row['stable'] = row['stable']+1 if stable else 0
                 if row['stable'] >= cfg.stable_samples and bool(s.recovered[i,target,wheel]):
-                    row.update(target=-1, wheel=-1, phase=Phase.APPROACH, age=0, stable=0)
+                    # Defer release until the final action is validated; a
+                    # clipped/invalid label cannot finish this observation.
+                    restore_complete = True
                     speed.zero_()
             phase = row['phase']
             if row['target'] >= 0 and phase != Phase.APPROACH:
@@ -417,16 +424,24 @@ class ReferenceTeacher:
         # Gentle heading correction is bounded by the same action contract.
         if bool((speed != 0).any()):
             speed += -cfg.yaw_gain_s_inv*rpy[:,2,None]*q.new_tensor([-.215,.215,-.215,.215])
+        if restore_complete:
+            q_target = defaults[:,LEG_COLUMNS].clone()
         action, encoded = encode_targets(q_target, speed, defaults)
         valid = ik_valid and bool(encoded[0])
         reason = Reason.OK if valid else (Reason.IK_INVALID if not ik_valid else Reason.ACTION_INVALID)
         if not valid:
             # Hold current finite/legal joints when possible, stop all wheels.
             action, _ = encode_targets(torch.nan_to_num(q), torch.zeros_like(speed), defaults)
+        elif restore_complete:
+            row.update(target=-1, wheel=-1, phase=Phase.APPROACH, age=0, stable=0)
         return self._output(s,i,row,action,valid,reason)
 
     @staticmethod
     def _output(s, i, row, action, valid, reason):
+        if not valid:
+            # All early returns and final encoding/IK failures break the same
+            # consecutive-measurement run, including transient NONFINITE.
+            row['stable'] = 0
         device = s.root_pos_w.device
         out = TeacherOutput(action.clone(), torch.tensor([valid],device=device),
             torch.tensor([int(row['phase'])],device=device), torch.tensor([row['wheel']],device=device),

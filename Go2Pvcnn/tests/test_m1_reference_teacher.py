@@ -451,3 +451,61 @@ def test_early_lift_gate_does_not_jump_to_full_lift_reference():
     b = teacher.step(s)
     assert b.phase.item() == t.Phase.PASS
     assert (a.action[:,2]-b.action[:,2]).abs().max() < .2
+
+
+def restoring_teacher_with_four_stable_samples():
+    t = api()
+    teacher, s = t.ReferenceTeacher(), state()
+    s.wheel_pos_w[:,0,0] = .39
+    for _ in range(3):
+        teacher.step(s)
+        s = advance(s)
+    s.wheel_pos_w[:,0,2] = .30
+    teacher.step(s)
+    s = advance(s)
+    s.wheel_pos_w[:,0,0] = .93
+    assert teacher.step(s).phase.item() == t.Phase.RESTORE
+    s.recovered[:,0,0] = True
+    for _ in range(4):
+        s = advance(s)
+        assert teacher.step(s).active_wheel.item() == 0
+    return teacher, s
+
+
+@pytest.mark.parametrize('interruption', ['nan', 'geometry', 'invalid_action'])
+def test_invalid_restore_sample_breaks_five_consecutive_measurements(interruption):
+    t = api()
+    teacher, s = restoring_teacher_with_four_stable_samples()
+    broken = advance(s)
+    if interruption == 'nan':
+        velocity = s.root_lin_vel_w.clone()
+        velocity[:,0] = float('nan')
+        broken = replace(broken, root_lin_vel_w=velocity)
+    elif interruption == 'geometry':
+        broken = replace(broken, half_extents=torch.zeros_like(s.half_extents))
+    else:
+        defaults, q = s.default_joint_pos.clone(), s.leg_pos.clone()
+        defaults[:,0] = q[:,0] = 3.  # finite but outside the real decoder limits
+        broken = replace(broken, default_joint_pos=defaults, leg_pos=q)
+    out = teacher.step(broken)
+    assert not out.valid.item() and out.active_wheel.item() == 0
+    assert torch.isfinite(out.action).all()
+    s = replace(s, control_step=broken.control_step)
+    for index in range(5):
+        s = advance(s)
+        out = teacher.step(s)
+        assert out.active_wheel.item() == (0 if index < 4 else -1)
+
+
+def test_control_step_gap_breaks_restore_continuity_but_duplicates_are_idempotent():
+    teacher, s = restoring_teacher_with_four_stable_samples()
+    cached = teacher.step(s)
+    for _ in range(6):
+        repeated = teacher.step(s)
+        assert repeated.active_wheel.item() == 0
+        assert torch.equal(repeated.action, cached.action)
+    s = replace(s, control_step=s.control_step+2)
+    for index in range(5):
+        out = teacher.step(s)
+        assert out.active_wheel.item() == (0 if index < 4 else -1)
+        s = advance(s)
