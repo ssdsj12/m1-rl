@@ -123,6 +123,10 @@ class TeacherState:
     observation; reset rows never consume terminal receipts.
     """
     root_pos_w: torch.Tensor
+    com_pos_w: torch.Tensor
+    measurement_valid: torch.Tensor
+    last_applied_leg_target: torch.Tensor
+    applied_target_valid: torch.Tensor
     root_quat_w: torch.Tensor
     root_lin_vel_w: torch.Tensor
     root_ang_vel_w: torch.Tensor
@@ -149,11 +153,13 @@ class TeacherState:
         b = self.root_pos_w.shape[0]
         c = self.centers_top.shape[1]
         shapes = dict(root_pos_w=(b,3), root_quat_w=(b,4), root_lin_vel_w=(b,3),
+            com_pos_w=(b,3), last_applied_leg_target=(b,12),
             root_ang_vel_w=(b,3), leg_pos=(b,12), default_joint_pos=(b,16),
             wheel_pos_w=(b,4,3), wheel_quat_w=(b,4,4), wheel_force_w=(b,4,3),
             centers_top=(b,c,3), half_extents=(b,c,2), ground_z=(b,c),
             course_valid=(b,c), course_ids=(b,c), required_wheels=(b,c,4), recovered=(b,c,4))
-        boolean = {'course_valid','required_wheels','recovered','reset_mask','collision'}
+        boolean = {'course_valid','required_wheels','recovered','reset_mask','collision',
+                   'measurement_valid','applied_target_valid'}
         integer = {'course_ids','episode_id','control_step'}
         for f in fields(self):
             value = getattr(self, f.name)

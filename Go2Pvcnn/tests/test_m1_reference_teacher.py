@@ -14,6 +14,11 @@ def api():
 
 
 def state(batch=1, targets=True):
+    """Synthetic fixture explicitly supplies COM and executed-target evidence.
+
+    Its symmetric COM is chosen at root for this fixture only; live snapshots
+    derive COM from body masses and never assume measured inputs are valid.
+    """
     t = api()
     from ame_baseline.m1_ame_contract import M1_TRAINING_JOINT_POS
     from extension.parallelism.m1_kinematics import m1_fk
@@ -25,6 +30,8 @@ def state(batch=1, targets=True):
     centers = torch.tensor([.6, .215, .1]).repeat(batch, 1, 1)
     required = torch.tensor([True, False, True, False]).repeat(batch, 1, 1)
     return t.TeacherState(root_pos_w=root, root_quat_w=quat[:, 0].clone(),
+        com_pos_w=root.clone(), measurement_valid=torch.ones(batch, dtype=torch.bool),
+        last_applied_leg_target=q.clone(), applied_target_valid=torch.ones(batch, dtype=torch.bool),
         root_lin_vel_w=torch.zeros(batch, 3), root_ang_vel_w=torch.zeros(batch, 3),
         leg_pos=q, default_joint_pos=defaults, wheel_pos_w=wheels, wheel_quat_w=quat,
         wheel_force_w=torch.tensor([0., 0., 60.]).repeat(batch, 4, 1),
@@ -261,7 +268,9 @@ def test_adapter_is_read_only_named_and_uses_required_course_not_fill():
         root_pos_w=s.root_pos_w, root_quat_w=s.root_quat_w, root_lin_vel_w=s.root_lin_vel_w,
         root_ang_vel_w=s.root_ang_vel_w, joint_pos=s.default_joint_pos.flip(-1),
         default_joint_pos=s.default_joint_pos.flip(-1), body_pos_w=s.wheel_pos_w.flip(1),
-        body_quat_w=s.wheel_quat_w.flip(1), default_root_state=torch.tensor([[0.,0.,.62]+[0.]*10])))
+        body_quat_w=s.wheel_quat_w.flip(1), body_com_pos_w=s.wheel_pos_w.flip(1),
+        default_root_state=torch.tensor([[0.,0.,.62]+[0.]*10])),
+        root_physx_view=SimpleNamespace(get_masses=lambda: torch.ones(1,4)))
     sensor = SimpleNamespace(body_names=body_names, data=SimpleNamespace(net_forces_w=s.wheel_force_w.flip(1)))
     class Scene(dict):
         env_origins = torch.zeros(1, 3)
@@ -277,7 +286,8 @@ def test_adapter_is_read_only_named_and_uses_required_course_not_fill():
     wrapper = SimpleNamespace(unwrapped=SimpleNamespace(scene=scene, step_dt=.02),
         _m1_current_course=lambda: course, _m1_strict_crossing=Tracker())
     snapshot = ReferenceTeacherAdapter(wrapper).snapshot(control_step=s.control_step,
-        episode_id=s.episode_id, reset_mask=s.reset_mask, collision=s.collision)
+        episode_id=s.episode_id, reset_mask=s.reset_mask, collision=s.collision,
+        last_applied_leg_target=s.last_applied_leg_target, applied_target_valid=s.applied_target_valid)
     assert torch.equal(snapshot.leg_pos, s.leg_pos)
     assert torch.equal(snapshot.wheel_pos_w, s.wheel_pos_w)
     assert torch.equal(snapshot.required_wheels, s.required_wheels)
@@ -285,7 +295,8 @@ def test_adapter_is_read_only_named_and_uses_required_course_not_fill():
     assert robot.data.body_pos_w.abs().sum() > 0
     with pytest.raises(ValueError, match='control_step'):
         ReferenceTeacherAdapter(wrapper).snapshot(control_step=torch.zeros(1),
-            episode_id=s.episode_id, reset_mask=s.reset_mask, collision=s.collision)
+            episode_id=s.episode_id, reset_mask=s.reset_mask, collision=s.collision,
+            last_applied_leg_target=s.last_applied_leg_target, applied_target_valid=s.applied_target_valid)
 
 
 def test_wheel_decoder_allows_full_motor_envelope():
