@@ -22,12 +22,12 @@ SAMPLE_KEYS = {'env_id','episode_id','attempt_id','frame','sim_time','active_whe
     'teacher_input_frame','teacher_input_episode_id','teacher_input_sim_time',
     'teacher_action','executed_action','processed_targets','action_joint_names',
     'processed_target_joint_names','active_target','teacher_ages_after_decision','raw_joint_names','joints'}
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 TEACHER_SCOPES = ('flat-preparation','single-wheel','first-obstacle','transitions','course')
 APPLY_KEYS = {'schema_version','teacher_scope','failure_locked','student_demonstration_usable',
     'applied_targets','applied_target_joint_names','applied_substeps','action_process_count',
     'physics_decimation','action_matches_request','applied_target_valid','teacher_diagnostic',
-    'last_applied_leg_target','requested_processed_targets','action_default_joint_pos','action_target_dtype'}
+    'last_applied_leg_target','requested_processed_targets','action_default_joint_pos','action_target_dtype','teacher_executable'}
 
 
 def validate_scope(scope, *, acceptance, active_wheel):
@@ -158,7 +158,7 @@ def preparation_observed(sample,cfg):
             rpy=quaternion_rpy(root[None,3:7])[0]
             if (root[7:10].norm()>cfg.balance_speed_limit_m_s
                     or rpy[:2].abs().max()>cfg.recovery_tilt_rad
-                    or root[10:12].abs().max()>cfg.recovery_rate_rad_s): return False
+                    or root[10:13].norm()>cfg.recovery_rate_rad_s): return False
             for ref in refs:
                 if abs(float(ref[3:7].norm())-1)>1e-3: return False
                 delta=rpy-quaternion_rpy(ref[None,3:7])[0]
@@ -199,12 +199,12 @@ def same_json_evidence(actual,expected):
     return actual==expected
 
 
-def verify_trace(trace,samples):
+def verify_trace(trace,samples,*,allow_empty=False):
     """Read and hash current bytes; metadata alone never certifies trajectory."""
     errors=[]
     try:
         path=Path(trace['path']); stat=path.stat(); raw=path.read_bytes()
-        if (not isinstance(trace.get('bytes'),int) or trace['bytes']<=0
+        if (not isinstance(trace.get('bytes'),int) or trace['bytes']<0 or (trace['bytes']==0 and not allow_empty)
                 or stat.st_size!=trace['bytes'] or len(raw)!=trace['bytes']
                 or hashlib.sha256(raw).hexdigest()!=trace['sha256']):
             errors.append('trace artifact verification failed')
@@ -243,9 +243,37 @@ def inspect_video(path, size, mtime_ns):
     finally: reader.close()
 
 
+def verify_aborted_decision(record):
+    """An abort is unexecuted input evidence, never a trajectory sample."""
+    try:
+        artifact=record['abort_artifact']; decision=record['aborted_decision']
+        raw=Path(artifact['path']).read_bytes()
+        if (len(raw)!=artifact['bytes'] or not raw or hashlib.sha256(raw).hexdigest()!=artifact['sha256']
+                or not same_json_evidence(json.loads(raw),decision)
+                or decision['kind']!='unexecuted_teacher_decision'
+                or (decision['env_id'],decision['episode_id'])!=(record['env_id'],record['episode_id'])
+                or decision['input_state']['episode_id']!=decision['episode_id']
+                or decision['input_state']['control_step']!=decision['frame']
+                or decision['frame']!=(record['samples'][-1]['frame'] if record['samples'] else 0)
+                or decision['physics_completed'] is not False
+                or decision['student_demonstration_usable'] is not False
+                or len(decision['teacher_action'])!=16
+                or (decision['teacher_executable'] and not all(math.isfinite(v) for v in decision['teacher_action']))
+                or type(decision['teacher_executable']) is not bool
+                or decision['teacher_executable']!=(decision['env_id'] not in decision['execution_abort']['failed_env_ids'])
+                or ('execution_abort' in record and not same_json_evidence(record['execution_abort'],decision['execution_abort']))
+                or any(key in decision for key in ('executed_action','processed_targets','applied_targets','applied_substeps'))):
+            raise ValueError('abort bytes or identity mismatch')
+        return []
+    except (KeyError,OSError,TypeError,ValueError,IndexError):
+        return ['aborted decision artifact verification failed']
+
+
 def verify_episode(record):
     """Evidence validation and success are distinct; failures still count episodes."""
-    errors = []
+    aborted=(record.get('end')=='teacher_nonexecutable' or 'aborted_decision' in record
+        or 'abort_artifact' in record or 'execution_abort' in record)
+    errors = verify_aborted_decision(record) if aborted else []
     from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES
     raw_names=record.get('raw_joint_names',[])
     redesigned=record.get('schema_version')==SCHEMA_VERSION
@@ -264,7 +292,9 @@ def verify_episode(record):
         except (KeyError,TypeError,ValueError): errors.append('missing readiness configuration evidence')
     stage = record.get('stage')
     if not samples or stage not in (0,3):
-        return dict(complete=False, success=False, errors=['missing trajectory or stage'])
+        if aborted: errors.extend(verify_trace(record.get('trace') or {},samples,allow_empty=True))
+        return dict(complete=False, success=False, errors=sorted(set(errors+['missing trajectory or stage'])),
+            unsafe=False,invalid_teacher=True,failure_locked=False,student_demonstration_usable=False)
     start_time = samples[0].get('sim_time', 0.)-.02
     for index, sample in enumerate(samples, 1):
         if not SAMPLE_KEYS <= sample.keys():
@@ -277,7 +307,7 @@ def verify_episode(record):
                         or sample['action_process_count']!=1 or len(substeps)!=4
                         or sample['applied_target_joint_names']!=list(M1_ASSET_JOINT_NAMES)
                         or len(targets)!=16 or not all(math.isfinite(x) for x in targets)
-                        or not sample['applied_target_valid']
+                        or not sample['applied_target_valid'] or sample['teacher_executable'] is not True
                         or len(sample['last_applied_leg_target'])!=12
                         or not all(math.isfinite(x) for x in sample['last_applied_leg_target'])):
                     errors.append('invalid actual apply evidence')
@@ -703,6 +733,8 @@ class ActionEvidence:
         finally: self.observing=old_observing
 
     def begin(self,state,output,teacher,sim_time):
+        if not bool(output.executable.all()):
+            raise RuntimeError('nonexecutable teacher batch cannot begin action evidence')
         self.pending=[]; self.observing=True; self.processed=None; self.executed=None; self.applied=[]
         for row in range(len(state.episode_id)):
             ages=teacher._rows[row] or {}
@@ -713,6 +745,7 @@ class ActionEvidence:
             self.pending.append(dict(teacher_input_frame=int(state.control_step[row]),
                 teacher_input_episode_id=int(state.episode_id[row]),teacher_input_sim_time=float(sim_time),
                 teacher_action=output.action[row].detach().clone().tolist(),
+                teacher_executable=bool(output.executable[row]),
                 requested_processed_targets=requested,
                 action_default_joint_pos=state.default_joint_pos[row].detach().clone().tolist()
                     if hasattr(state,'default_joint_pos') else None,
@@ -1196,15 +1229,67 @@ class NativeProbe:
             stage=rec['stage'],seed=rec['seed'],env_id=row,episode_id=int(self.episode[row]),
             raw_joint_names=list(self.raw_joint_names),
             teacher_config=asdict(self.teacher_cfg),teacher_hash=self.teacher_cfg.fingerprint,
-            required=required,samples=rec['samples'],terminal=rec['samples'][-1],video=video,
+            required=required,samples=rec['samples'],terminal=rec['samples'][-1] if rec['samples'] else None,video=video,
             initial_root=rec['initial_root'],command_distance=rec['command_distance'],
             end=end,natural_done=natural,timeout=timeout)
+        for key in ('aborted_decision','abort_artifact'):
+            if key in rec: result[key]=rec[key]
         trace_path=self.output/(rec['path'].stem+'.jsonl')
         result['trace']=dict(path=str(trace_path),sha256=file_digest(trace_path),bytes=trace_path.stat().st_size)
         result['verification']=verify_episode(result)
         result['student_demonstration_usable']=result['verification']['student_demonstration_usable']
         self.write(rec['path'].stem+'.json',result)
         del self.recording[row]
+        return result
+
+    def abort_execution(self,state,output,input_time,required,records,schedule,schedule_index,acceptance):
+        """Persist unexecuted decisions first, then close attempted episodes.
+
+        No normal sample, decoder, process, apply or physics is invoked. This
+        boundary applies to formal acceptance too; planned != attempted.
+        """
+        self.action_evidence.observing=False
+        failed=(~output.executable).nonzero().flatten().tolist()
+        source=failed[0]
+        abort=dict(env_id=source,episode_id=int(state.episode_id[source]),
+            frame=int(state.control_step[source]),reason='teacher_nonexecutable',
+            teacher_reason=int(output.reason[source]),failed_env_ids=failed,
+            physical_failure=False)
+        # Write all raw decisions before video closure/verification can raise.
+        for row,rec in self.recording.items():
+            decision=dict(kind='unexecuted_teacher_decision',env_id=row,
+                episode_id=int(state.episode_id[row]),attempt_id=int(self.attempt[row]),
+                frame=int(state.control_step[row]),sim_time=input_time,
+                teacher_executable=bool(output.executable[row]),teacher_valid=bool(output.valid[row]),
+                teacher_reason=int(output.reason[row]),teacher_action=output.action[row].detach().clone().tolist(),
+                teacher_phase=int(output.phase[row]),active_target=int(output.active_target[row]),
+                active_wheel=int(output.active_wheel[row]),failure_locked=bool(output.failure_locked[row]),
+                teacher_diagnostic=diagnostic_json(output.diagnostic[row].tolist()),
+                input_state={key:value[row].detach().clone().tolist() for key,value in vars(state).items()},
+                physics_completed=False,student_demonstration_usable=False,
+                execution_abort=copy.deepcopy(abort))
+            path=self.output/(rec['path'].stem+'.abort.json')
+            self.write(path.name,decision)
+            rec.update(aborted_decision=decision,abort_artifact=dict(path=str(path),
+                bytes=path.stat().st_size,sha256=file_digest(path)))
+        for row in list(self.recording):
+            record=self.finish_episode(row,required[row],
+                'teacher_nonexecutable' if row in failed else 'diagnostic_interrupted',False,False)
+            record['execution_abort']=copy.deepcopy(abort)
+            record['student_demonstration_usable']=False
+            self.write(Path(record['video']['path']).stem+'.json',record)
+            records.append(record)
+        result=verify_suite(records,diagnostic=not acceptance)
+        planned=200 if acceptance else 4*len(schedule)
+        result.update(execution_aborted=True,execution_abort=abort,planned_episodes=planned,
+            attempted_episodes=len(records),failed_attempts=len(failed),
+            interrupted_attempts=sum(r['end']=='diagnostic_interrupted' for r in records),
+            not_run_episodes=planned-len(records),complete_full_denominator=False,
+            milestone_a='EXECUTION_ABORTED',diagnostic_stopped=not acceptance,
+            diagnostic_stop=abort if not acceptance else None,
+            not_run=[dict(stage=s,wheel=w,scope=self.scope,status='not_run',reason='execution_abort')
+                for s,w in schedule[schedule_index+1:]])
+        self.write('result.json',result)
         return result
 
     def reset_row(self,row):
@@ -1255,6 +1340,9 @@ class NativeProbe:
                         input_time=float(self.env.sim.current_time)
                         input_state=self.state()
                         self.last_output=decide(input_state)
+                        if not bool(self.last_output.executable.all()):
+                            return self.abort_execution(input_state,self.last_output,input_time,
+                                required,records,schedule,schedule_index,acceptance)
                         self.action_evidence.begin(input_state,self.last_output,teacher,input_time)
                         command=self.env.command_manager.get_command('base_velocity')[:,0]
                         for row,rec in self.recording.items(): rec['command_distance']+=float(command[row])*.02
@@ -1279,7 +1367,7 @@ class NativeProbe:
                                 raised=sample['wheel_position'][wheel][2]>rec['initial_wheel_z']+.01
                                 rec['measured_lift_seen'] |= raised and sample['Fz'][wheel]<=self.teacher_cfg.support_min_force_n
                                 quiet=(sum(x*x for x in sample['root'][7:10])**.5<=self.teacher_cfg.balance_speed_limit_m_s
-                                    and sum(x*x for x in sample['root'][10:12])**.5<=self.teacher_cfg.recovery_rate_rad_s)
+                                    and sum(x*x for x in sample['root'][10:13])**.5<=self.teacher_cfg.recovery_rate_rad_s)
                                 restored=(reference_valid and sample['phase']==int(Phase.RESTORE)
                                     and all(x>self.teacher_cfg.support_min_force_n for x in sample['Fz'])
                                     and sample['wheel_position'][wheel][2]<=rec['initial_wheel_z']+.002

@@ -414,7 +414,11 @@ def test_nonfinite_measured_state_is_not_a_label(field):
     value = getattr(s,field)
     value[(0,)*value.ndim] = float('nan')
     out = t.ReferenceTeacher().step(s)
-    assert not out.valid.item() and torch.isfinite(out.action).all()
+    assert not out.valid.item()
+    # Invalid physical measurements can still hold an independently certified
+    # executed target. Invalid decoder defaults cannot certify any command.
+    assert out.executable.item() is (field != 'default_joint_pos')
+    assert torch.isfinite(out.action).all() if out.executable.item() else torch.isnan(out.action).all()
     assert out.reason.item() == t.Reason.NONFINITE
 
 

@@ -62,7 +62,7 @@ def episode(stage=3, seed=101, episode_id=0):
         from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES
         from ame_baseline.m1_reference_teacher import TEACHER_DIAGNOSTIC_FIELDS
         frames.append(dict(env_id=0, episode_id=episode_id, attempt_id=1, frame=f,
-            schema_version=probe().SCHEMA_VERSION,teacher_scope='course',failure_locked=False,
+            schema_version=probe().SCHEMA_VERSION,teacher_scope='course',failure_locked=False,teacher_executable=True,
             student_demonstration_usable=True,applied_target_valid=True,
             applied_targets=[0.]*16,applied_target_joint_names=list(M1_ASSET_JOINT_NAMES),
             applied_substeps=[dict(index=i,targets=[0.]*16,sim_time=(f-1)*.02+i*.005,
@@ -363,7 +363,7 @@ def test_action_evidence_freezes_real_processed_values_before_row_reset():
     assert hasattr(module,'ActionEvidence'), 'pre-reset executed action observer missing'
     term,asset,clock,evidence,calls=applied_fixture()
     state=SimpleNamespace(control_step=torch.tensor([37,91]),episode_id=torch.tensor([0,4]))
-    output=SimpleNamespace(action=torch.full((2,16),.3),active_target=torch.tensor([9900,9901]))
+    output=SimpleNamespace(action=torch.full((2,16),.3),active_target=torch.tensor([9900,9901]),executable=torch.ones(2,dtype=torch.bool))
     teacher=SimpleNamespace(_rows=[dict(age=2,body_age=3,lift_age=2),dict(age=9)])
     evidence.begin(state,output,teacher,10.)
     with pytest.raises(AssertionError,match='processed'):
@@ -448,7 +448,7 @@ def test_apply_evidence_precedes_physics_and_survives_reset():
     term,asset,clock,evidence,events=applied_fixture()
     state=SimpleNamespace(control_step=torch.tensor([37,91]),episode_id=torch.tensor([0,4]),
         last_applied_leg_target=torch.full((2,12),-3.),applied_target_valid=torch.ones(2,dtype=torch.bool))
-    output=SimpleNamespace(action=torch.full((2,16),.3),active_target=torch.tensor([9,10]))
+    output=SimpleNamespace(action=torch.full((2,16),.3),active_target=torch.tensor([9,10]),executable=torch.ones(2,dtype=torch.bool))
     evidence.begin(state,output,SimpleNamespace(_rows=[{},{}]),10.)
     term.process_actions(output.action)
     for i in range(4):
@@ -550,7 +550,7 @@ def test_bootstrap_preserves_old_terminal_and_resets_multiple_rows():
     from types import SimpleNamespace
     term,asset,clock,evidence,events=applied_fixture()
     state=SimpleNamespace(control_step=torch.tensor([2,8]),episode_id=torch.tensor([3,4]))
-    output=SimpleNamespace(action=torch.full((2,16),.2),active_target=torch.tensor([1,2]))
+    output=SimpleNamespace(action=torch.full((2,16),.2),active_target=torch.tensor([1,2]),executable=torch.ones(2,dtype=torch.bool))
     evidence.begin(state,output,SimpleNamespace(_rows=[{},{}]),10.)
     term.process_actions(output.action)
     for i in range(4):
@@ -595,7 +595,7 @@ def test_apply_target_change_between_write_and_physics_is_rejected():
     from types import SimpleNamespace
     term,asset,clock,evidence,events=applied_fixture()
     state=SimpleNamespace(control_step=torch.tensor([0,0]),episode_id=torch.tensor([0,0]))
-    output=SimpleNamespace(action=torch.zeros(2,16),active_target=torch.tensor([0,0]))
+    output=SimpleNamespace(action=torch.zeros(2,16),active_target=torch.tensor([0,0]),executable=torch.ones(2,dtype=torch.bool))
     evidence.begin(state,output,SimpleNamespace(_rows=[{},{}]),10.)
     term.process_actions(output.action); term.apply_actions(); evidence.observe_write()
     asset.data.joint_pos_target.fill_(99.)
@@ -807,9 +807,13 @@ def diagnostic_runner(tmp_path,monkeypatch,scenario):
             locked=torch.zeros(4,dtype=torch.bool)
             if scenario in ('locked','acceptance-failure') and (wheel==0 or wheel is None): locked[0]=True
             if scenario=='locked-last' and wheel==0: locked[3]=True
+            executable=torch.ones(4,dtype=torch.bool)
+            if scenario.startswith('abort-') and int(state.control_step[0])>=int(scenario.split('-')[1]):
+                executable[3]=False
             return NS(action=torch.zeros(4,16),active_target=torch.full((4,),-1,dtype=torch.long),
                 active_wheel=torch.full((4,),wheel or 0,dtype=torch.long),diagnostic=data,
-                failure_locked=locked,valid=torch.full((4,),flat_horizon,dtype=torch.bool))
+                failure_locked=locked,valid=torch.full((4,),flat_horizon,dtype=torch.bool),
+                executable=executable,reason=torch.full((4,),10,dtype=torch.long),phase=torch.ones(4,dtype=torch.long))
         def diagnostic_step(self,state,*,active_wheel,lift): return self.decide(state,active_wheel)
         def step(self,state): return self.decide(state,None)
     monkeypatch.setattr(teacher_module,'ReferenceTeacher',FixtureTeacher)
@@ -845,6 +849,96 @@ def diagnostic_runner(tmp_path,monkeypatch,scenario):
     run.sample=sample
     run.reset_row=lambda row:None
     return run
+
+
+@pytest.mark.parametrize('prior_steps,acceptance', [(0,False),(1,False),(0,True)])
+def test_nonexecutable_batch_aborts_before_process_and_preserves_attempts(tmp_path,monkeypatch,prior_steps,acceptance):
+    run=diagnostic_runner(tmp_path,monkeypatch,f'abort-{prior_steps}')
+    original_step=run.step
+    def bounded_step(action):
+        assert run.control_calls<prior_steps, 'nonexecutable batch entered action execution'
+        return original_step(action)
+    run.step=bounded_step
+    run.teacher(acceptance=acceptance,diagnostic_steps=3,scope='course' if acceptance else 'flat-preparation')
+    assert run.control_calls==prior_steps, 'uncertified batch must not reach process/apply/physics'
+    assert len(run.started)==1
+    result=json.loads((tmp_path/'result.json').read_text())
+    assert result['counted_episodes']==4 and result['execution_aborted']
+    assert result['execution_abort']['env_id']==3
+    assert not result['complete_full_denominator'] and result['milestone_a']!='PASS'
+    assert result['planned_episodes']==(200 if acceptance else 16)
+    records=[json.loads(path.read_text()) for path in tmp_path.glob('stage*.json') if not path.name.endswith('.abort.json')]
+    assert len(records)==4
+    for record in records:
+        row=record['env_id']; decision=record['aborted_decision']
+        assert decision['env_id']==row and decision['episode_id']==record['episode_id']
+        assert decision['frame']==prior_steps and decision['physics_completed'] is False
+        assert decision['input_state']['last_applied_leg_target']==[0.]*12
+        assert decision['teacher_executable'] is (row!=3)
+        assert record['end']==('teacher_nonexecutable' if row==3 else 'diagnostic_interrupted')
+        assert len(record['samples'])==prior_steps
+        assert record['terminal']==(record['samples'][-1] if prior_steps else None)
+        assert probe().file_digest(record['trace']['path'])==record['trace']['sha256']
+        assert Path(record['trace']['path']).read_text().count('\n')==prior_steps
+        assert not record['student_demonstration_usable']
+        assert 'executed_action' not in decision
+        assert Path(record['abort_artifact']['path']).is_file()
+
+
+@pytest.mark.parametrize('side', ['input','output'])
+@pytest.mark.parametrize('rate', [[0.,0.,.201],[.15,.15,0.]])
+def test_readiness_endpoint_rejects_full_angular_speed(tmp_path,monkeypatch,side,rate):
+    run=diagnostic_runner(tmp_path,monkeypatch,'prepared')
+    run.teacher(acceptance=False,diagnostic_steps=2,scope='flat-preparation')
+    record=json.loads((tmp_path/'stage0_seed101_env0_episode0.json').read_text())
+    sample=record['samples'][0]; sample['preparation_'+side]['root'][10:13]=rate
+    if side=='output': sample['root'][10:13]=rate
+    assert not probe().preparation_observed(sample,run.teacher_cfg)
+    assert 'preparation endpoint lacks same-decision input and post-action measured readiness' in probe().verify_episode(record)['errors']
+
+
+def test_abort_raw_artifacts_survive_video_finalization_error(tmp_path,monkeypatch):
+    run=diagnostic_runner(tmp_path,monkeypatch,'abort-0')
+    def fail_video(*args): raise OSError('injected video closure failure')
+    run.finish_episode=fail_video
+    with pytest.raises(OSError,match='video closure'):
+        run.teacher(acceptance=False,diagnostic_steps=3,scope='flat-preparation')
+    assert run.control_calls==0
+    artifacts=list(tmp_path.glob('*.abort.json'))
+    assert len(artifacts)==4
+    for path in artifacts:
+        decision=json.loads(path.read_text())
+        assert decision['physics_completed'] is False and decision['input_state']['control_step']==0
+        assert decision['execution_abort']['failed_env_ids']==[3]
+
+
+def test_abort_verifier_binds_raw_artifact_bytes_and_row_identity(tmp_path,monkeypatch):
+    run=diagnostic_runner(tmp_path,monkeypatch,'abort-0')
+    run.teacher(acceptance=False,diagnostic_steps=3,scope='flat-preparation')
+    original=json.loads((tmp_path/'stage0_seed101_env3_episode0.json').read_text())
+    for mutate in (
+        lambda r:r.pop('abort_artifact'),
+        lambda r:r['abort_artifact'].update(sha256='f'*64),
+        lambda r:r['abort_artifact'].update(path=r['abort_artifact']['path']+'.missing'),
+        lambda r:r['aborted_decision'].update(env_id=0),
+        lambda r:r['aborted_decision']['input_state'].update(episode_id=999),
+        lambda r:r['aborted_decision'].update(physics_completed=True),
+    ):
+        record=copy.deepcopy(original); mutate(record)
+        checked=probe().verify_episode(record)
+        assert 'aborted decision artifact verification failed' in checked['errors']
+        assert not checked['complete'] and not checked['success'] and not checked['student_demonstration_usable']
+    # Refresh the hash after tampering: raw/summary equality alone cannot
+    # excuse changed row identity or fabricated execution fields.
+    record=copy.deepcopy(original); decision=record['aborted_decision']
+    decision['input_state']['control_step']=999
+    path=Path(record['abort_artifact']['path']); path.write_text(json.dumps(decision),encoding='utf-8')
+    record['abort_artifact'].update(bytes=path.stat().st_size,sha256=probe().file_digest(path))
+    checked=probe().verify_episode(record)
+    assert 'aborted decision artifact verification failed' in checked['errors']
+    peer=json.loads((tmp_path/'stage0_seed101_env0_episode0.json').read_text())
+    peer.pop('aborted_decision'); peer.pop('abort_artifact')
+    assert 'aborted decision artifact verification failed' in probe().verify_episode(peer)['errors']
 
 
 def test_flat_preparation_critical_failure_drains_batch_and_never_starts_next_wheel(tmp_path,monkeypatch):

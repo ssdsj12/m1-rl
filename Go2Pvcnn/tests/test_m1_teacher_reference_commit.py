@@ -171,6 +171,110 @@ def test_missing_measurement_and_execution_evidence_fail_closed():
         assert not out.valid.item()
 
 
+@pytest.mark.parametrize('case', ['missing-evidence', 'illegal-hold', 'discontinuous-hold'])
+def test_uncertifiable_hold_is_nonexecutable_without_nominal_jump(case):
+    from ame_baseline.m1_ame_contract import m1_action_targets
+    t = api(); s = state(targets=False); s.leg_pos[:, 0] = .3
+    s.last_applied_leg_target.copy_(s.leg_pos)
+    teacher = t.ReferenceTeacher(); first = teacher.step(s)
+    prior = m1_action_targets(first.action, s.default_joint_pos)[:, t.LEG_COLUMNS]
+    s = advance(s, leg_pos=prior.clone(), last_applied_leg_target=prior.clone())
+    if case == 'missing-evidence': s.applied_target_valid.zero_()
+    elif case == 'illegal-hold':
+        teacher._rows[0]['last_q'][:, 0] = 3.; s.leg_pos[:, 0] = 3.
+    else:
+        s.last_applied_leg_target[:, 0] += .5; s.leg_pos[:, 0] = 3.
+    out = teacher.step(s)
+    assert not out.valid.item()
+    assert hasattr(out, 'executable'), 'label validity cannot certify command execution'
+    assert not out.executable.item()
+    assert torch.isnan(out.action).all(), 'non-command placeholder must never decode to nominal'
+
+
+def test_mixed_rows_distinguish_legal_invalid_hold_and_nonexecutable():
+    from ame_baseline.m1_ame_contract import m1_action_targets
+    t = api(); teacher = t.ReferenceTeacher(); s = state(3, targets=False)
+    first = teacher.step(s)
+    prior = m1_action_targets(first.action, s.default_joint_pos)[:, t.LEG_COLUMNS]
+    s = advance(s, leg_pos=prior.clone(), last_applied_leg_target=prior.clone())
+    s.leg_pos[1, 0] = 3.; s.applied_target_valid[2] = False
+    out = teacher.step(s)
+    assert hasattr(out, 'executable')
+    assert out.executable.tolist() == [True, True, False]
+    assert out.valid.tolist() == [True, False, False]
+    assert torch.equal(m1_action_targets(out.action[1:2], s.default_joint_pos[1:2])[:, t.LEG_COLUMNS], prior[1:2])
+    assert not out.failure_locked.any()
+
+
+@pytest.mark.parametrize('knee,executable', [(0.,False),(.099,False),(.10,True)])
+def test_raw_held_target_respects_existing_near_straight_guard(knee,executable):
+    t=api(); s=state(targets=False); s.measurement_valid.zero_()
+    s.last_applied_leg_target[:,[2,5,8,11]]=torch.tensor([-knee,-knee,knee,knee])
+    out=t.ReferenceTeacher().step(s)
+    assert out.executable.item() is executable
+    assert not out.valid.item()
+    if not executable: assert torch.isnan(out.action).all()
+
+
+def test_held_target_cannot_change_captured_knee_branch():
+    teacher,s,_=prepared_teacher(); row=teacher._rows[0]
+    last=row['last_q'].clone(); last[:,2]=-last[:,2]
+    row['last_q']=last
+    s=advance(s,last_applied_leg_target=last.clone(),measurement_valid=torch.zeros_like(s.measurement_valid))
+    out=teacher.step(s)
+    assert not out.executable.item() and not out.valid.item()
+    assert torch.isnan(out.action).all()
+
+
+@pytest.mark.parametrize('rate,quiet', [([0.,0.,.201],False),([.15,.15,0.],False),
+    ([0.,0.,.20],True),([.12,.16,0.],True)])
+def test_quiet_uses_complete_angular_velocity_norm(rate, quiet):
+    s = state(targets=False); s.root_ang_vel_w[:] = torch.tensor(rate)
+    assert api().ReferenceTeacher()._quiet(s, 0) is quiet
+
+
+@pytest.mark.parametrize('rate', [[0.,0.,.201],[.15,.15,0.]])
+def test_restore_rejects_complete_angular_speed_over_bound(rate):
+    from test_m1_reference_teacher import restoring_teacher
+    teacher, s = restoring_teacher(); s.root_ang_vel_w[:] = torch.tensor(rate)
+    teacher.step(s)
+    assert teacher._rows[0]['stable'] == 0
+
+
+def rotated_pass(captured_yaw, measured_yaw=None):
+    from ame_baseline.m1_teacher_pose import BodyPose, PoseReference
+    from extension.parallelism.kinematics import rpy_to_rotation_matrix
+    teacher, s, _ = prepared_teacher(); row = teacher._rows[0]
+    yaw = torch.tensor(captured_yaw)
+    quat = torch.tensor([[yaw.div(2).cos(),0.,0.,yaw.div(2).sin()]])
+    rotation = rpy_to_rotation_matrix(torch.tensor([[0.,0.,captured_yaw]]))[0]
+    rot = lambda x: x@rotation.T
+    pose = lambda p: BodyPose(rot(p.pos_w),quat.clone())
+    ref = lambda p: PoseReference(pose(p.body),rot(p.wheels_w))
+    s = replace(s,root_pos_w=rot(s.root_pos_w),root_quat_w=quat.clone(),
+        wheel_pos_w=rot(s.wheel_pos_w),com_pos_w=rot(s.com_pos_w))
+    for key in ('accepted','goal'): row[key]=ref(row[key])
+    row['anchor_pose']=pose(row['anchor_pose'])
+    for key in ('anchor','wheel_anchor','support_origin','support_previous'): row[key]=rot(row[key])
+    row['yaw']=torch.tensor([captured_yaw]); row.update(phase=api().Phase.PASS,age=10,lift_age=0)
+    s.centers_top[:,0,0]=2.
+    if measured_yaw is not None:
+        angle=torch.tensor(measured_yaw/2)
+        s=replace(s,root_quat_w=torch.tensor([[angle.cos(),0.,0.,angle.sin()]]))
+    return teacher,s
+
+
+@pytest.mark.parametrize('captured,measured,error', [(.3,.3,0.),(.3,.34,.04),
+    (3.12,-3.12,2*torch.pi-6.24)])
+def test_pass_wheel_correction_tracks_wrapped_captured_heading(captured,measured,error):
+    from ame_baseline.m1_ame_contract import m1_action_targets, M1_WHEEL_RADIUS_M
+    t=api(); teacher,s=rotated_pass(captured,measured); out=teacher.step(s)
+    assert out.valid.item()
+    speed=m1_action_targets(out.action,s.default_joint_pos)[:,t.WHEEL_COLUMNS]*M1_WHEEL_RADIUS_M
+    # Compare left/right correction: common nominal speed cancels.
+    assert torch.allclose(speed[:,0]-speed[:,1], speed.new_tensor([teacher.cfg.yaw_gain_s_inv*.43*error]),atol=1e-6)
+
+
 def test_pass_transports_common_xy_only():
     t = api()
     teacher, s, _ = prepared_teacher()
@@ -305,7 +409,8 @@ def test_all_output_paths_have_owned_complete_diagnostic_schema(mode):
         s.course_ids[0, 0] += 1
     out = teacher.step(s)
     assert out.diagnostic.shape == (1, len(t.TEACHER_DIAGNOSTIC_FIELDS))
-    assert torch.isfinite(out.action).all()
+    assert torch.isfinite(out.action[out.executable]).all()
+    assert torch.isnan(out.action[~out.executable]).all()
     saved = out.diagnostic.clone()
     out.diagnostic.zero_()
     assert torch.allclose(teacher.step(s).diagnostic, saved, equal_nan=True)

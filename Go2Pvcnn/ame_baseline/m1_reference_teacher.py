@@ -163,7 +163,7 @@ class TeacherConfig:
     @property
     def fingerprint(self):
         payload = dict(config=asdict(self), algorithm=REFERENCE_COMMIT,
-                       implementation='support-ik-transaction-v6', diagnostic_fields=TEACHER_DIAGNOSTIC_FIELDS,
+                       implementation='support-ik-transaction-v7', diagnostic_fields=TEACHER_DIAGNOSTIC_FIELDS,
                        asset_order=M1_ASSET_JOINT_NAMES, leg_scale=M1_LEG_ACTION_SCALE_RAD,
                        wheel_scale=M1_WHEEL_ACTION_SCALE_RAD_S)
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
@@ -234,7 +234,11 @@ class TeacherState:
 
 @dataclass(frozen=True)
 class TeacherOutput:
-    """action is executable finite fallback when valid=False; never a label then."""
+    """Only executable=True authorizes action application, independently of labels.
+
+    A non-executable action is a NaN non-command placeholder. Callers must stop
+    the entire batch before process/apply/physics, retaining the failed decision.
+    """
     action: torch.Tensor
     valid: torch.Tensor
     phase: torch.Tensor
@@ -243,6 +247,7 @@ class TeacherOutput:
     reason: torch.Tensor
     diagnostic: torch.Tensor
     failure_locked: torch.Tensor
+    executable: torch.Tensor
 
 
 def quaternion_rpy(quat):
@@ -357,20 +362,27 @@ class ReferenceTeacher:
         rpy = quaternion_rpy(s.root_quat_w[i:i+1])
         return bool(s.root_lin_vel_w[i].norm() <= cfg.balance_speed_limit_m_s
                     and rpy[:, :2].abs().amax() <= cfg.recovery_tilt_rad
-                    and s.root_ang_vel_w[i, :2].abs().amax() <= cfg.recovery_rate_rad_s)
+                    and s.root_ang_vel_w[i].norm() <= cfg.recovery_rate_rad_s)
 
     def _fallback(self, s, i, row):
-        # A finite action with valid=False is only a best-effort stopped output.
-        # If no legal continuous held target exists there is no safety claim.
+        # Certify a hold using executed-target evidence, independently of other
+        # invalid measurements. Never replace an uncertifiable hold by nominal.
         defaults = s.default_joint_pos[i:i+1]
         last = row.get('last_q')
         if last is None:
             last = s.last_applied_leg_target[i:i+1]
         action, encoded = encode_targets(last, last.new_zeros(1, 4), defaults)
+        actual = m1_action_targets(action, defaults)[:, LEG_COLUMNS]
+        knees = [M1_PLANNER_JOINT_NAMES.index(f'{p}_KNEE_JOINT') for p in ('FBL','FAR','RBL','RAR')]
+        legal = bool((actual[:, knees].abs() >= self.cfg.min_knee_abs_rad).all())
+        branch = row.get('branch_q')
+        if branch is not None:
+            legal &= bool(torch.isfinite(branch).all() and (actual[:, knees]*branch[:, knees] > 0).all())
         continuous = bool(s.applied_target_valid[i] and
             torch.isfinite(s.last_applied_leg_target[i]).all() and
-            ((last-s.last_applied_leg_target[i:i+1]).abs() <= self.cfg.joint_target_rate_rad_s*float(s.dt[i])).all())
-        return action if bool(encoded[0]) and continuous else torch.zeros_like(defaults)
+            ((actual-s.last_applied_leg_target[i:i+1]).abs() <= self.cfg.joint_target_rate_rad_s*float(s.dt[i])).all())
+        executable = bool(encoded[0]) and legal and continuous
+        return (action if executable else torch.full_like(defaults, float('nan'))), executable
 
     def _diagnostics(self, s, i, row, evidence, valid, freeze, diagnostic):
         data = s.root_pos_w.new_full((1, len(TEACHER_DIAGNOSTIC_FIELDS)), float('nan'))
@@ -415,7 +427,7 @@ class ReferenceTeacher:
             data[0, TEACHER_DIAGNOSTIC_FIELDS.index(name)] = value
         return data
 
-    def _output(self, s, i, row, action, valid, reason, evidence, freeze, diagnostic):
+    def _output(self, s, i, row, action, valid, reason, evidence, freeze, diagnostic, executable=True):
         if not valid:
             row['stable'] = 0
         device = s.root_pos_w.device
@@ -424,7 +436,8 @@ class ReferenceTeacher:
             torch.tensor([row['target'] if diagnostic is None else -1], device=device),
             torch.tensor([int(reason)], device=device),
             self._diagnostics(s, i, row, evidence, valid, freeze, diagnostic),
-            torch.tensor([row['failure'] != Reason.OK], device=device))
+            torch.tensor([row['failure'] != Reason.OK], device=device),
+            torch.tensor([executable], dtype=torch.bool, device=device))
         row['output'] = out
         return self._clone_output(out)
 
@@ -453,8 +466,9 @@ class ReferenceTeacher:
                 lock |= row['invalid_streak'] >= cfg.invalid_lock_steps
             if lock:
                 row['failure'] = reason
-            return self._output(s, i, row, self._fallback(s, i, row), False, reason,
-                                evidence, freeze, diagnostic)
+            action, executable = self._fallback(s, i, row)
+            return self._output(s, i, row, action, False, reason,
+                                evidence, freeze, diagnostic, executable)
 
         if reset or changed:
             return fail(Reason.RESET, FreezeReason.RESET)
@@ -673,7 +687,7 @@ class ReferenceTeacher:
                     target_min_force=cfg.target_min_force_n, support_min_force=cfg.support_min_force_n)
                 stable = bool(safe[0]) and tracked
                 stable &= bool(rpy[:, :2].abs().amax() <= cfg.recovery_tilt_rad)
-                stable &= bool(s.root_ang_vel_w[i, :2].abs().amax() <= cfg.recovery_rate_rad_s)
+                stable &= bool(s.root_ang_vel_w[i].norm() <= cfg.recovery_rate_rad_s)
                 stable &= bool((horizontal <= cfg.support_max_tangential_ratio*upward).all() and upward[wheel] > cfg.target_min_force_n)
                 stable &= bool((q-defaults[:, LEG_COLUMNS]).abs().amax() <= cfg.recovery_pose_rad)
                 stable &= bool((s.root_pos_w[i, 2]-s.nominal_root_z_w[i]).abs() <= cfg.recovery_height_m)
@@ -698,7 +712,10 @@ class ReferenceTeacher:
         if not bool(solved.valid[0]):
             return fail(Reason.IK_INVALID, FreezeReason.IK, count=True)
         if bool((speed != 0).any()):
-            speed += -cfg.yaw_gain_s_inv*rpy[:, 2, None]*q.new_tensor([-.215, .215, -.215, .215])
+            heading = work['yaw'] if work['prepared'] else rpy.new_zeros(1)
+            yaw_error = rpy[:, 2]-heading
+            yaw_error = torch.atan2(yaw_error.sin(), yaw_error.cos())
+            speed += -cfg.yaw_gain_s_inv*yaw_error[:, None]*q.new_tensor([-.215, .215, -.215, .215])
         action, encoded = encode_targets(solved.ik.q, speed, defaults)
         actual = m1_action_targets(action, defaults)[:, LEG_COLUMNS]
         continuous = bool(((actual-s.last_applied_leg_target[i:i+1]).abs() <= cfg.joint_target_rate_rad_s*float(s.dt[i])).all())
