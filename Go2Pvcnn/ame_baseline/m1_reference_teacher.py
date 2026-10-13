@@ -12,6 +12,9 @@ clipping, and the live 1.50 action decoder, not reference .8 scaling.
 timers. Measured gates may advance earlier. The five stable RESTORE samples
 overlap its interpolation and still require an existing strict receipt.
 This controller's phase is never a crossing-success certificate.
+Native revision 1: LIFT additionally requires the complete transported body
+shift to be measured within 1cm, root speed <=.05m/s and recovered tilt/rate.
+These are preparation gates, not a new dwell time or a physical success claim.
 """
 from dataclasses import asdict, dataclass, fields
 from enum import IntEnum
@@ -59,6 +62,8 @@ class Reason(IntEnum):
 @dataclass(frozen=True)
 class TeacherConfig:
     balance_steps: int = 30
+    balance_position_tolerance_m: float = .01
+    balance_speed_limit_m_s: float = .05
     lift_steps: int = 10
     pass_steps: int = 20
     restore_steps: int = 20
@@ -100,7 +105,7 @@ class TeacherConfig:
     @property
     def fingerprint(self):
         payload = dict(config=asdict(self), algorithm=REFERENCE_COMMIT,
-                       implementation='independent-dls-components-v2-consecutive-measured-gates',
+                       implementation='independent-dls-components-v3-native1-balance-readiness',
                        asset_order=M1_ASSET_JOINT_NAMES, leg_scale=M1_LEG_ACTION_SCALE_RAD,
                        wheel_scale=M1_WHEEL_ACTION_SCALE_RAD_S)
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
@@ -358,8 +363,21 @@ class ReferenceTeacher:
                         support_origin=measured[:,support,:].mean(1).clone(),
                         lift_start_z=measured[0,wheel,2].clone(),
                         restore_q=q.clone(), body_age=0, lift_age=0)
-            elif phase == Phase.BALANCE and support_ready:
-                row.update(phase=Phase.LIFT, age=0)
+            elif phase == Phase.BALANCE:
+                # Three loaded wheels alone did not establish a prepared
+                # support transfer in native run1. Test the *full* shifted
+                # root goal, not the near-zero beginning of its ramp.
+                transported = row['anchor'].clone()
+                transported[:,:2] += (measured[:,support].mean(1)-row['support_origin'])[:,:2]
+                full_error = body_shift_error(transported, s.root_pos_w[i:i+1], row['yaw'],
+                    torch.tensor([wheel],device=q.device), q.new_ones(1), cfg)
+                ready = support_ready
+                ready &= bool(full_error[:,:2].norm(dim=-1)[0] <= cfg.balance_position_tolerance_m)
+                ready &= bool(s.root_lin_vel_w[i].norm() <= cfg.balance_speed_limit_m_s)
+                ready &= bool(rpy[:,:2].abs().amax() <= cfg.recovery_tilt_rad)
+                ready &= bool(s.root_ang_vel_w[i,:2].abs().amax() <= cfg.recovery_rate_rad_s)
+                if ready:
+                    row.update(phase=Phase.LIFT, age=0)
             elif phase == Phase.LIFT and bottom > center[2]:
                 row.update(phase=Phase.PASS, age=0)
             elif phase == Phase.PASS and measured[0,wheel,0] > far_x:

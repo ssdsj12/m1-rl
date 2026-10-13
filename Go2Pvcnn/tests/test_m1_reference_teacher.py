@@ -41,6 +41,25 @@ def advance(s, **kw):
     return replace(s, control_step=s.control_step + 1, **kw)
 
 
+def measured_shift_ready(s, wheel=0):
+    """Synthetic measured body motion; supporting wheel positions stay measured."""
+    root = s.root_pos_w.clone()
+    root[:,0] += -.04 if wheel < 2 else .04
+    root[:,1] += -.06 if wheel % 2 == 0 else .06
+    return replace(s, root_pos_w=root)
+
+
+def teacher_in_lift():
+    """Downstream phase tests explicitly supply the new preparation evidence."""
+    t = api()
+    teacher, s = t.ReferenceTeacher(), state()
+    s.wheel_pos_w[:,0,0] = .39
+    assert teacher.step(s).phase.item() == t.Phase.BALANCE
+    s = advance(measured_shift_ready(s))
+    assert teacher.step(s).phase.item() == t.Phase.LIFT
+    return teacher, advance(s)
+
+
 def test_config_is_immutable_and_fingerprints_semantics():
     t = api()
     cfg = t.TeacherConfig()
@@ -153,9 +172,7 @@ def test_clock_does_not_lift_without_three_measured_supports():
 
 def test_clock_does_not_pass_without_measured_cylinder_bottom_clearance():
     t = api()
-    s = state()
-    s.wheel_pos_w[:, 0, 0] = .39
-    teacher = t.ReferenceTeacher()
+    teacher, s = teacher_in_lift()
     for _ in range(40):
         out = teacher.step(s)
         s = advance(s)
@@ -165,9 +182,7 @@ def test_clock_does_not_pass_without_measured_cylinder_bottom_clearance():
 
 def test_far_envelope_margin_is_not_reduced_and_receipt_is_required():
     t = api()
-    s = state()
-    s.wheel_pos_w[:, 0, 0] = .39
-    teacher = t.ReferenceTeacher()
+    teacher, s = teacher_in_lift()
     for _ in range(3):
         teacher.step(s)
         s = advance(s)
@@ -207,9 +222,7 @@ def test_reset_row_and_episode_identity_cannot_finish_old_target():
 
 def test_collision_and_lost_support_latch_failure_until_reset():
     t = api()
-    s = state()
-    s.wheel_pos_w[:, 0, 0] = .39
-    teacher = t.ReferenceTeacher()
+    teacher, s = teacher_in_lift()
     for _ in range(3):
         teacher.step(s)
         s = advance(s)
@@ -314,9 +327,7 @@ def test_identity_change_without_reset_mask_still_discards_terminal_receipts():
 
 def test_five_consecutive_stable_measurements_even_when_receipt_already_exists():
     t = api()
-    teacher = t.ReferenceTeacher()
-    s = state()
-    s.wheel_pos_w[:,0,0] = .39
+    teacher, s = teacher_in_lift()
     for _ in range(3):
         teacher.step(s)
         s = advance(s)
@@ -431,11 +442,13 @@ def test_balance_reference_ramp_remains_continuous_when_measured_gate_advances()
     s.wheel_pos_w[:,0,0] = .39
     teacher = t.ReferenceTeacher()
     a = teacher.step(s)
-    b = teacher.step(advance(s))
+    b = teacher.step(advance(measured_shift_ready(s)))
     assert a.phase.item() == t.Phase.BALANCE and b.phase.item() == t.Phase.LIFT
     # Two measured gates are allowed to advance, but do not skip 28 samples
     # of the 30-sample reference body-shift interpolation.
-    assert b.action[:,[0,4,8,12]].abs().max() < .02
+    # Supporting-wheel ABAD reference remains at 2/30; the swinging wheel
+    # also responds to the explicitly changed measured root in this fixture.
+    assert b.action[:,[4,8,12]].abs().max() < .02
 
 
 def test_early_lift_gate_does_not_jump_to_full_lift_reference():
@@ -444,7 +457,7 @@ def test_early_lift_gate_does_not_jump_to_full_lift_reference():
     s.wheel_pos_w[:,0,0] = .39
     teacher = t.ReferenceTeacher()
     teacher.step(s)
-    s = advance(s)
+    s = advance(measured_shift_ready(s))
     a = teacher.step(s)
     s = advance(s)
     s.wheel_pos_w[:,0,2] = .30
@@ -455,8 +468,7 @@ def test_early_lift_gate_does_not_jump_to_full_lift_reference():
 
 def restoring_teacher_with_four_stable_samples():
     t = api()
-    teacher, s = t.ReferenceTeacher(), state()
-    s.wheel_pos_w[:,0,0] = .39
+    teacher, s = teacher_in_lift()
     for _ in range(3):
         teacher.step(s)
         s = advance(s)
@@ -509,3 +521,111 @@ def test_control_step_gap_breaks_restore_continuity_but_duplicates_are_idempoten
         out = teacher.step(s)
         assert out.active_wheel.item() == (0 if index < 4 else -1)
         s = advance(s)
+
+
+def test_balance_readiness_configuration_is_immutable_and_fingerprinted():
+    t = api()
+    cfg = t.TeacherConfig()
+    assert cfg.balance_position_tolerance_m == .01
+    assert cfg.balance_speed_limit_m_s == .05
+    assert cfg.fingerprint != replace(cfg, balance_position_tolerance_m=.009).fingerprint
+    assert cfg.fingerprint != replace(cfg, balance_speed_limit_m_s=.04).fingerprint
+
+
+def test_native_run1_frame36_loads_do_not_mean_ready_to_lift():
+    """Frozen run1 env0 gate measurements, not a replay of missing joint targets."""
+    t = api()
+    s = state()
+    # Frame35 is the input that captured the BALANCE anchor for output36.
+    root35 = torch.tensor([[-25.73345375,-151.99990845,.60408282]])
+    wheels35 = torch.tensor([[[-25.43685150,-151.79243469,.09594408],
+        [-25.43788338,-152.20722961,.09593624],[-26.13503838,-151.79258728,.09594838],
+        [-26.13437080,-152.20735168,.09595184]]])
+    s = replace(s, root_pos_w=root35, wheel_pos_w=wheels35,
+        root_quat_w=torch.tensor([[.99996686,-.00150295,-.00799653,.00010485]]),
+        centers_top=torch.tensor([[[-25.2,-151.785,.1]]]))
+    teacher = t.ReferenceTeacher()
+    assert teacher.step(s).phase.item() == t.Phase.BALANCE
+    # Frame36 has three loaded supports but ~44/60mm full-shift error and
+    # .2816m/s forward velocity, with -.0883m/s vertical velocity.
+    s = advance(s, root_pos_w=torch.tensor([[-25.72787857,-151.99993896,.60254341]]),
+        root_quat_w=torch.tensor([[.99995822,-.00184114,-.00894464,.00008591]]),
+        root_lin_vel_w=torch.tensor([[.28163949,-.00257979,-.08829118]]),
+        root_ang_vel_w=torch.tensor([[-.04886337,-.09620775,-.00726071]]),
+        wheel_pos_w=torch.tensor([[[-25.43540001,-151.79244995,.09594582],
+            [-25.43645096,-152.20726013,.09594304],[-26.13398743,-151.79260254,.09594283],
+            [-26.13316345,-152.20733643,.09594650]]]),
+        wheel_force_w=torch.tensor([[[0.,0.,116.10949],[0.,0.,93.83890],
+            [0.,0.,92.53358],[0.,0.,75.00571]]]))
+    out = teacher.step(s)
+    assert out.phase.item() == t.Phase.BALANCE
+    assert not out.action[:,t.WHEEL_COLUMNS].any()
+
+
+@pytest.mark.parametrize('unready', ['position_x','position_y','position_norm','velocity_x','velocity_y',
+    'velocity_z','velocity_norm','roll','pitch','roll_rate','pitch_rate','force_threshold','force_tangential'])
+def test_balance_gate_requires_each_measured_component(unready):
+    t = api()
+    s = state()
+    s.wheel_pos_w[:,0,0] = .39
+    teacher = t.ReferenceTeacher()
+    teacher.step(s)
+    s = advance(measured_shift_ready(s))
+    if unready.startswith('position_'):
+        if unready == 'position_norm':
+            s.root_pos_w[:,:2] += .008  # each <.01; XY norm >.01
+        else:
+            s.root_pos_w[:,0 if unready.endswith('x') else 1] += .011
+    elif unready.startswith('velocity_'):
+        if unready == 'velocity_norm':
+            s.root_lin_vel_w[:] = .03  # each <.05; vector norm >.05
+        else:
+            s.root_lin_vel_w[:,{'velocity_x':0,'velocity_y':1,'velocity_z':2}[unready]] = .051
+    elif unready in ('roll','pitch'):
+        s.root_quat_w[:,0] = torch.cos(torch.tensor(.16/2))
+        s.root_quat_w[:,1 if unready == 'roll' else 2] = torch.sin(torch.tensor(.16/2))
+    elif unready == 'force_threshold':
+        s.wheel_force_w[:,1,2] = 30.  # original support threshold stays strict >
+    elif unready == 'force_tangential':
+        s.wheel_force_w[:,1,0] = 61.
+    else:
+        s.root_ang_vel_w[:,0 if unready == 'roll_rate' else 1] = .201
+    out = teacher.step(s)
+    assert out.phase.item() == t.Phase.BALANCE
+
+
+@pytest.mark.parametrize('unready', ['position', 'velocity'])
+def test_balance_clock_cannot_replace_preparation_measurements(unready):
+    t = api()
+    s = state()
+    s.wheel_pos_w[:,0,0] = .39
+    teacher = t.ReferenceTeacher()
+    teacher.step(s)
+    if unready == 'velocity':
+        s = measured_shift_ready(s)
+        s.root_lin_vel_w[:,0] = .1
+    for _ in range(35):
+        s = advance(s)
+        out = teacher.step(s)
+    assert out.phase.item() == t.Phase.BALANCE
+
+
+@pytest.mark.parametrize('wheel', range(4))
+def test_ready_balance_gate_mirrors_all_wheels_and_is_not_minimum_dwell(wheel):
+    t = api()
+    s = state()
+    s.required_wheels.zero_()
+    s.required_wheels[:,0,wheel] = True
+    s.wheel_pos_w[:,wheel,0] = .39
+    teacher = t.ReferenceTeacher()
+    assert teacher.step(s).phase.item() == t.Phase.BALANCE
+    # Full measured offset already exists: the second call may enter LIFT.
+    s = advance(measured_shift_ready(s,wheel))
+    # The reference follows actual rolling; translation cannot erase readiness.
+    s.root_pos_w[:,:2] += .3
+    s.wheel_pos_w[:,:,:2] += .3
+    s.centers_top[:,:,:2] += .3
+    out = teacher.step(s)
+    assert out.phase.item() == t.Phase.LIFT and out.active_wheel.item() == wheel
+    repeated = teacher.step(s)
+    assert torch.equal(repeated.action,out.action) and torch.equal(repeated.phase,out.phase)
