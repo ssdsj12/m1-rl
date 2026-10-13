@@ -28,7 +28,7 @@ import torch
 
 from extension.parallelism.m1_kinematics import (
     M1_ASSET_JOINT_NAMES, M1_PLANNER_JOINT_NAMES, M1_WHEEL_JOINT_NAMES,
-    M1_WHEEL_RADIUS_M, M1_WHEEL_HORIZONTAL_ENVELOPE_M, m1_fk, m1_joint_limit_mask,
+    M1_WHEEL_RADIUS_M, M1_WHEEL_HORIZONTAL_ENVELOPE_M, m1_joint_limit_mask,
 )
 from extension.parallelism.kinematics import rpy_to_rotation_matrix
 from extension.parallelism.rl_adapter import resolve_named_indices
@@ -36,6 +36,7 @@ from .m1_ame_contract import (M1_LEG_ACTION_SCALE_RAD, M1_WHEEL_ACTION_SCALE_RAD
     M1_WHEEL_SPEED_LIMIT_RAD_S, m1_action_targets)
 from .m1_reference_geometry import cylinder_bottom
 from .m1_crossing_landing import crossing_touchdown_safe
+from .m1_teacher_ik import body_feet, body_jacobian, dls_step
 
 LEG_COLUMNS = list(resolve_named_indices(M1_ASSET_JOINT_NAMES, M1_PLANNER_JOINT_NAMES))
 WHEEL_COLUMNS = list(resolve_named_indices(M1_ASSET_JOINT_NAMES, M1_WHEEL_JOINT_NAMES))
@@ -194,33 +195,6 @@ def quaternion_rpy(quat):
     return torch.stack((torch.atan2(2*(w*x+y*z), 1-2*(x*x+y*y)),
         torch.asin((2*(w*y-z*x)).clamp(-1,1)),
         torch.atan2(2*(w*z+x*y), 1-2*(y*y+z*z))), -1)
-
-
-def body_feet(q):
-    zero = q.new_zeros((*q.shape[:-1], 3))
-    return m1_fk(zero, zero, q, capsule_samples=1).foot_pos_w
-
-
-def body_jacobian(q, epsilon=1e-4):
-    """Central differences at body origin: no large world-position subtraction."""
-    perturbations = []
-    for joint in range(3):
-        delta = torch.zeros_like(q)
-        # These positions are resolved from planner joint names, never asset reshape.
-        ids = [M1_PLANNER_JOINT_NAMES.index(f'{prefix}_{name}_JOINT')
-               for prefix in ('FBL','FAR','RBL','RAR')
-               for name in (('ABAD','HIP','KNEE')[joint],)]
-        delta[:, ids] = epsilon
-        perturbations.extend((q+delta, q-delta))
-    feet = body_feet(torch.cat(perturbations, 0)).split(q.shape[0])
-    return torch.stack([(feet[2*j]-feet[2*j+1])/(2*epsilon) for j in range(3)], -1)
-
-
-def dls_step(jacobian, error, damping=.05, component_limit=.25):
-    eye = torch.eye(3, device=jacobian.device, dtype=jacobian.dtype)
-    solved = torch.linalg.solve(jacobian @ jacobian.transpose(-1,-2) + damping**2*eye,
-                                error.unsqueeze(-1))
-    return (jacobian.transpose(-1,-2) @ solved).squeeze(-1).clamp(-component_limit, component_limit)
 
 
 def solve_ik_body(current_q, target_body, cfg=None):
