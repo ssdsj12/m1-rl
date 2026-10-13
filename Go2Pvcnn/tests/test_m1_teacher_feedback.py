@@ -280,3 +280,19 @@ def test_integral_selection_is_per_row(feedback):
         transaction_valid=torch.tensor([True, True, False]), backtracked=torch.zeros(3, dtype=torch.bool))
     torch.testing.assert_close(result[0], p.integral_candidate[0])
     torch.testing.assert_close(result[1:], torch.zeros_like(result[1:]))
+
+
+@pytest.mark.parametrize('field,axis,value',[
+    ('integral_candidate',0,.021),('integral_candidate',1,.011),
+    ('output',0,.041),('output',2,.021),
+])
+@pytest.mark.parametrize('hand_built',[False,True])
+def test_integral_selection_rejects_mutated_out_of_bounds_proposal(feedback,field,axis,value,hand_built):
+    args=inputs(feedback); proposal=feedback.propose_feedback(**args)
+    if hand_built:
+        from dataclasses import replace
+        changed=getattr(proposal,field).clone(); changed[0,axis]=value
+        proposal=replace(proposal,**{field:changed})
+    else: getattr(proposal,field)[0,axis]=value
+    with pytest.raises(ValueError,match='bound'):
+        selected(feedback,args['previous'],proposal)

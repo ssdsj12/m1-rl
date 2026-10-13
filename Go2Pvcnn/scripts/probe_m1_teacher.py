@@ -77,6 +77,31 @@ def pose_context(reference):
         reference.body.quat_w[0].detach().clone().tolist(),wheels=reference.wheels_w[0].detach().clone().tolist())
 
 
+def prepare_feedback_context(teacher,state):
+    """Expire only rows whose episode/frame changed; preserve duplicate decisions.
+
+    A quota reset evaluates the whole real Teacher batch and may compute/cache
+    a live peer's next decision. That peer's context belongs to its cached
+    output and must survive the following same-frame normal decide call.
+    """
+    contexts=teacher._probe_feedback_context
+    identities=teacher._probe_feedback_context_identity
+    resets=getattr(state,'reset_mask',None)
+    for row in range(len(state.episode_id)):
+        identity=(int(state.episode_id[row]),int(state.control_step[row]))
+        if identities.get(row)!=identity or resets is not None and bool(resets[row]):
+            contexts.pop(row,None)
+            identities[row]=identity
+
+
+def feedback_context_for(teacher,state,row):
+    identity=(int(state.episode_id[row]),int(state.control_step[row]))
+    resets=getattr(state,'reset_mask',None)
+    if resets is not None and bool(resets[row]): return None
+    if getattr(teacher,'_probe_feedback_context_identity',{}).get(row)!=identity: return None
+    return copy.deepcopy(getattr(teacher,'_probe_feedback_context',{}).get(row))
+
+
 def observe_feedback_transactions(teacher):
     """Read-only probe observer of the real bounded transaction's minimal inputs.
 
@@ -84,9 +109,11 @@ def observe_feedback_transactions(teacher):
     Context is an owned JSON snapshot (not a reference to the mutable row).
     """
     teacher._probe_feedback_context={}
+    teacher._probe_feedback_context_identity={}
     original=getattr(teacher,'_feedback_transaction',None)
     if original is None: return  # CPU lifecycle fixture without a controller.
     def observed(s,i,work,accepted,requested,q,branch,nominal,evidence):
+        teacher._probe_feedback_context_identity[i]=(int(s.episode_id[i]),int(s.control_step[i]))
         take=lambda value:value.detach().clone().reshape(-1).tolist()
         teacher._probe_feedback_context[i]=dict(accepted_before=pose_context(accepted),
             retained_physical=pose_context(work.get('accepted')),
@@ -965,7 +992,7 @@ class ActionEvidence:
                     if hasattr(state,'last_applied_leg_target') else None,
                 teacher_diagnostic=diagnostic_json(output.diagnostic[row].tolist())
                     if hasattr(output,'diagnostic') else {},
-                feedback_context=copy.deepcopy(getattr(teacher,'_probe_feedback_context',{}).get(row)),
+                feedback_context=feedback_context_for(teacher,state,row),
                 teacher_input_leg_pos=state.leg_pos[row].detach().clone().tolist() if hasattr(state,'leg_pos') else None,
                 active_target=int(output.active_target[row]),
                 preparation_input=readiness_measurement(state,row,sim_time),
@@ -1544,7 +1571,7 @@ class NativeProbe:
                     batch_start=len(records)
                     required=[self.pairs(self.state().course_ids[i],self.state().required_wheels[i]) for i in range(4)]
                     def decide(state):
-                        teacher._probe_feedback_context={}
+                        prepare_feedback_context(teacher,state)
                         return teacher.step(state) if wheel is None else teacher.diagnostic_step(
                             state,active_wheel=wheel,lift=scope=='single-wheel')
                     # Initialize identity without executing an invalid RESET label.

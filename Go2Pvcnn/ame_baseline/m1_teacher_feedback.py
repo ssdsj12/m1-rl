@@ -167,6 +167,13 @@ def select_integral(previous: FeedbackState, proposal: FeedbackProposal, *, safe
     previous.__post_init__()
     proposal.__post_init__()
     _tensor(proposal.error_h, previous.integral.shape, previous.integral, 'proposal.error_h')
+    cfg=FeedbackConfig()
+    integral_limit=_axis_values(previous.integral,cfg.integral_limit_x,cfg.integral_limit_yz)
+    output_limit=_axis_values(previous.integral,cfg.output_limit_x,cfg.output_limit_yz)
+    for value,limit in ((previous.integral,integral_limit),(proposal.integral_candidate,integral_limit),
+                        (previous.output,output_limit),(proposal.output,output_limit)):
+        if bool((value.abs()>limit).any()):
+            raise ValueError('integral selection state/proposal exceeds approved bounds')
     for name, value in (('safe', safe), ('transaction_valid', transaction_valid), ('backtracked', backtracked)):
         _tensor(value, (previous.integral.shape[0],), previous.integral, name, boolean=True)
     normal = (~backtracked & ~proposal.limited.any(dim=-1))[:, None]

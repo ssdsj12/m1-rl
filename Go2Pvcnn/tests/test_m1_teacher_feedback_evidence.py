@@ -19,9 +19,90 @@ def test_preparation_requires_five_additional_ready_frames():
     assert hold.update(0,input_ready=True,output_ready=True,frame=12,episode_id=4)
     assert not hold.update(0,input_ready=True,output_ready=True,frame=14,episode_id=4)
     assert not hold.update(0,input_ready=True,output_ready=True,frame=0,episode_id=5)
-    assert not hold.update(1,input_ready=True,output_ready=True,frame=20,episode_id=1)
+    for frame in range(20,25):
+        assert not hold.update(1,input_ready=True,output_ready=True,frame=frame,episode_id=1)
     hold.reset(0)
-    assert not hold.update(1,input_ready=True,output_ready=True,frame=21,episode_id=1)
+    assert hold.update(1,input_ready=True,output_ready=True,frame=25,episode_id=1), 'resetting peer must retain five ready frames'
+
+
+@pytest.mark.parametrize('reset_groups',[((0,),),((0,),(1,)),((0,1),)])
+def test_real_teacher_quota_resets_preserve_cached_peer_transaction(reset_groups):
+    """Execute the native nested decide function, with real Teacher and receipts."""
+    import ast
+    import copy
+    import inspect
+    import textwrap
+    from dataclasses import replace
+    from types import SimpleNamespace as NS
+    from test_m1_reference_teacher import state
+    from ame_baseline.m1_ame_contract import m1_action_targets
+    from ame_baseline.m1_reference_teacher import ReferenceTeacher,LEG_COLUMNS
+    from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES
+    module=probe(); teacher=ReferenceTeacher(); module.observe_feedback_transactions(teacher)
+    tree=ast.parse(textwrap.dedent(inspect.getsource(module.NativeProbe.teacher)))
+    node=next(n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name=='decide')
+    scope=dict(vars(module),teacher=teacher,wheel=None,scope='course')
+    exec(compile(ast.Module(body=[node],type_ignores=[]),'<native quota decide>','exec'),scope)
+    decide=scope['decide']; s=state(batch=3,targets=False)
+    defaults=s.default_joint_pos.clone(); clock=NS(current_time=0.)
+    asset=NS(joint_names=M1_ASSET_JOINT_NAMES,data=NS(joint_pos_target=defaults.clone(),joint_vel_target=torch.zeros(3,16)))
+    term=NS(_joint_names=M1_ASSET_JOINT_NAMES,_asset=asset,
+        raw_actions=torch.zeros(3,16),processed_actions=torch.zeros(3,16))
+    def process(action):
+        term.raw_actions.copy_(action); term.processed_actions.copy_(m1_action_targets(action,defaults))
+    def apply():
+        asset.data.joint_pos_target.copy_(term.processed_actions)
+        asset.data.joint_vel_target.copy_(term.processed_actions)
+    term.process_actions=process; term.apply_actions=apply
+    receipts=module.ActionEvidence(term,sim_time=lambda:clock.current_time)
+    def execute(st,out):
+        receipts.begin(st,out,teacher,clock.current_time); term.process_actions(out.action)
+        for _ in range(4):
+            term.apply_actions(); receipts.observe_write(); receipts.observe_physics(); clock.current_time+=.005
+        return [dict(receipts.row(row,clock.current_time),phase=int(out.phase[row]),teacher_valid=bool(out.valid[row])) for row in range(3)]
+    first=decide(s); old=execute(s,first)
+    s=replace(s,control_step=s.control_step+1,last_applied_leg_target=receipts.read_targets()[:,LEG_COLUMNS])
+    peer_context=None
+    for group in reset_groups:
+        rows=list(group)
+        episodes=s.episode_id.clone(); episodes[rows]+=1
+        frames=s.control_step.clone(); frames[rows]=-1
+        mask=torch.zeros(3,dtype=torch.bool); mask[rows]=True
+        quota=replace(s,episode_id=episodes,control_step=frames,reset_mask=mask)
+        decide(quota)
+        if teacher._probe_feedback_context.get(2) is not None:
+            peer_context=copy.deepcopy(teacher._probe_feedback_context[2])
+        # A real reset decision has no transaction, even after this row owned one.
+        assert all(teacher._probe_feedback_context.get(row) is None for row in rows)
+        frames[rows]=0
+        s=replace(quota,control_step=frames,reset_mask=torch.zeros(3,dtype=torch.bool))
+    assert peer_context is not None
+    out=decide(s)  # row2 returns its cached next-frame output; no observer call
+    samples=execute(s,out)
+    assert samples[2]['feedback_context'] is not None, 'cached live peer must retain its real transaction context'
+    assert samples[2]['feedback_context']==peer_context
+    assert all(module.verify_feedback_transaction(sample,teacher.cfg)==[] for sample in samples)
+    assert old[0]['teacher_input_episode_id']==0 and samples[0]['teacher_input_episode_id']==1
+    # Same-frame duplicate must retain the same owned transaction on every row.
+    duplicate=decide(s)
+    receipts.begin(s,duplicate,teacher,clock.current_time)
+    assert receipts.pending[2]['feedback_context']==peer_context
+    saved=copy.deepcopy(receipts.pending[2]['feedback_context'])
+    # Fresh frame with pretransaction collision cannot inherit old context.
+    collision=torch.zeros(3,dtype=torch.bool); collision[2]=True
+    failed=replace(s,control_step=s.control_step+1,collision=collision)
+    decision=decide(failed)
+    assert not decision.valid[2] and teacher._probe_feedback_context.get(2) is None
+    assert receipts.pending[2]['feedback_context']==saved
+    failed_samples=execute(failed,decision)
+    assert failed_samples[2]['feedback_context'] is None
+    assert module.verify_feedback_transaction(failed_samples[2],teacher.cfg)==[]
+    # A same-frame explicit reset also supersedes that row's prior transaction.
+    same_frame_reset=replace(failed,reset_mask=torch.tensor([True,False,False]))
+    reset_out=decide(same_frame_reset)
+    assert not reset_out.valid[0] and teacher._probe_feedback_context.get(0) is None
+    receipts.begin(same_frame_reset,reset_out,teacher,clock.current_time)
+    assert receipts.pending[0]['feedback_context'] is None
 
 
 def test_compensation_evidence_matches_actual_apply():
