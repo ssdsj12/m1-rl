@@ -14,6 +14,8 @@
 
 ## 执行顺序与停止条件
 
+2026-10-13执行状态：Task1–3候选软件/两阶段审查完成，Task4控制与碰撞原生合同通过，但教师A失败并阻断。初始及两次有界修订均未完成跨越；最终253相关CPU通过不能覆盖物理失败。Task5–9未开始，生产/学生训练未部署，GPU已释放。后续需新教师设计审阅，禁止自动再试或降低门槛。逐项证据见[实施账本](../../../notes/log/2026-10-13-m1-teacher-to-ppo-implementation.md)，下方原计划复选框保留为原始执行说明，不代表全部待做或已通过。
+
 三个串行里程碑：A新合同/教师原生验收；B模仿和完全撤除；C critic校准/PPO。A失败不启动B，B失败不启动C。CPU通过不等于原生验收，教师通过不等于学生通过。
 
 现有普通clone镜像 `C:/Users/xk/Documents/project/m1-ppo-recovery`、分支10-12；保留预存dirty notes和两个watcher，不stage整目录。执行前按worktree技能核实隔离偏好，不能把普通clone冒充linked worktree。本轮仅写计划，没有创建工作树或安装依赖。
