@@ -22,7 +22,7 @@ SAMPLE_KEYS = {'env_id','episode_id','attempt_id','frame','sim_time','active_whe
     'teacher_input_frame','teacher_input_episode_id','teacher_input_sim_time',
     'teacher_action','executed_action','processed_targets','action_joint_names',
     'processed_target_joint_names','active_target','teacher_ages_after_decision','raw_joint_names','joints'}
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 TEACHER_SCOPES = ('flat-preparation','single-wheel','first-obstacle','transitions','course')
 APPLY_KEYS = {'schema_version','teacher_scope','failure_locked','student_demonstration_usable',
     'applied_targets','applied_target_joint_names','applied_substeps','action_process_count',
@@ -108,6 +108,74 @@ def diagnostic_json(value):
             for name,v in zip(TEACHER_DIAGNOSTIC_FIELDS,value)}
 
 
+def readiness_measurement(state,row,sim_time):
+    """Owned real measurements only; absent input stays explicitly incomplete."""
+    names=('root_pos_w','root_quat_w','root_lin_vel_w','root_ang_vel_w',
+           'com_pos_w','wheel_pos_w','wheel_force_w','measurement_valid')
+    if not all(hasattr(state,name) for name in names): return None
+    root=[]
+    for name in names[:4]: root.extend(getattr(state,name)[row].detach().clone().tolist())
+    return dict(env_id=row,episode_id=int(state.episode_id[row]),frame=int(state.control_step[row]),
+        sim_time=float(sim_time),root=root,com=state.com_pos_w[row].detach().clone().tolist(),
+        wheels=state.wheel_pos_w[row].detach().clone().tolist(),
+        forces=state.wheel_force_w[row].detach().clone().tolist(),
+        measurement_valid=bool(state.measurement_valid[row]))
+
+
+def preparation_observed(sample,cfg):
+    """Independently recompute the original measured gate on both action sides.
+
+    Input tracks the prior accepted reference and same-decision goal. Output
+    tracks the newly accepted reference and that goal, never adjacent reset loads.
+    No predicted COM or private capture flag participates.
+    """
+    import torch
+    from ame_baseline.m1_teacher_pose import support_margin
+    from ame_baseline.m1_reference_teacher import quaternion_rpy
+    axes=('x','y','z','qw','qx','qy','qz')
+    try:
+        diagnostic=sample['teacher_diagnostic']; wheel=sample['active_wheel']
+        if (diagnostic['reference_valid']!=1 or diagnostic['preparation_ready']!=1
+                or isinstance(wheel,bool) or wheel not in range(4)
+                or sample.get('failure_locked',False)
+                or any(sample.get(k,True) for k in ('collision','support_lost','penetration','failure'))): return False
+        pose=lambda prefix:torch.tensor([diagnostic[prefix+axis] for axis in axes],dtype=torch.float64)
+        prior=pose('preparation_prior_root_'); goal=pose('preparation_goal_root_'); accepted=pose('accepted_root_')
+        for side,refs,frame,time in (
+                ('input',(prior,goal),sample['teacher_input_frame'],sample['teacher_input_sim_time']),
+                ('output',(accepted,goal),sample['frame'],sample['sim_time'])):
+            measured=sample['preparation_'+side]
+            if (measured['env_id']!=sample['env_id'] or measured['episode_id']!=sample['episode_id']
+                    or measured['frame']!=frame or not math.isclose(measured['sim_time'],time,abs_tol=1e-6)
+                    or measured['measurement_valid'] is not True): return False
+            root=torch.tensor(measured['root'],dtype=torch.float64)
+            com=torch.tensor(measured['com'],dtype=torch.float64)
+            wheels=torch.tensor(measured['wheels'],dtype=torch.float64)
+            forces=torch.tensor(measured['forces'],dtype=torch.float64)
+            if (root.shape!=(13,) or com.shape!=(3,) or wheels.shape!=(4,3) or forces.shape!=(4,3)
+                    or not all(bool(torch.isfinite(x).all()) for x in (root,com,wheels,forces,*refs))
+                    or abs(float(root[3:7].norm())-1)>1e-3): return False
+            rpy=quaternion_rpy(root[None,3:7])[0]
+            if (root[7:10].norm()>cfg.balance_speed_limit_m_s
+                    or rpy[:2].abs().max()>cfg.recovery_tilt_rad
+                    or root[10:12].abs().max()>cfg.recovery_rate_rad_s): return False
+            for ref in refs:
+                if abs(float(ref[3:7].norm())-1)>1e-3: return False
+                delta=rpy-quaternion_rpy(ref[None,3:7])[0]
+                delta=torch.atan2(torch.sin(delta),torch.cos(delta))
+                if (torch.linalg.vector_norm(root[:3]-ref[:3])>cfg.balance_position_tolerance_m
+                        or delta.abs().max()>cfg.recovery_pose_rad): return False
+            margin,valid=support_margin(com[None],wheels[None],torch.tensor([wheel]))
+            support=[i for i in range(4) if i!=wheel]
+            bearing=(forces[:,2]>cfg.support_min_force_n)&(forces[:,:2].norm(dim=-1)<=cfg.support_max_tangential_ratio*forces[:,2])
+            if not bool(valid[0] and margin[0]>=cfg.com_margin_m and bearing[support].all()): return False
+            if side=='output' and (measured['root']!=sample['root'] or measured['wheels']!=sample['wheel_position']
+                    or [f[2] for f in measured['forces']]!=sample['Fz']
+                    or measured['forces']!=sample.get('force')): return False
+        return True
+    except (KeyError,TypeError,ValueError,RuntimeError,IndexError): return False
+
+
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
 
@@ -185,6 +253,15 @@ def verify_episode(record):
     if len(raw_names)!=16 or len(set(raw_names))!=16 or set(raw_names)!=set(M1_ASSET_JOINT_NAMES):
         errors.append('missing unique raw joint contract')
     samples = record.get('samples', [])
+    from ame_baseline.m1_reference_teacher import TeacherConfig
+    readiness_cfg=None
+    if record.get('teacher_scope')=='flat-preparation':
+        try:
+            if set(record['teacher_config'])!=set(asdict(TeacherConfig())):
+                raise ValueError('incomplete readiness config')
+            readiness_cfg=TeacherConfig(**record['teacher_config'])
+            if readiness_cfg.fingerprint!=record['teacher_hash']: raise ValueError('config hash mismatch')
+        except (KeyError,TypeError,ValueError): errors.append('missing readiness configuration evidence')
     stage = record.get('stage')
     if not samples or stage not in (0,3):
         return dict(complete=False, success=False, errors=['missing trajectory or stage'])
@@ -263,6 +340,12 @@ def verify_episode(record):
         if not all(math.isfinite(x) for key in ('Fz','wheel_bottom','obstacle_top','root') for x in sample[key]):
             errors.append('nonfinite physical measurement')
     terminal = record.get('terminal')
+    if record.get('teacher_scope')=='flat-preparation':
+        for sample in samples:
+            if sample.get('scope_observation_complete') and (readiness_cfg is None or not preparation_observed(sample,readiness_cfg)):
+                errors.append('preparation endpoint lacks same-decision input and post-action measured readiness')
+        if record.get('end')=='scope_observed' and not samples[-1].get('scope_observation_complete'):
+            errors.append('preparation endpoint not observed')
     if not same_json_evidence(terminal,samples[-1]): errors.append('missing or mismatched pre-reset terminal snapshot')
     errors.extend(verify_trace(record.get('trace') or {},samples))
     video = record.get('video') or {}
@@ -640,7 +723,7 @@ class ActionEvidence:
                 teacher_diagnostic=diagnostic_json(output.diagnostic[row].tolist())
                     if hasattr(output,'diagnostic') else {},
                 active_target=int(output.active_target[row]),
-                local_prepare_complete=bool(ages.get('prepared',False)),
+                preparation_input=readiness_measurement(state,row,sim_time),
                 teacher_recovery_stable_count=int(ages.get('stable',0)),
                 teacher_ages_after_decision={key:int(ages.get(key,-1)) for key in ('age','body_age','lift_age')}))
 
@@ -1063,6 +1146,7 @@ class NativeProbe:
         timeout=bool(env.termination_manager.time_outs[row])
         failure=bool(env.termination_manager.terminated[row]) or bool(self.inner_failed[row])
         action=self.action_evidence.row(row,float(env.sim.current_time))
+        action['preparation_output']=readiness_measurement(self.state(),row,float(env.sim.current_time))
         locked=bool(output.failure_locked[row]) if output is not None else False
         return dict(schema_version=SCHEMA_VERSION,teacher_scope=self.scope,
             diagnostic_active_wheel=self.diagnostic_wheel,failure_locked=locked,
@@ -1111,6 +1195,7 @@ class NativeProbe:
             diagnostic_active_wheel=self.diagnostic_wheel,
             stage=rec['stage'],seed=rec['seed'],env_id=row,episode_id=int(self.episode[row]),
             raw_joint_names=list(self.raw_joint_names),
+            teacher_config=asdict(self.teacher_cfg),teacher_hash=self.teacher_cfg.fingerprint,
             required=required,samples=rec['samples'],terminal=rec['samples'][-1],video=video,
             initial_root=rec['initial_root'],command_distance=rec['command_distance'],
             end=end,natural_done=natural,timeout=timeout)
@@ -1187,7 +1272,7 @@ class NativeProbe:
                             reference_valid=diagnostic.get('reference_valid')==1
                             local_complete=False
                             if scope=='flat-preparation':
-                                local_complete=reference_valid and sample.get('local_prepare_complete',False)
+                                local_complete=preparation_observed(sample,self.teacher_cfg)
                             elif scope=='single-wheel':
                                 # Measured rise/unloading, then five real loaded, quiet
                                 # RESTORE observations. These are local evidence only.

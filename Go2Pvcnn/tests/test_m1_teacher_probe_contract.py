@@ -62,7 +62,7 @@ def episode(stage=3, seed=101, episode_id=0):
         from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES
         from ame_baseline.m1_reference_teacher import TEACHER_DIAGNOSTIC_FIELDS
         frames.append(dict(env_id=0, episode_id=episode_id, attempt_id=1, frame=f,
-            schema_version=3,teacher_scope='course',failure_locked=False,
+            schema_version=probe().SCHEMA_VERSION,teacher_scope='course',failure_locked=False,
             student_demonstration_usable=True,applied_target_valid=True,
             applied_targets=[0.]*16,applied_target_joint_names=list(M1_ASSET_JOINT_NAMES),
             applied_substeps=[dict(index=i,targets=[0.]*16,sim_time=(f-1)*.02+i*.005,
@@ -83,7 +83,7 @@ def episode(stage=3, seed=101, episode_id=0):
             root=[f*.006,0.,.62,1.,0.,0.,0.,.3,0.,0.,0.,0.,0.],
             far_side_recovery=required if f == count and stage else [],
             receipt=required if f == count and stage else []))
-    record=dict(schema_version=3,teacher_scope='course',stage=stage, seed=seed, env_id=0, episode_id=episode_id,
+    record=dict(schema_version=probe().SCHEMA_VERSION,teacher_scope='course',stage=stage, seed=seed, env_id=0, episode_id=episode_id,
         raw_joint_names=list(M1_ASSET_JOINT_NAMES),
         required=required if stage else [], samples=frames, end='task_complete' if stage else 'flat_horizon',
         timeout=stage == 0, natural_done=stage == 0,
@@ -775,20 +775,35 @@ def diagnostic_runner(tmp_path,monkeypatch,scenario):
         mask=torch.zeros(4,8,4,dtype=torch.bool)
         if run.stage==3:
             for target,wheel in required: mask[:,target,wheel]=True
+        wheels=torch.tensor([[.3,.2,.096],[.3,-.2,.096],[-.3,.2,.096],[-.3,-.2,.096]]).expand(4,-1,-1).clone()
+        support=[i for i in range(4) if i!=(run.diagnostic_wheel or 0)]
+        com=wheels[:,support].mean(1)
+        if scenario=='captured-unready': com[:,:2]=(wheels[:,1,:2]+wheels[:,2,:2])/2
+        root=torch.tensor([0.,0.,.62]).expand(4,-1).clone()
+        if flat_horizon: root[:,0]=run.frames*(.006 if scenario=='flat-horizon-good' else .003)
+        forces=torch.zeros(4,4,3); forces[:,:,2]=50.
+        if scenario=='stale-post-load' and bool((run.frames>0).any()): forces.zero_()
         return NS(course_ids=torch.arange(8).expand(4,-1),required_wheels=mask,
+            root_pos_w=root,root_quat_w=torch.tensor([1.,0.,0.,0.]).expand(4,-1),
+            root_lin_vel_w=torch.zeros(4,3),root_ang_vel_w=torch.zeros(4,3),
+            com_pos_w=com,wheel_pos_w=wheels,wheel_force_w=forces,measurement_valid=torch.ones(4,dtype=torch.bool),
             control_step=run.frames.clone(),episode_id=run.episode.clone(),
             last_applied_leg_target=torch.zeros(4,12),default_joint_pos=torch.zeros(4,16))
     run.state=state
     class FixtureTeacher:
         def __init__(self,cfg): self._rows=[{} for _ in range(4)]
         def decide(self,state,wheel):
-            prepared=(scenario in ('prepared','bad-evidence') or (wheel is not None and wheel>0)
+            prepared=(scenario in ('prepared','bad-evidence','captured-unready','stale-post-load') or (wheel is not None and wheel>0)
                 or scenario=='transient' and int(state.control_step[0])>=1)
             self._rows=[dict(prepared=prepared,stable=0) for _ in range(4)]
             data=torch.full((4,len(teacher_module.TEACHER_DIAGNOSTIC_FIELDS)),float('nan'))
             for field,value in (('reference_valid',0 if scenario=='transient' and not prepared else 1),
-                    ('diagnostic_only',int(wheel is not None))):
+                    ('diagnostic_only',int(wheel is not None)),('preparation_ready',int(prepared))):
                 data[:,teacher_module.TEACHER_DIAGNOSTIC_FIELDS.index(field)]=value
+            for prefix in ('preparation_prior_root_','preparation_goal_root_','accepted_root_'):
+                for col,axis in enumerate(('x','y','z','qw','qx','qy','qz')):
+                    value=torch.cat((state.root_pos_w,state.root_quat_w),1)[:,col]
+                    data[:,teacher_module.TEACHER_DIAGNOSTIC_FIELDS.index(prefix+axis)]=value
             locked=torch.zeros(4,dtype=torch.bool)
             if scenario in ('locked','acceptance-failure') and (wheel==0 or wheel is None): locked[0]=True
             if scenario=='locked-last' and wheel==0: locked[3]=True
@@ -813,17 +828,19 @@ def diagnostic_runner(tmp_path,monkeypatch,scenario):
     run.step=step
     def sample(row):
         action=run.action_evidence.row(row,run.env.sim.current_time)
+        measured=module.readiness_measurement(state(),row,run.env.sim.current_time)
+        action['preparation_output']=measured
         if scenario=='bad-evidence' and row==3: action['action_target_dtype']='unsupported'
         x=float(run.frames[row])*(.006 if scenario=='flat-horizon-good' else .003) if flat_horizon else 0.
-        return dict(schema_version=3,teacher_scope=run.scope,env_id=row,episode_id=int(run.episode[row]),
+        return dict(schema_version=module.SCHEMA_VERSION,teacher_scope=run.scope,env_id=row,episode_id=int(run.episode[row]),
             attempt_id=0,frame=int(run.frames[row]),sim_time=run.env.sim.current_time,
             active_wheel=run.diagnostic_wheel or 0,phase=1,teacher_reason=5 if row==0 else 0,
             teacher_valid=flat_horizon,student_demonstration_usable=flat_horizon,
-            failure_locked=bool(run.last_output.failure_locked[row]),Fz=[50.]*4,
-            wheel_position=[[0.,0.,0.]]*4,wheel_bottom=[0.]*4,obstacle_top=[.1]*8,
+            failure_locked=bool(run.last_output.failure_locked[row]),Fz=[0. if scenario=='stale-post-load' else 50.]*4,
+            force=measured['forces'],wheel_position=measured['wheels'],wheel_bottom=[0.]*4,obstacle_top=[.1]*8,
             collision=False,support_lost=False,penetration=False,failure=False,
             timeout=flat_horizon and run.stage==0 and int(run.frames[row])>=1000,
-            receipt=[],far_side_recovery=[],root=[x,0.,.62,1.,0.,0.,0.]+[0.]*6,
+            receipt=[],far_side_recovery=[],root=measured['root'],
             raw_joint_names=list(M1_ASSET_JOINT_NAMES),joints=[0.]*16,**action)
     run.sample=sample
     run.reset_row=lambda row:None
@@ -968,3 +985,47 @@ def test_formal_acceptance_does_not_latch_failed_flat_horizon():
         verification=dict(errors=[],success=False),
         terminal=dict(env_id=0,episode_id=0,frame=1000)),1000)
     assert gate.failure is None and not gate.deadline(1005)
+
+
+@pytest.mark.parametrize('scenario',['captured-unready','stale-post-load'])
+def test_capture_and_stale_post_reset_load_do_not_finish_preparation(tmp_path,monkeypatch,scenario):
+    run=diagnostic_runner(tmp_path,monkeypatch,scenario)
+    run.teacher(acceptance=False,diagnostic_steps=2,scope='flat-preparation')
+    assert run.started==[(0,0)]
+    for path in tmp_path.glob('stage*.json'):
+        record=json.loads(path.read_text())
+        assert record['end']!='scope_observed'
+        assert not any(s['scope_observation_complete'] for s in record['samples'])
+        if scenario=='stale-post-load':
+            first=record['samples'][0]
+            assert first['teacher_diagnostic']['preparation_ready']==1
+            assert [f[2] for f in first['preparation_input']['forces']]==[50.]*4
+            assert first['Fz']==[0.]*4
+
+
+def test_verifier_rechecks_ready_claim_against_both_measurements_and_identity(tmp_path,monkeypatch):
+    run=diagnostic_runner(tmp_path,monkeypatch,'prepared')
+    run.teacher(acceptance=False,diagnostic_steps=2,scope='flat-preparation')
+    original=json.loads((tmp_path/'stage0_seed101_env0_episode0.json').read_text())
+    assert original['end']=='scope_observed' and original['verification']['errors']==[]
+    assert not original['verification']['success'] and not original['student_demonstration_usable']
+    mutations=[
+        lambda s:s.pop('preparation_input'),
+        lambda s:s['preparation_input'].update(com=[0.,0.,.096]),  # triangle boundary, predicted flags unchanged
+        lambda s:s['preparation_output'].update(forces=[[0.,0.,0.]]*4),
+        lambda s:s['preparation_output'].update(episode_id=s['episode_id']+1),
+        lambda s:s['preparation_output'].update(frame=s['frame']+1),
+        lambda s:s['preparation_output']['root'].__setitem__(7,.051),
+        lambda s:s['preparation_output']['root'].__setitem__(0,.02),
+        lambda s:s['preparation_output']['com'].__setitem__(0,float('nan')),
+        lambda s:s['teacher_diagnostic'].update(reference_valid=0),
+        lambda s:s['teacher_diagnostic'].update(preparation_ready=0),
+    ]
+    for mutate in mutations:
+        record=copy.deepcopy(original); mutate(record['samples'][-1]); record['terminal']=record['samples'][-1]
+        checked=verify_episode(record)
+        assert 'preparation endpoint lacks same-decision input and post-action measured readiness' in checked['errors']
+        assert not checked['success'] and not checked['student_demonstration_usable']
+    for changes in ({'schema_version':3},{'teacher_config':{}},{'teacher_hash':'missing'}):
+        record=copy.deepcopy(original); record.update(changes)
+        assert verify_episode(record)['errors']

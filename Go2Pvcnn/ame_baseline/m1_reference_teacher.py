@@ -92,12 +92,15 @@ TEACHER_DIAGNOSTIC_FIELDS = tuple(
     + [f'{kind}_q_{joint}' for kind in ('attempted', 'accepted', 'last_applied') for joint in range(12)]
     + [f'support_slip_{leg}_{axis}' for leg in range(4) for axis in ('x', 'y')]
     + ['candidate_index', 'candidate_count', 'backtrack_index', 'invalid_streak',
-       'freeze_reason', 'reference_valid', 'diagnostic_only', 'age', 'body_age', 'lift_age'])
+       'freeze_reason', 'reference_valid', 'diagnostic_only', 'age', 'body_age', 'lift_age']
+    + [f'preparation_{kind}_root_{axis}' for kind in ('prior', 'goal')
+       for axis in ('x', 'y', 'z', 'qw', 'qx', 'qy', 'qz')]
+    + ['preparation_ready'])
 TEACHER_DIAGNOSTIC_INTEGER_FIELDS = tuple(
     [f'ik_{name}_{leg}' for name in ('joint_limit_ok', 'branch_ok', 'workspace_ok',
        'iterations', 'reason') for leg in range(4)]
     + ['candidate_index', 'candidate_count', 'backtrack_index', 'invalid_streak',
-       'freeze_reason', 'reference_valid', 'diagnostic_only', 'age', 'body_age', 'lift_age'])
+       'freeze_reason', 'reference_valid', 'diagnostic_only', 'age', 'body_age', 'lift_age', 'preparation_ready'])
 
 
 @dataclass(frozen=True)
@@ -160,7 +163,7 @@ class TeacherConfig:
     @property
     def fingerprint(self):
         payload = dict(config=asdict(self), algorithm=REFERENCE_COMMIT,
-                       implementation='support-ik-transaction-v5', diagnostic_fields=TEACHER_DIAGNOSTIC_FIELDS,
+                       implementation='support-ik-transaction-v6', diagnostic_fields=TEACHER_DIAGNOSTIC_FIELDS,
                        asset_order=M1_ASSET_JOINT_NAMES, leg_scale=M1_LEG_ACTION_SCALE_RAD,
                        wheel_scale=M1_WHEEL_ACTION_SCALE_RAD_S)
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
@@ -376,6 +379,10 @@ class ReferenceTeacher:
             if tensor is not None:
                 values.update(zip((prefix+x for x in suffixes), tensor.reshape(-1).tolist()))
         pose_fields = ('x', 'y', 'z', 'qw', 'qx', 'qy', 'qz')
+        for kind in ('prior', 'goal'):
+            ref = evidence.get('preparation_'+kind)
+            if ref is not None:
+                put('preparation_'+kind+'_root_', torch.cat((ref.body.pos_w, ref.body.quat_w), -1), pose_fields)
         put('measured_root_', torch.cat((s.root_pos_w[i], s.root_quat_w[i])), pose_fields)
         for kind in ('requested', 'attempted', 'accepted'):
             ref = row.get('accepted') if kind == 'accepted' else evidence.get(kind)
@@ -402,7 +409,8 @@ class ReferenceTeacher:
                 values[name] = evidence[name]
         values.update(invalid_streak=row['invalid_streak'], freeze_reason=int(freeze),
                       reference_valid=int(valid), diagnostic_only=int(diagnostic is not None),
-                      age=row['age'], body_age=row['body_age'], lift_age=row['lift_age'])
+                      age=row['age'], body_age=row['body_age'], lift_age=row['lift_age'],
+                      preparation_ready=int(valid and evidence.get('preparation_ready', False)))
         for name, value in values.items():
             data[0, TEACHER_DIAGNOSTIC_FIELDS.index(name)] = value
         return data
@@ -571,6 +579,10 @@ class ReferenceTeacher:
                 goal = PoseReference(BodyPose(choice.reference.body.pos_w, level), choice.reference.wheels_w)
                 work['goal'] = goal
                 ready = tracked and self._tracked(s, i, goal) and measured_com_ok and support_ready and self._quiet(s, i)
+                # Same decision, before the accepted reference is replaced. Capture
+                # alone is not readiness; rejected transactions cannot certify it.
+                evidence.update(preparation_prior=accepted, preparation_goal=goal,
+                                preparation_ready=ready and row['prepared'])
                 if ready and row['prepared'] and (diagnostic is None or diagnostic[1]):
                     work.update(phase=Phase.LIFT, age=0)
                     phase = Phase.LIFT

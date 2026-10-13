@@ -19,6 +19,40 @@ def near_state(batch=1, wheel=0):
     return s
 
 
+def test_same_decision_readiness_is_not_capture_or_predicted_margin():
+    from types import SimpleNamespace
+    from test_m1_teacher_probe_contract import probe
+    t=api(); s=near_state(); teacher=t.ReferenceTeacher()
+    s.com_pos_w[:,:2]=(s.wheel_pos_w[:,1,:2]+s.wheel_pos_w[:,2,:2])/2
+    out=teacher.diagnostic_step(s,active_wheel=0,lift=False)
+    assert teacher._rows[0]['prepared'] is True
+    names=t.TEACHER_DIAGNOSTIC_FIELDS
+    assert out.diagnostic[0,names.index('reference_valid')]==1
+    assert out.diagnostic[0,names.index('measured_com_margin_m')]<.01
+    assert out.diagnostic[0,names.index('candidate_com_margin_m')]>=.01
+    term=SimpleNamespace(_joint_names=t.M1_ASSET_JOINT_NAMES,process_actions=lambda action:None)
+    evidence=probe().ActionEvidence(term); evidence.begin(s,out,teacher,0.)
+    assert not evidence.pending[0].get('local_prepare_complete',False)
+    assert out.diagnostic[0,names.index('preparation_ready')]==0
+
+
+def test_measured_ready_is_same_decision_and_cleared_after_refusal_or_reset():
+    t=api(); s=near_state(); teacher=t.ReferenceTeacher()
+    for _ in range(16):
+        out=teacher.diagnostic_step(s,active_wheel=0,lift=False)
+        if out.diagnostic[0,t.TEACHER_DIAGNOSTIC_FIELDS.index('preparation_ready')]==1: break
+        s=feedback(s,teacher,replace(out,valid=torch.ones_like(out.valid)))
+    else: raise AssertionError('ideal measured fixture never became ready')
+    assert not out.valid.item() and not out.failure_locked.item()
+    q=s.leg_pos.clone(); q[:,0]=3.
+    invalid=teacher.diagnostic_step(advance(s,leg_pos=q),active_wheel=0,lift=False)
+    assert invalid.diagnostic[0,t.TEACHER_DIAGNOSTIC_FIELDS.index('reference_valid')]==0
+    assert invalid.diagnostic[0,t.TEACHER_DIAGNOSTIC_FIELDS.index('preparation_ready')]==0
+    reset=advance(s,episode_id=s.episode_id+1,reset_mask=torch.ones_like(s.reset_mask))
+    after=teacher.diagnostic_step(reset,active_wheel=0,lift=False)
+    assert after.diagnostic[0,t.TEACHER_DIAGNOSTIC_FIELDS.index('preparation_ready')]==0
+
+
 def feedback(s, teacher, out):
     """Ideal kinematic tracking, not physics or a crossing certificate."""
     t = api()
