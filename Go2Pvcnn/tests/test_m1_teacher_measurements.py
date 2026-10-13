@@ -5,6 +5,58 @@ import pytest
 import torch
 
 
+def test_actuation_snapshot_names_and_missing_api():
+    from ame_baseline import m1_teacher_adapter as adapter
+    from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES,M1_PLANNER_JOINT_NAMES
+    wrapper,_,_,_=fixture(batch=2); robot=wrapper.unwrapped.scene['robot']
+    robot.data.joint_vel=torch.arange(32,dtype=torch.float32).reshape(2,16)
+    robot.data.computed_torque=robot.data.joint_vel+100
+    robot.data.applied_torque=robot.data.joint_vel+200
+    result=adapter.read_actuation_evidence(robot)
+    assert result['joint_names']==M1_ASSET_JOINT_NAMES
+    assert result['leg_joint_names']==M1_PLANNER_JOINT_NAMES
+    assert torch.equal(result['joint_vel'],robot.data.joint_vel.flip(-1))
+    ids=[robot.joint_names.index(name) for name in M1_PLANNER_JOINT_NAMES]
+    assert torch.equal(result['leg_computed_effort'],robot.data.computed_torque[:,ids])
+    assert torch.equal(result['leg_applied_effort'],robot.data.applied_torque[:,ids])
+    assert result['sources']['leg_applied_effort']['api']=='robot.data.applied_torque'
+    assert result['sources']['leg_applied_effort']['kind']=='explicit_actuator_command'
+    assert result['sources']['leg_applied_effort']['unit']=='N m'
+    assert result['sources']['leg_applied_effort']['estimated'] is False
+    robot.data.joint_vel.zero_(); robot.data.computed_torque.zero_(); robot.data.applied_torque.zero_()
+    assert result['leg_applied_effort'].min()>100 and result['joint_vel'].max()>0
+    for name in ('joint_vel','computed_torque','applied_torque'):
+        old=getattr(robot.data,name); delattr(robot.data,name)
+        with pytest.raises(ValueError): adapter.read_actuation_evidence(robot)
+        setattr(robot.data,name,old)
+    robot.joint_names=robot.joint_names[:-1]+(robot.joint_names[0],)
+    with pytest.raises(ValueError): adapter.read_actuation_evidence(robot)
+
+
+@pytest.mark.parametrize('field',['joint_vel','computed_torque','applied_torque'])
+def test_actuation_nonfinite_leg_is_row_local_and_shape_rejected(field):
+    from ame_baseline.m1_teacher_adapter import read_actuation_evidence
+    from extension.parallelism.m1_kinematics import M1_PLANNER_JOINT_NAMES
+    wrapper,_,_,_=fixture(batch=2); robot=wrapper.unwrapped.scene['robot']
+    for name in ('joint_vel','computed_torque','applied_torque'): setattr(robot.data,name,torch.ones(2,16))
+    getattr(robot.data,field)[0,robot.joint_names.index(M1_PLANNER_JOINT_NAMES[0])]=float('nan')
+    assert read_actuation_evidence(robot)['valid'].tolist()==[False,True]
+    setattr(robot.data,field,torch.ones(2,15))
+    with pytest.raises(ValueError): read_actuation_evidence(robot)
+
+
+def test_terminal_evidence_is_pre_reset():
+    from ame_baseline.m1_teacher_adapter import read_actuation_evidence
+    wrapper,s,_,_=fixture(); robot=wrapper.unwrapped.scene['robot']
+    for name in ('joint_vel','computed_torque','applied_torque'): setattr(robot.data,name,torch.ones(1,16))
+    terminal=dict(episode_id=int(s.episode_id[0]),actuation=read_actuation_evidence(robot))
+    s.episode_id.add_(1)
+    for name in ('joint_vel','computed_torque','applied_torque'): getattr(robot.data,name).fill_(99)
+    assert terminal['episode_id']!=int(s.episode_id[0])
+    assert terminal['actuation']['joint_vel'].eq(1).all()
+    assert terminal['actuation']['leg_applied_effort'].eq(1).all()
+
+
 def test_mass_weighted_com_is_not_root_proxy():
     from ame_baseline.m1_teacher_measurements import mass_weighted_com
     com, valid = mass_weighted_com(torch.tensor([[[0., 0., 0.], [4., 0., 0.]]]),

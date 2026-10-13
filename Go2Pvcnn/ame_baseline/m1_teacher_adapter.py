@@ -11,6 +11,45 @@ from .m1_teacher_measurements import mass_weighted_com
 
 WHEEL_BODY_NAMES = tuple(name.replace('_JOINT', '_LINK') for name in M1_WHEEL_JOINT_NAMES)
 
+ACTUATION_SOURCES = {
+    'joint_vel': dict(api='robot.data.joint_vel',unit='rad/s',
+        kind='physx_joint_velocity',estimated=False,timing='end_control_step_pre_reset'),
+    'leg_computed_effort': dict(api='robot.data.computed_torque',unit='N m',
+        kind='explicit_actuator_command',estimated=False,timing='last_physics_substep_actuator_compute'),
+    'leg_applied_effort': dict(api='robot.data.applied_torque',unit='N m',
+        kind='explicit_actuator_command',estimated=False,timing='last_physics_substep_actuator_compute'),
+}
+
+
+@torch.no_grad()
+def read_actuation_evidence(robot):
+    """Owned named readback; explicit leg efforts are commands, not torque sensors.
+
+    Velocity is the end-step PhysX buffer. Effort buffers describe the final
+    actuator computation/write, whose damping input preceded that substep.
+    Optional implicit wheel effort estimates are deliberately omitted.
+    """
+    import copy
+    names=tuple(robot.joint_names)
+    if len(set(names))!=len(names): raise ValueError('duplicate articulation joint names')
+    assets=list(resolve_named_indices(names,M1_ASSET_JOINT_NAMES))
+    legs=list(resolve_named_indices(names,M1_PLANNER_JOINT_NAMES))
+    values=[]
+    for name in ('joint_vel','computed_torque','applied_torque'):
+        value=getattr(robot.data,name,None)
+        if (not isinstance(value,torch.Tensor) or value.ndim!=2
+                or value.shape[1]!=len(names) or not value.is_floating_point()):
+            raise ValueError(f'robot.data.{name} missing or invalid articulation shape/dtype')
+        if values and (value.shape!=values[0].shape or value.device!=values[0].device):
+            raise ValueError('actuation buffers disagree on batch/device')
+        values.append(value)
+    velocity=values[0][:,assets].clone()
+    computed=values[1][:,legs].clone(); applied=values[2][:,legs].clone()
+    valid=torch.isfinite(velocity).all(-1)&torch.isfinite(computed).all(-1)&torch.isfinite(applied).all(-1)
+    return dict(joint_names=M1_ASSET_JOINT_NAMES,joint_vel=velocity,
+        leg_joint_names=M1_PLANNER_JOINT_NAMES,leg_computed_effort=computed,
+        leg_applied_effort=applied,sources=copy.deepcopy(ACTUATION_SOURCES),valid=valid.clone())
+
 
 class ReferenceTeacherAdapter:
     """Does not step physics, update trackers, modify observations or own resets.

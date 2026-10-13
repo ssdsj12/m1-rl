@@ -22,12 +22,13 @@ SAMPLE_KEYS = {'env_id','episode_id','attempt_id','frame','sim_time','active_whe
     'teacher_input_frame','teacher_input_episode_id','teacher_input_sim_time',
     'teacher_action','executed_action','processed_targets','action_joint_names',
     'processed_target_joint_names','active_target','teacher_ages_after_decision','raw_joint_names','joints'}
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 TEACHER_SCOPES = ('flat-preparation','single-wheel','first-obstacle','transitions','course')
 APPLY_KEYS = {'schema_version','teacher_scope','failure_locked','student_demonstration_usable',
     'applied_targets','applied_target_joint_names','applied_substeps','action_process_count',
     'physics_decimation','action_matches_request','applied_target_valid','teacher_diagnostic',
-    'last_applied_leg_target','requested_processed_targets','action_default_joint_pos','action_target_dtype','teacher_executable'}
+    'last_applied_leg_target','requested_processed_targets','action_default_joint_pos','action_target_dtype','teacher_executable',
+    'actuation_evidence','feedback_context'}
 
 
 def validate_scope(scope, *, acceptance, active_wheel):
@@ -57,6 +58,185 @@ class FailureDiagnosticBound:
     def reset(self,row): self.counts.pop(row,None)
 
 
+class PreparationHoldCounter:
+    """Probe-only first ready sample plus five consecutive additional frames."""
+    def __init__(self): self.rows={}
+    def update(self,row,*,input_ready,output_ready,frame,episode_id):
+        old=self.rows.get(row)
+        if old and old[0]==episode_id and old[1]==frame: return old[2]>=6
+        ready=bool(input_ready and output_ready)
+        count=(old[2]+1 if old and old[0]==episode_id and old[1]+1==frame else 1) if ready else 0
+        self.rows[row]=(episode_id,frame,count)
+        return count>=6
+    def reset(self,row): self.rows.pop(row,None)
+
+
+def pose_context(reference):
+    if reference is None: return None
+    return dict(root=reference.body.pos_w[0].detach().clone().tolist()+
+        reference.body.quat_w[0].detach().clone().tolist(),wheels=reference.wheels_w[0].detach().clone().tolist())
+
+
+def observe_feedback_transactions(teacher):
+    """Read-only probe observer of the real bounded transaction's minimal inputs.
+
+    No alternate controller: the original bound method runs once unchanged.
+    Context is an owned JSON snapshot (not a reference to the mutable row).
+    """
+    teacher._probe_feedback_context={}
+    original=getattr(teacher,'_feedback_transaction',None)
+    if original is None: return  # CPU lifecycle fixture without a controller.
+    def observed(s,i,work,accepted,requested,q,branch,nominal,evidence):
+        take=lambda value:value.detach().clone().reshape(-1).tolist()
+        teacher._probe_feedback_context[i]=dict(accepted_before=pose_context(accepted),
+            retained_physical=pose_context(work.get('accepted')),
+            retained_command=pose_context(work.get('accepted_command')),
+            requested=pose_context(requested),q_seed=take(q),branch_q=take(branch),
+            measured_root=take(s.root_pos_w[i]),captured_yaw=take(work.get('yaw',q.new_zeros(1)))[0],
+            integral_before=take(work['feedback'].integral),output_before=take(work['feedback'].output),
+            active=bool(work['prepared'] and int(work['phase'])!=0),dt=float(s.dt[i]),
+            nominal_speed=take(nominal),last_applied_q=take(s.last_applied_leg_target[i]),
+            default_joint_pos=take(s.default_joint_pos[i]),
+            retained_q=take(teacher._rows[i]['last_q']) if teacher._rows[i].get('last_q') is not None else None,
+            retained_branch_q=take(teacher._rows[i]['branch_q']) if teacher._rows[i].get('branch_q') is not None else None)
+        return original(s,i,work,accepted,requested,q,branch,nominal,evidence)
+    teacher._feedback_transaction=observed
+
+
+@lru_cache(maxsize=1)
+def feedback_producer_class():
+    from ame_baseline.m1_reference_teacher import ReferenceTeacher
+    return ReferenceTeacher
+
+
+@lru_cache(maxsize=1024)
+def replay_feedback_transaction(context_json,config_json,dtype,phase):
+    """Cache only pure expected math for byte-identical complete inputs.
+
+    No sample validity, receipt, source, identity or artifact check is cached.
+    Different physical measurements/branch/reference inputs produce new solves.
+    """
+    import torch
+    from types import SimpleNamespace
+    from ame_baseline.m1_reference_teacher import ReferenceTeacher,TeacherConfig,LEG_COLUMNS
+    from ame_baseline.m1_teacher_feedback import FeedbackState,FeedbackConfig
+    from ame_baseline.m1_teacher_pose import BodyPose,PoseReference
+    context=json.loads(context_json); config=json.loads(config_json)
+    config['feedback']=FeedbackConfig(**config['feedback']); cfg=TeacherConfig(**config)
+    tensor=lambda value:torch.tensor([value],dtype=getattr(torch,dtype))
+    ref=lambda value:PoseReference(BodyPose(tensor(value['root'][:3]),tensor(value['root'][3:])),tensor(value['wheels']))
+    old=FeedbackState(tensor(context['integral_before']),tensor(context['output_before']))
+    state=SimpleNamespace(root_pos_w=tensor(context['measured_root']),dt=tensor([context['dt']]).reshape(1),
+        default_joint_pos=tensor(context['default_joint_pos']),last_applied_leg_target=tensor(context['last_applied_q']),
+        applied_target_valid=torch.tensor([True]))
+    work=dict(feedback=old,prepared=context['active'],phase=1,yaw=tensor([context['captured_yaw']]).reshape(1))
+    teacher=feedback_producer_class()(cfg); evidence={'requested':ref(context['requested'])}
+    solved,selected=teacher._feedback_transaction(state,0,work,ref(context['accepted_before']),
+        ref(context['requested']),tensor(context['q_seed']),tensor(context['branch_q']),
+        tensor(context['nominal_speed']),evidence)
+    valid=bool(solved.valid[0])
+    committed=FeedbackState((torch.zeros_like(selected) if phase==0 else selected) if valid else old.integral,
+        solved.output if valid else old.output)
+    accepted=solved.physical if valid else (ref(context['retained_physical']) if context['retained_physical'] else None)
+    command=solved.command if valid else (ref(context['retained_command']) if context['retained_command'] else None)
+    row=dict(feedback=committed,accepted=accepted,accepted_command=command,
+        last_q=tensor(context['retained_q']) if context['retained_q'] else None,
+        invalid_streak=0,age=0,body_age=0,lift_age=0)
+    from ame_baseline.m1_reference_teacher import encode_targets
+    from ame_baseline.m1_ame_contract import m1_action_targets
+    if valid:
+        action,executable=encode_targets(solved.command_ik.q,tensor(context['nominal_speed'])+solved.output[:,0,None],state.default_joint_pos)
+        row['last_q']=m1_action_targets(action,state.default_joint_pos)[:,LEG_COLUMNS]
+    else:
+        row['branch_q']=tensor(context['retained_branch_q']) if context['retained_branch_q'] else None
+        action,executable=teacher._fallback(state,0,row)
+    state.root_quat_w=tensor([1.,0.,0.,0.]); state.com_pos_w=tensor([0.,0.,0.])
+    expected=diagnostic_json(teacher._diagnostics(state,0,row,evidence,valid,0,None)[0].tolist())
+    return json.dumps(expected,sort_keys=True),tuple(action[0].tolist()),bool(executable)
+
+
+def verify_feedback_transaction(sample,cfg):
+    """Authenticate first/final/committed claims and the actual returned command."""
+    from ame_baseline.m1_reference_teacher import TEACHER_DIAGNOSTIC_INTEGER_FIELDS
+    try:
+        d=sample['teacher_diagnostic']; context=sample['feedback_context']
+        if context is None:
+            # No bounded transaction (reset/braking/safety/candidate refusal).
+            if (d['feedback_passes']!=0 or d['feedback_first_transaction_valid']!=0
+                    or d['reference_valid']!=0 or sample.get('teacher_valid',False)):
+                raise ValueError('missing transaction context')
+            if any(d[f'nominal_ik_residual_m_{i}'] is not None for i in range(4)):
+                raise ValueError('unbound nominal IK')
+            for kind,limit in (('integral_committed',(.02,.01,.01)),('output_committed',(.04,.02,.02))):
+                for axis,bound in zip('xyz',limit):
+                    if not math.isfinite(d[f'feedback_{kind}_{axis}']) or abs(d[f'feedback_{kind}_{axis}'])>bound+1e-7:
+                        raise ValueError('missing committed hold evidence')
+            return []
+        if sample['action_target_dtype'] not in ('float32','float64'): raise ValueError('invalid dtype')
+        expected_json,action,executable=replay_feedback_transaction(json.dumps(context,sort_keys=True),
+            json.dumps(asdict(cfg),sort_keys=True),sample['action_target_dtype'],sample['phase'])
+        expected=json.loads(expected_json)
+        checked=[name for name in expected if name.startswith(('feedback_','wheel_','command_requested_',
+            'command_attempted_','command_accepted_','nominal_ik_','ik_','attempted_','accepted_','requested_','last_applied_q_'))]
+        checked+=['reference_valid','backtrack_index']
+        # Accepted joint target is the final encoded target, not the mathematical predecoder q.
+        integer=set(TEACHER_DIAGNOSTIC_INTEGER_FIELDS)
+        for name in checked:
+            a,b=d[name],expected[name]
+            if a is None or b is None:
+                if a is not b: raise ValueError(name)
+            elif name in integer:
+                if type(a) is not int or a!=b: raise ValueError(name)
+            else:
+                # CPU replay and native CUDA DLS are independent arithmetic.
+                # These are audit roundoff allowances, not controller gates.
+                tolerance=2e-5 if '_q_' in name or 'ik_residual_m_' in name else 2e-6 if (
+                    '_root_' in name or '_wheel_' in name and not name.startswith('wheel_')) else 2e-7
+                if not math.isclose(a,b,rel_tol=2e-5,abs_tol=tolerance): raise ValueError(name)
+        decoded=decoded_request_targets(tuple(sample['teacher_action']),tuple(context['default_joint_pos']),sample['action_target_dtype'])
+        if list(decoded)!=sample['applied_targets']: raise ValueError('actual receipt')
+        from ame_baseline.m1_reference_teacher import LEG_COLUMNS
+        from ame_baseline.m1_ame_contract import M1_LEG_ACTION_SCALE_RAD,M1_WHEEL_ACTION_SCALE_RAD_S
+        from extension.parallelism.m1_kinematics import M1_WHEEL_RADIUS_M
+        # Only the independent CPU mathematical replay is approximate. The
+        # actual teacher request/process/all four apply receipts remain exact.
+        if not executable or any(not math.isclose(a,b,rel_tol=0.,abs_tol=(
+            2e-5/M1_LEG_ACTION_SCALE_RAD if i in LEG_COLUMNS else
+            2e-7/(M1_WHEEL_RADIUS_M*M1_WHEEL_ACTION_SCALE_RAD_S)))
+            for i,(a,b) in enumerate(zip(action,sample['teacher_action']))):
+            raise ValueError('final or fallback action')
+        return []
+    except (KeyError,TypeError,ValueError,RuntimeError,IndexError,AttributeError):
+        return ['bounded feedback transaction evidence mismatch']
+
+
+def actuation_snapshot(robot,row,*,env_id,episode_id,frame,sim_time):
+    from ame_baseline.m1_teacher_adapter import read_actuation_evidence
+    evidence=read_actuation_evidence(robot)
+    return {**{key:(value[row].detach().clone().tolist() if hasattr(value,'detach') else
+        list(value) if isinstance(value,tuple) else copy.deepcopy(value)) for key,value in evidence.items()},
+        'env_id':env_id,'episode_id':episode_id,'frame':frame,'sim_time':sim_time,
+        'effort_substep_index':3,'effort_compute_sim_time':sim_time-.005}
+
+
+def verify_actuation_evidence(sample):
+    from ame_baseline.m1_teacher_adapter import ACTUATION_SOURCES
+    from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES,M1_PLANNER_JOINT_NAMES
+    try:
+        e=sample['actuation_evidence']
+        if (e['joint_names']!=list(M1_ASSET_JOINT_NAMES) or e['leg_joint_names']!=list(M1_PLANNER_JOINT_NAMES)
+                or e['sources']!=ACTUATION_SOURCES or e['valid'] is not True
+                or any(e[k]!=sample[k] for k in ('env_id','episode_id','frame','sim_time'))
+                or e['effort_substep_index']!=3
+                or not math.isclose(e['effort_compute_sim_time'],sample['teacher_input_sim_time']+.015,abs_tol=1e-6)):
+            raise ValueError('actuation identity/source mismatch')
+        for key,width in (('joint_vel',16),('leg_computed_effort',12),('leg_applied_effort',12)):
+            if len(e[key])!=width or not all(isinstance(v,(int,float)) and not isinstance(v,bool) and math.isfinite(v) for v in e[key]):
+                raise ValueError('missing measured actuation')
+        return []
+    except (KeyError,TypeError,ValueError): return ['missing or invalid measured actuation evidence']
+
+
 class DiagnosticBatchGate:
     """Diagnostic-only stop latch; a peer interruption is not physical failure."""
     def __init__(self,acceptance): self.acceptance=acceptance; self.failure=None
@@ -67,6 +247,7 @@ class DiagnosticBatchGate:
             if sample.get(reason,False): return reason
         if sample.get('action_matches_request') is False or sample.get('applied_target_valid') is False:
             return 'action_evidence_invalid'
+        if sample.get('actuation_evidence',{}).get('valid') is False: return 'actuation_evidence_invalid'
         return None
 
     def latch(self,sample,step,reason,errors=None):
@@ -283,11 +464,14 @@ def verify_episode(record):
     samples = record.get('samples', [])
     from ame_baseline.m1_reference_teacher import TeacherConfig
     readiness_cfg=None
-    if record.get('teacher_scope')=='flat-preparation':
+    if redesigned:
         try:
             if set(record['teacher_config'])!=set(asdict(TeacherConfig())):
                 raise ValueError('incomplete readiness config')
-            readiness_cfg=TeacherConfig(**record['teacher_config'])
+            from ame_baseline.m1_teacher_feedback import FeedbackConfig
+            config=copy.deepcopy(record['teacher_config'])
+            config['feedback']=FeedbackConfig(**config['feedback'])
+            readiness_cfg=TeacherConfig(**config)
             if readiness_cfg.fingerprint!=record['teacher_hash']: raise ValueError('config hash mismatch')
         except (KeyError,TypeError,ValueError): errors.append('missing readiness configuration evidence')
     stage = record.get('stage')
@@ -324,9 +508,29 @@ def verify_episode(record):
                     legs=[targets[i] for i in resolve_named_indices(M1_ASSET_JOINT_NAMES,M1_PLANNER_JOINT_NAMES)]
                     if any(abs(q-p)>.05+1e-7 for q,p in zip(legs,sample['last_applied_leg_target'])):
                         errors.append('actual applied leg target exceeds 20ms slew')
-                from ame_baseline.m1_reference_teacher import TEACHER_DIAGNOSTIC_FIELDS
+                from ame_baseline.m1_reference_teacher import TEACHER_DIAGNOSTIC_FIELDS,TEACHER_DIAGNOSTIC_INTEGER_FIELDS
                 if set(sample['teacher_diagnostic'])!=set(TEACHER_DIAGNOSTIC_FIELDS):
                     errors.append('missing named teacher diagnostic schema')
+                if any(type(sample['teacher_diagnostic'].get(name)) is not int for name in TEACHER_DIAGNOSTIC_INTEGER_FIELDS):
+                    errors.append('invalid discrete teacher diagnostic evidence')
+                errors.extend(verify_actuation_evidence(sample))
+                if readiness_cfg is not None: errors.extend(verify_feedback_transaction(sample,readiness_cfg))
+                context=sample.get('feedback_context')
+                if context is not None:
+                    try:
+                        if (context['measured_root']!=sample['preparation_input']['root'][:3]
+                                or context['q_seed']!=sample['teacher_input_leg_pos']
+                                or context['default_joint_pos']!=sample['action_default_joint_pos']
+                                or context['last_applied_q']!=sample['last_applied_leg_target']
+                                or not math.isclose(context['dt'],.02,abs_tol=1e-7)):
+                            raise ValueError('context/input mismatch')
+                        if index>1:
+                            prior=samples[index-2]
+                            for kind in ('integral','output'):
+                                if any(not math.isclose(context[kind+'_before'][j],
+                                    prior['teacher_diagnostic'][f'feedback_{kind}_committed_{axis}'],abs_tol=2e-7)
+                                    for j,axis in enumerate('xyz')): raise ValueError('feedback state continuity')
+                    except (KeyError,TypeError,ValueError): errors.append('feedback context differs from real decision input')
                 diagnostic=sample['teacher_diagnostic']
                 if sample['teacher_valid'] and diagnostic.get('reference_valid')!=1:
                     errors.append('label disagrees with reference validity')
@@ -371,9 +575,15 @@ def verify_episode(record):
             errors.append('nonfinite physical measurement')
     terminal = record.get('terminal')
     if record.get('teacher_scope')=='flat-preparation':
+        hold=PreparationHoldCounter()
         for sample in samples:
-            if sample.get('scope_observation_complete') and (readiness_cfg is None or not preparation_observed(sample,readiness_cfg)):
+            ready=readiness_cfg is not None and preparation_observed(sample,readiness_cfg)
+            held=hold.update(sample['env_id'],input_ready=ready,output_ready=ready,
+                frame=sample['frame'],episode_id=sample['episode_id'])
+            if sample.get('scope_observation_complete') and not ready:
                 errors.append('preparation endpoint lacks same-decision input and post-action measured readiness')
+            if sample.get('scope_observation_complete') and not held:
+                errors.append('preparation endpoint lacks five additional consecutive ready frames')
         if record.get('end')=='scope_observed' and not samples[-1].get('scope_observation_complete'):
             errors.append('preparation endpoint not observed')
     if not same_json_evidence(terminal,samples[-1]): errors.append('missing or mismatched pre-reset terminal snapshot')
@@ -755,6 +965,8 @@ class ActionEvidence:
                     if hasattr(state,'last_applied_leg_target') else None,
                 teacher_diagnostic=diagnostic_json(output.diagnostic[row].tolist())
                     if hasattr(output,'diagnostic') else {},
+                feedback_context=copy.deepcopy(getattr(teacher,'_probe_feedback_context',{}).get(row)),
+                teacher_input_leg_pos=state.leg_pos[row].detach().clone().tolist() if hasattr(state,'leg_pos') else None,
                 active_target=int(output.active_target[row]),
                 preparation_input=readiness_measurement(state,row,sim_time),
                 teacher_recovery_stable_count=int(ages.get('stable',0)),
@@ -1179,6 +1391,8 @@ class NativeProbe:
         timeout=bool(env.termination_manager.time_outs[row])
         failure=bool(env.termination_manager.terminated[row]) or bool(self.inner_failed[row])
         action=self.action_evidence.row(row,float(env.sim.current_time))
+        action['actuation_evidence']=actuation_snapshot(self.robot,row,env_id=row,
+            episode_id=int(self.episode[row]),frame=int(self.frames[row]),sim_time=float(env.sim.current_time))
         action['preparation_output']=readiness_measurement(self.state(),row,float(env.sim.current_time))
         locked=bool(output.failure_locked[row]) if output is not None else False
         return dict(schema_version=SCHEMA_VERSION,teacher_scope=self.scope,
@@ -1321,6 +1535,8 @@ class NativeProbe:
                 for seed in (range(101,106) if acceptance else [101]):
                     self.env.seed(seed); self.set_stage(stage)
                     teacher=ReferenceTeacher(self.teacher_cfg)
+                    observe_feedback_transactions(teacher)
+                    preparation_hold=PreparationHoldCounter()
                     self.episode.fill_(wheel or 0); self.frames.zero_(); self.attempt.zero_()
                     self.bind_reset_identity(range(4))
                     self.failure_bound=FailureDiagnosticBound()
@@ -1328,6 +1544,7 @@ class NativeProbe:
                     batch_start=len(records)
                     required=[self.pairs(self.state().course_ids[i],self.state().required_wheels[i]) for i in range(4)]
                     def decide(state):
+                        teacher._probe_feedback_context={}
                         return teacher.step(state) if wheel is None else teacher.diagnostic_step(
                             state,active_wheel=wheel,lift=scope=='single-wheel')
                     # Initialize identity without executing an invalid RESET label.
@@ -1360,7 +1577,9 @@ class NativeProbe:
                             reference_valid=diagnostic.get('reference_valid')==1
                             local_complete=False
                             if scope=='flat-preparation':
-                                local_complete=preparation_observed(sample,self.teacher_cfg)
+                                ready=preparation_observed(sample,self.teacher_cfg)
+                                local_complete=preparation_hold.update(row,input_ready=ready,output_ready=ready,
+                                    frame=sample['frame'],episode_id=sample['episode_id'])
                             elif scope=='single-wheel':
                                 # Measured rise/unloading, then five real loaded, quiet
                                 # RESTORE observations. These are local evidence only.
