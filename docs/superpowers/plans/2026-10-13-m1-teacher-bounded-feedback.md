@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python、PyTorch、pytest、现有受约束IK、Isaac Lab/Sim、隔离候选目录。
 
-**Spec:** [已确认的补充规格](../specs/2026-10-13-m1-teacher-bounded-feedback-design.md)，同时读取其链接的原支撑/IK规格。用户已确认补充规格；本计划待审阅，执行方式沿用子代理。
+**Spec:** [已确认的补充规格](../specs/2026-10-13-m1-teacher-bounded-feedback-design.md)，同时读取其链接的原支撑/IK规格。用户已确认本计划直接继续修正，执行方式沿用子代理；[实施记录](../../../notes/log/2026-10-13-m1-teacher-bounded-feedback-implementation.md)。
 
 ## Global Constraints
 
@@ -101,12 +101,12 @@ probe `SCHEMA_VERSION=6`。已有TEACHER_DIAGNOSTIC_FIELDS追加命名字段：p
 - [ ] 备份并同步隔离candidate，记录逐文件SHA、Git ref、实际import来源；输出使用新目录，不覆盖v1/v2。运行一次原生合同，命令如下（cwd为候选Go2Pvcnn）：
 
 ```bash
-PYTHONPATH="$PWD:$PWD/rsl_rl" /opt/conda/envs/env_issacsim/bin/python scripts/probe_m1_teacher.py --candidate "$PWD" --python /opt/conda/envs/env_issacsim/bin/python --output /tmp/m1-feedback-contract-v3 --mode contract --headless --device cuda:0 --enable_cameras
+PYTHONPATH="$PWD:$PWD/rsl_rl" /opt/conda/envs/env_issacsim/bin/python scripts/probe_m1_teacher.py --candidate "$PWD" --python /opt/conda/envs/env_issacsim/bin/python --output "$PWD/m1-feedback-contract-v3" --mode contract --headless --device cuda:0 --enable_cameras
 ```
 
-- [ ] 合同通过且进程退出/GPU释放后依次运行同CLI：`--mode teacher --teacher-scope flat-preparation --diagnostic-steps 1000`（目录`/tmp/m1-feedback-flat-v3`）；随后single-wheel配`--active-wheel 0/1/2/3`各独立目录，再first-obstacle、transitions、course。每次只跑一个，前置实测未通过不跑后项。flat-preparation检查四个支撑准备且新增5帧保持，20s不延长。
+- [ ] 合同通过且进程退出/GPU释放后依次运行同CLI：`--mode teacher --teacher-scope flat-preparation --diagnostic-steps 1000`（候选内目录`$PWD/m1-feedback-flat-v3`）；随后single-wheel配`--active-wheel 0/1/2/3`各独立目录，再first-obstacle、transitions、course。每次只跑一个，前置实测未通过不跑后项。flat-preparation检查四个支撑准备且新增5帧保持，20s不延长。
 - [ ] 首关键失败立即停止后续scope，仅按原诊断最多5额外帧收尾；记录同env/attempt补偿→实际q/qd/effort→载荷/COM/位置→拒绝或碰撞链、饱和比例及GPU释放。不能按一次失败自作主张换增益或力矩方案；剩余修订预算已使用。
-- [ ] 仅全部局部与课程诊断通过，运行同CLI `--mode acceptance --teacher-scope course --diagnostic-steps 1000`，独立目录`/tmp/m1-feedback-acceptance-v3`；核对内部固定seed101–105各20、stage0/3各100完整预定分母。每项≥95/100且完整视频/实际receipt才Teacher A PASS；相关并行行数不冒充独立随机试验。失败/not_run如实保留。
+- [ ] 仅全部局部与课程诊断通过，运行同CLI `--mode acceptance --teacher-scope course --diagnostic-steps 1000`，候选内独立目录`$PWD/m1-feedback-acceptance-v3`；核对内部固定seed101–105各20、stage0/3各100完整预定分母。每项≥95/100且完整视频/实际receipt才Teacher A PASS；相关并行行数不冒充独立随机试验。失败/not_run如实保留。
 - [ ] 更新README/notes仅写现场事实，报告实际通过/阻挡、各阶段NOT_RUN和未解决Minor；检查旧PT/生产/物理均未变。保存证据后显式文件commit；按既有授权普通push `HEAD:refs/heads/10-13`并独立ls-remote核实，失败只报发布失败。不得stage旧watcher或无关历史文档，不force/改全局网络配置。
 - [ ] 到Teacher A即停，不运行BC/PPO；训练和自动监控保持暂停，后续教师撤除/学生学习按父计划另行执行。
 
@@ -115,5 +115,13 @@ PYTHONPATH="$PWD:$PWD/rsl_rl" /opt/conda/envs/env_issacsim/bin/python scripts/pr
 - [x] 规格1–4映射Task1/2；规格5映射Task3；规格6与预算映射Task4；退出、反饱和、真实执行及相关样本解释均有任务。
 - [x] 五类Review Focus均有具名反例；新函数/types在本计划定义，沿用接口名称已核对源码。
 - [x] 只新增外层位置反馈，不扩展物理、力矩控制、学生或reward功能；不把文档检查当算法测试。
-- [ ] 用户审阅本计划；沿用已选子代理执行，不重复询问执行方式。
-- [ ] 审阅后进入superpowers:subagent-driven-development，逐任务RED/GREEN和两阶段审查。
+- [x] 用户审阅并确认直接继续修正；沿用已选子代理执行，不重复询问执行方式。
+- [x] 已进入superpowers:subagent-driven-development，逐任务RED/GREEN和两阶段审查；完成状态以实施记录为准。
+
+## 2026-10-13 执行回执（覆盖上方计划勾选状态）
+
+- [x] Task1 a3a7635、Task2 2e5f214、Task3 6189861实现并通过任务审查；终审集中修复39a6590及限定复审关闭I1/M1/M2。
+- [x] CPU按[实施日志](../../../notes/log/2026-10-13-m1-teacher-bounded-feedback-implementation.md)记录真实RED/GREEN：聚合451pass/1fixture错误后11项补测，终修57及12项定向通过，不是全库重跑通过。
+- [x] Task4新候选原生合同通过；flat-preparation首次关键证据失败后停止、保存实际轨迹/视频并释放GPU。
+- [ ] 完整四腿准备/抬落/课程/Teacher A验收：NOT_RUN或BLOCKED，不以局部6帧ready替代。详见[原生记录](../../../notes/log/2026-10-13-m1-teacher-bounded-feedback-native.md)。
+- [x] BC/PPO未启动，生产/PD/物理/成功阈值未改，旧PT/轨迹保留；不自动追加原生修订。

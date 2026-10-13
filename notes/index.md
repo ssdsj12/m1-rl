@@ -1,5 +1,7 @@
 # TestPvcnnWithIsaacsim Notes Index
 
+最新2026-10-13：[有界反馈实现](log/2026-10-13-m1-teacher-bounded-feedback-implementation.md)及限定复审完成39a6590；[v3原生](log/2026-10-13-m1-teacher-bounded-feedback-native.md)合同通过，env0实际ready44–49，但反馈事务证据不一致触发停止，后续NOT_RUN。Teacher A BLOCKED，未抬腿/未BC/PPO/未生产部署。以下旧实施中状态仅为历史。
+
 最新[固定ABAD/8维实施](log/2026-10-12-m1-fixed-abad-eight-action-design.md)：用户最终fresh从0，撤销200迁移。399cf7b/235相关CPU/审查2项修复/5stage原生通过；11runtime逐SHA部署，新PID10660/run20-55-34实际0–3轮/8维/2048/loss有限。model0 CPU39有限模型/33新Adam(step20)/8正std/stage0/v3完整；TB10838/remote6006已指新run。固定目标非锁死，旧PT保留。下方暂停与200续训均历史。
 
 最新12:13UTC[空地200/500对比](log/2026-10-12-m1-stall-slip-design.md)：训练按用户要求已停止，监控PAUSED。相同初始观测/确定性推理/实测2秒，200前进.580m偏航.43度，500前进.123m偏航-74.42度并目标抖动/承重恶化。发现演示入口额外物理步进，隔离诊断去掉后退化仍在；生产未改，不据此断言碰撞惩罚唯一原因。下方6598运行记录为历史。

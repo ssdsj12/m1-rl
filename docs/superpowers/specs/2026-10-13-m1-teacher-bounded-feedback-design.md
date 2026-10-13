@@ -1,6 +1,6 @@
 # Teacher 有界跟踪补偿：设计补充
 
-日期：2026-10-13；工作分支 `10-13`；runtime 基线 `4f5a875`。用户已选择第一种“仅 Teacher 有界跟踪补偿”，并明确确认本书面规格（含轮速纠偏与数值边界）。[实施计划](../plans/2026-10-13-m1-teacher-bounded-feedback.md)待审阅，尚未实现。
+日期：2026-10-13；工作分支 `10-13`；runtime 基线 `4f5a875`。用户已选择第一种“仅 Teacher 有界跟踪补偿”，并明确确认本书面规格（含轮速纠偏与数值边界）与[实施计划](../plans/2026-10-13-m1-teacher-bounded-feedback.md)。当前实施与验证状态见[实施记录](../../../notes/log/2026-10-13-m1-teacher-bounded-feedback-implementation.md)，不能把软件实现当原生验收通过。
 
 关联：[原支撑/IK规格](2026-10-13-m1-support-ik-redesign-design.md)、[调查证据](../../../notes/log/2026-10-13-m1-support-tracking-diagnosis.md)、[T306](../../../notes/todo/T306-m1-ame-long-train-stability.md)。本补充覆盖原规格中“几何参考直接作为执行参考”和“准备阶段所有轮速恒零”的部分；其他约束保持。
 

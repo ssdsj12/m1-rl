@@ -1,5 +1,9 @@
 # M1 AME 越障学习
 
+## 2026-10-13 最新：Teacher 有界反馈候选（尚未通过验收）
+
+已实现X轮速/YZ虚拟位移有界反馈、双参考IK和真实执行证据。Ref39a6590经任务审查、整体修复及限定复审；原生合同通过。局部回放env0第44–49帧连续满足实际准备条件，但schema6反馈事务复核不一致，按约定立即停止后续scope；其他三行尚未ready。**尚未抬腿跨越，Teacher A仍BLOCKED，BC/PPO未启动。** PD/物理/成功门槛未放宽，生产及旧PT未动。详见[实施与CPU证据](notes/log/2026-10-13-m1-teacher-bounded-feedback-implementation.md)和[原生停止证据](notes/log/2026-10-13-m1-teacher-bounded-feedback-native.md)。
+
 ## 2026-10-13 工作分支：`10-13`
 
 当天候选与后续支撑姿态/IK重设计改用`10-13`，`10-12`保留历史。用户已确认统一坐标系的机身姿态目标、实测支撑准备和受约束IK架构，允许教师主动降低、前后和侧移机身，并已确认[书面规格](docs/superpowers/specs/2026-10-13-m1-support-ik-redesign-design.md)及[六项子代理实施计划](docs/superpowers/plans/2026-10-13-m1-support-ik-redesign.md)。Task1–5已在隔离候选实现，尚未部署、新原生验收或学生训练；当前教师仍未通过10cm完整验收。见[设计调查](notes/log/2026-10-13-m1-support-ik-redesign.md)。

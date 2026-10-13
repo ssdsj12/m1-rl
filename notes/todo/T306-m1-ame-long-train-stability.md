@@ -1,5 +1,7 @@
 # T306 M1 AME Long-Train Stability
 
+LATEST bounded-feedback v3 STOPPED：Last Feature Ref39a6590，任务及限定复审关闭I1/M1/M2；原生合同通过。flat-preparation env0真实ready44–49，事务证据复核不一致在49停止、同行最多54结束，无物理失败。其余wheel/抬落/越障/正式验收NOT_RUN，Teacher A BLOCKED；BC/PPO/生产/旧训练继续不动。native-verifier OPEN，继承abort审计Minor OPEN且不可BC。[实现](../log/2026-10-13-m1-teacher-bounded-feedback-implementation.md)、[冻结原生证据](../log/2026-10-13-m1-teacher-bounded-feedback-native.md)。
+
 ## Current State
 
 LATEST fixed-abad-eight-action DEPLOYED：用户最终fresh从0覆盖200迁移，新网络/Adam/std/stage0；399cf7b/235CPU/独立审查2项修复/原生1000env帧5stage通过。11runtime逐SHA部署，PID10660/run20-55-34实际0–3轮/loss有限/8维/2048；model0 CPU39有限模型/33Adam(step20)/8正std/v3/stage0完整，TB10838/remote6006核实。actual-learning OPEN，固定角非机械锁定，旧PT保留。[实施证据](../log/2026-10-12-m1-fixed-abad-eight-action-design.md)。
