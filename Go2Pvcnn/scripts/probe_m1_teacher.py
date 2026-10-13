@@ -234,6 +234,14 @@ def course_tile_coordinates(terrain,course):
     return course['centers_top']-origins[:,None,:]
 
 
+def configure_probe_rendering(cfg):
+    """Independent-row recordings cannot share DLSS temporal reconstruction."""
+    cfg.sim.render.antialiasing_mode='Off'
+    cfg.sim.render.enable_dlssg=False
+    return dict(antialiasing_mode=cfg.sim.render.antialiasing_mode,
+        enable_dlssg=cfg.sim.render.enable_dlssg,settle_render_frames=3)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--candidate', required=True)
@@ -259,6 +267,8 @@ def main():
         from ame_baseline.m1_teacher_profile import build_teacher_student_env_cfg
         from ame_baseline.ame_env_wrapper import AmeRslRlEnvWrapper
         cfg = build_teacher_student_env_cfg()
+        render_configuration=configure_probe_rendering(cfg)
+        (output/'render_configuration.json').write_text(json.dumps(render_configuration,indent=2),encoding='utf-8')
         cfg.scene.num_envs=4; cfg.sim.device=args.device; cfg.seed=101
         cfg.commands.base_velocity.debug_vis=False
         env = ManagerBasedRLEnv(cfg=cfg, render_mode='rgb_array')
@@ -465,14 +475,18 @@ class NativeProbe:
     def render_row(self,row,*,visible=True):
         import numpy as np
         robot=self.robot
+        before=float(self.env.sim.current_time)
         try:
             robot.set_visibility(False,env_ids=list(range(4)))
             if visible: robot.set_visibility(True,env_ids=[row])
             root=robot.data.root_pos_w[row].detach().cpu().numpy()
             self.env.sim.set_camera_view(eye=(root+np.array([2.,2.,1.4])).tolist(),target=root.tolist())
-            self.env.sim.render()
+            # Bounded render-only settling after visibility/camera changes.
+            # The probe disables temporal AA/frame generation before launch.
+            for _ in range(3): self.env.sim.render()
             rgb=self.env.render().copy()
             assert rgb.ndim==3 and rgb.shape[2]>=3 and np.isfinite(rgb).all()
+            assert math.isclose(before,float(self.env.sim.current_time),abs_tol=1e-8)
             return rgb[:,:,:3]
         finally:
             robot.set_visibility(True,env_ids=list(range(4)))
@@ -485,15 +499,24 @@ class NativeProbe:
         before=float(self.env.sim.current_time)
         for _ in range(3): self.render_row(0)
         visible=self.render_row(0); hidden=self.render_row(0,visible=False)
+        restored=self.render_row(0)
         difference=float(np.abs(visible.astype(float)-hidden.astype(float)).mean())
+        restored_difference=float(np.abs(restored.astype(float)-hidden.astype(float)).mean())
+        roundtrip_difference=float(np.abs(visible.astype(float)-restored.astype(float)).mean())
         assert visible.std()>2 and visible.max()>30, 'black or empty camera'
         assert difference>.05, 'robot visibility not reflected by renderer/Fabric'
+        assert restored_difference>.05, 'robot visibility did not restore after hiding'
+        assert roundtrip_difference<1., 'visible-hidden-visible render did not settle'
         assert math.isclose(before,float(self.env.sim.current_time),abs_tol=1e-8)
         imageio.imwrite(self.output/'video_warmup_visible.png',visible)
         imageio.imwrite(self.output/'video_warmup_hidden.png',hidden)
+        imageio.imwrite(self.output/'video_warmup_restored.png',restored)
         self.video_validated=True
         self.write('video_warmup.json',dict(nonblack=True,isolated_robot=True,
-            visibility_image_difference=difference,physics_time_unchanged=True))
+            visibility_image_difference=difference,restored_image_difference=restored_difference,
+            visible_roundtrip_difference=roundtrip_difference,physics_time_unchanged=True,
+            antialiasing_mode=self.env.cfg.sim.render.antialiasing_mode,
+            enable_dlssg=self.env.cfg.sim.render.enable_dlssg,settle_render_frames=3))
 
     def step(self, action):
         env=self.env

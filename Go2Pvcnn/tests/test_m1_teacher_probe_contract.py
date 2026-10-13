@@ -277,3 +277,20 @@ def test_course_coordinates_use_authored_tile_not_two_meter_spawn_offset():
     torch.testing.assert_close(actual,local,atol=3e-6,rtol=0)
     assert not torch.allclose(world-terrain.env_origins[:,None],local)
     torch.testing.assert_close(world,local+origins[3,1])  # geometry was not mutated
+
+
+def test_probe_render_configuration_disables_temporal_reconstruction_only():
+    from types import SimpleNamespace
+    module=probe()
+    assert hasattr(module,'configure_probe_rendering'), 'probe temporal rendering guard missing'
+    cfg=SimpleNamespace(sim=SimpleNamespace(dt=.005,render_interval=4,
+        physx=SimpleNamespace(solver_position_iteration_count=4,solver_velocity_iteration_count=2),
+        render=SimpleNamespace(antialiasing_mode='DLSS',enable_dlssg=True,enable_shadows=True)),decimation=4)
+    before=copy.deepcopy(cfg)
+    result=module.configure_probe_rendering(cfg)
+    assert result==dict(antialiasing_mode='Off',enable_dlssg=False,settle_render_frames=3)
+    assert cfg.sim.render.antialiasing_mode=='Off' and cfg.sim.render.enable_dlssg is False
+    assert cfg.sim.dt==before.sim.dt and cfg.decimation==before.decimation
+    assert cfg.sim.render_interval==before.sim.render_interval
+    assert vars(cfg.sim.physx)==vars(before.sim.physx)
+    assert cfg.sim.render.enable_shadows==before.sim.render.enable_shadows
