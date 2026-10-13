@@ -39,7 +39,16 @@ def episode(stage=3, seed=101, episode_id=0):
     count = 1000 if stage == 0 else 10
     for f in range(1, count+1):
         from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES
+        from ame_baseline.m1_reference_teacher import TEACHER_DIAGNOSTIC_FIELDS
         frames.append(dict(env_id=0, episode_id=episode_id, attempt_id=1, frame=f,
+            schema_version=3,teacher_scope='course',failure_locked=False,
+            student_demonstration_usable=True,applied_target_valid=True,
+            applied_targets=[0.]*16,applied_target_joint_names=list(M1_ASSET_JOINT_NAMES),
+            applied_substeps=[dict(index=i,targets=[0.]*16,sim_time=(f-1)*.02+i*.005,
+                write_seen=True,physics_seen=True) for i in range(4)],
+            action_process_count=1,physics_decimation=4,action_matches_request=True,
+            teacher_diagnostic={**{n:None for n in TEACHER_DIAGNOSTIC_FIELDS},
+                'reference_valid':1,'diagnostic_only':0},last_applied_leg_target=[0.]*12,
             teacher_input_frame=f-1,teacher_input_episode_id=episode_id,teacher_input_sim_time=(f-1)*.02,
             teacher_action=[0.]*16,executed_action=[0.]*16,processed_targets=[0.]*16,
             action_joint_names=list(M1_ASSET_JOINT_NAMES),processed_target_joint_names=list(M1_ASSET_JOINT_NAMES),
@@ -51,7 +60,7 @@ def episode(stage=3, seed=101, episode_id=0):
             root=[f*.006,0.,.62,1.,0.,0.,0.,.3,0.,0.,0.,0.,0.],
             far_side_recovery=required if f == count and stage else [],
             receipt=required if f == count and stage else []))
-    return dict(stage=stage, seed=seed, env_id=0, episode_id=episode_id,
+    return dict(schema_version=3,teacher_scope='course',stage=stage, seed=seed, env_id=0, episode_id=episode_id,
         raw_joint_names=list(M1_ASSET_JOINT_NAMES),
         required=required if stage else [], samples=frames, end='task_complete' if stage else 'flat_horizon',
         timeout=stage == 0, natural_done=stage == 0,
@@ -325,13 +334,7 @@ def test_action_evidence_freezes_real_processed_values_before_row_reset():
     from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES
     module=probe()
     assert hasattr(module,'ActionEvidence'), 'pre-reset executed action observer missing'
-    term=SimpleNamespace(_joint_names=M1_ASSET_JOINT_NAMES,processed_actions=torch.zeros(2,16))
-    calls=[]
-    def process(action):
-        calls.append(action.clone()); term.processed_actions.copy_(action+7.)
-        return 'original-result'
-    term.process_actions=process
-    evidence=module.ActionEvidence(term)
+    term,asset,clock,evidence,calls=applied_fixture()
     state=SimpleNamespace(control_step=torch.tensor([37,91]),episode_id=torch.tensor([0,4]))
     output=SimpleNamespace(action=torch.full((2,16),.3),active_target=torch.tensor([9900,9901]))
     teacher=SimpleNamespace(_rows=[dict(age=2,body_age=3,lift_age=2),dict(age=9)])
@@ -339,12 +342,14 @@ def test_action_evidence_freezes_real_processed_values_before_row_reset():
     with pytest.raises(AssertionError,match='processed'):
         evidence.row(0,10.02)
     executed=output.action.clamp(-.2,.2)
-    assert term.process_actions(executed)=='original-result'
+    term.process_actions(executed)
+    for i in range(4):
+        term.apply_actions(); evidence.observe_write(); evidence.observe_physics(); clock.current_time+=.005
     terminal=evidence.row(0,10.02)
     # Natural reset can clear/reuse all live buffers; snapshots stay old-episode.
     term.processed_actions.zero_(); executed.zero_(); output.action.zero_()
     state.control_step.zero_(); state.episode_id.zero_(); teacher._rows[0]['lift_age']=99
-    assert len(calls)==1
+    assert calls.count('process')==1
     assert terminal==evidence.row(0,10.02)
     assert terminal['teacher_input_frame']==37 and terminal['teacher_input_episode_id']==0
     assert terminal['executed_action']==pytest.approx([.2]*16)
@@ -385,3 +390,228 @@ def test_raw_joint_snapshot_preserves_actual_order_and_old_buffers():
     result=module.raw_joint_snapshot(robot,0)
     robot.joint_names.reverse(); robot.data.joint_pos.zero_()
     assert result==dict(raw_joint_names=['rear_knee','front_abad','wheel'],joints=[1.,2.,3.])
+
+
+def applied_fixture(decimation=4):
+    import torch
+    from types import SimpleNamespace
+    from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES
+    names=list(reversed(M1_ASSET_JOINT_NAMES))
+    asset=SimpleNamespace(joint_names=names,data=SimpleNamespace(
+        joint_pos_target=torch.full((2,16),-3.),joint_vel_target=torch.full((2,16),-4.)))
+    term=SimpleNamespace(_joint_names=M1_ASSET_JOINT_NAMES,_asset=asset,
+        processed_actions=torch.zeros(2,16),raw_actions=torch.zeros(2,16))
+    events=[]
+    def process(action):
+        events.append('process'); term.raw_actions.copy_(action); term.processed_actions.copy_(action+7.)
+    def apply():
+        events.append('apply')
+        for col,name in enumerate(term._joint_names):
+            buf=asset.data.joint_vel_target if 'FOOT' in name else asset.data.joint_pos_target
+            buf[:,names.index(name)]=term.processed_actions[:,col]
+    term.process_actions=process; term.apply_actions=apply
+    clock=SimpleNamespace(current_time=10.)
+    evidence=probe().ActionEvidence(term,decimation=decimation,sim_time=lambda:clock.current_time)
+    return term,asset,clock,evidence,events
+
+
+def test_apply_evidence_precedes_physics_and_survives_reset():
+    import torch
+    from types import SimpleNamespace
+    term,asset,clock,evidence,events=applied_fixture()
+    state=SimpleNamespace(control_step=torch.tensor([37,91]),episode_id=torch.tensor([0,4]),
+        last_applied_leg_target=torch.full((2,12),-3.),applied_target_valid=torch.ones(2,dtype=torch.bool))
+    output=SimpleNamespace(action=torch.full((2,16),.3),active_target=torch.tensor([9,10]))
+    evidence.begin(state,output,SimpleNamespace(_rows=[{},{}]),10.)
+    term.process_actions(output.action)
+    for i in range(4):
+        term.apply_actions(); evidence.observe_write(); evidence.observe_physics()
+        clock.current_time+=.005
+    old=evidence.row(0,10.02)
+    asset.data.joint_pos_target.zero_(); term.processed_actions.zero_()
+    state.episode_id.fill_(100)
+    assert old==evidence.row(0,10.02)
+    assert events==['process']+['apply']*4
+    assert old['applied_targets']==pytest.approx([7.3]*16)
+    assert old['teacher_input_episode_id']==0
+    assert all(x['write_seen'] and x['physics_seen'] for x in old['applied_substeps'])
+
+
+def test_wrapper_changed_target_rejects_label():
+    e=episode(); e['samples'][2]['action_matches_request']=False
+    assert not probe().verify_episode(e)['success']
+    assert not probe().verify_episode(e)['student_demonstration_usable']
+
+
+def test_locked_failure_counts_in_suite_denominator():
+    e=episode(); e['end']='teacher_failure_locked'; e['samples'][-1]['failure_locked']=True
+    e['terminal']=copy.deepcopy(e['samples'][-1])
+    assert probe().verify_episode(e)['complete']
+    result=probe().verify_suite([e])
+    assert result['counted_episodes']==1 and result['locked_failures']==1
+    bound=probe().FailureDiagnosticBound()
+    assert [bound.update(0,True) for _ in range(7)]==[False]*5+[True,True]
+
+
+@pytest.mark.parametrize('scope',['flat-preparation','single-wheel','first-obstacle','transitions'])
+def test_local_scope_cannot_claim_course_success(scope):
+    e=episode(); e['teacher_scope']=scope
+    assert not probe().verify_episode(e)['success']
+    with pytest.raises(ValueError,match='course'):
+        probe().validate_scope(scope,acceptance=True,active_wheel=None)
+
+
+def test_reset_bootstrap_reads_real_buffers_without_step_or_nonreset_mutation():
+    import torch
+    term,asset,clock,evidence,events=applied_fixture()
+    term.process_actions(torch.full((2,16),.2)); term.apply_actions()
+    before=asset.data.joint_pos_target[1].clone(); processed=term.processed_actions[1].clone()
+    record=evidence.bootstrap_reset(torch.tensor([True,False]))
+    assert clock.current_time==10. and events==['process','apply','process','apply']
+    assert torch.equal(before,asset.data.joint_pos_target[1])
+    assert torch.equal(processed,term.processed_actions[1])
+    assert record['rows']==[0] and record['physics_steps']==0
+    assert record['applied_targets'][0]==pytest.approx([7.]*16)
+    target,valid=evidence.prior_leg_targets()
+    assert target[0].tolist()==pytest.approx([7.]*12) and valid.tolist()==[True,True]
+
+
+def test_missing_video_or_hash_fails_acceptance():
+    e=episode(); e['video'].pop('sha256')
+    assert not probe().verify_episode(e)['success']
+
+
+def test_old_schema_readable_without_new_field_fabrication():
+    e=episode(); e.pop('schema_version')
+    result=probe().verify_episode(e)
+    assert not result['success'] and 'legacy schema lacks actual apply evidence' in result['errors']
+
+
+def test_failed_early_attempt_stays_in_fixed_200_episode_denominator():
+    records=[episode(stage,seed,n) for stage in (0,3) for seed in range(101,106) for n in range(20)]
+    failed=records[-1]; failed['end']='teacher_failure_locked'
+    failed['samples'][-1]['failure_locked']=True
+    failed['samples'][2]['last_applied_leg_target']=[10.]*12
+    failed['terminal']=copy.deepcopy(failed['samples'][-1])
+    result=probe().verify_suite(records)
+    assert result['complete_full_denominator'] is True
+    assert result['counted_episodes']==200 and result['locked_failures']==1
+    assert result['stage3_success']==99
+    assert result['milestone_a']=='FAIL'  # corrupted evidence never passes acceptance
+
+
+@pytest.mark.parametrize('mutation',[
+    lambda s:s.pop('applied_substeps'),
+    lambda s:s['applied_substeps'].pop(),
+    lambda s:s['applied_substeps'][2].update(physics_seen=False),
+    lambda s:s['applied_substeps'][2].update(write_seen=False),
+    lambda s:s['applied_substeps'][2].update(targets=[1.]*16),
+    lambda s:s['applied_substeps'][2].update(sim_time=s['sim_time']),
+    lambda s:s.update(action_process_count=2),
+    lambda s:s.update(applied_targets=[1.]*16),
+    lambda s:s.update(last_applied_leg_target=[1.]*12),
+    lambda s:s.update(teacher_diagnostic={}),
+])
+def test_actual_apply_contract_rejects_missing_or_inconsistent_substep_evidence(mutation):
+    e=episode(); mutation(e['samples'][2])
+    assert not probe().verify_episode(e)['success']
+
+
+def test_bootstrap_preserves_old_terminal_and_resets_multiple_rows():
+    import torch
+    from types import SimpleNamespace
+    term,asset,clock,evidence,events=applied_fixture()
+    state=SimpleNamespace(control_step=torch.tensor([2,8]),episode_id=torch.tensor([3,4]))
+    output=SimpleNamespace(action=torch.full((2,16),.2),active_target=torch.tensor([1,2]))
+    evidence.begin(state,output,SimpleNamespace(_rows=[{},{}]),10.)
+    term.process_actions(output.action)
+    for i in range(4):
+        term.apply_actions(); evidence.observe_write(); evidence.observe_physics(); clock.current_time+=.005
+    terminal=evidence.row(0,10.02)
+    record=evidence.bootstrap_reset(torch.tensor([True,True]))
+    assert record['rows']==[0,1] and record['physics_steps']==0
+    assert evidence.row(0,10.02)==terminal
+    assert terminal['applied_targets']==pytest.approx([7.2]*16)
+    assert evidence.read_targets()[0].tolist()==pytest.approx([7.]*16)
+    assert events.count('process')==2 and events.count('apply')==5
+
+
+def test_bootstrap_aborts_if_actual_buffer_differs_from_processed_request():
+    import torch
+    term,asset,clock,evidence,events=applied_fixture()
+    term.apply_actions=lambda:asset.data.joint_pos_target.zero_()
+    with pytest.raises(RuntimeError,match='readback mismatch'):
+        evidence.bootstrap_reset(torch.tensor([True,True]))
+
+
+def test_bootstrap_aborts_if_nonreset_processed_or_actual_buffers_change():
+    import torch
+    term,asset,clock,evidence,events=applied_fixture()
+    term.process_actions(torch.full((2,16),.2)); term.apply_actions()
+    term.raw_actions[1]=1.  # actual previous request/processed evidence inconsistent
+    with pytest.raises(RuntimeError,match='non-reset processed'):
+        evidence.bootstrap_reset(torch.tensor([True,False]))
+
+
+def test_diagnostic_json_has_named_fields_and_preserves_missing_as_null():
+    from ame_baseline.m1_reference_teacher import TEACHER_DIAGNOSTIC_FIELDS,TEACHER_DIAGNOSTIC_INTEGER_FIELDS
+    values=[float('nan')]*len(TEACHER_DIAGNOSTIC_FIELDS)
+    values[TEACHER_DIAGNOSTIC_FIELDS.index('reference_valid')]=1.
+    result=probe().diagnostic_json(values)
+    assert result['reference_valid']==1 and type(result['reference_valid']) is int
+    assert result['com_x'] is None and set(result)==set(TEACHER_DIAGNOSTIC_FIELDS)
+
+
+def test_apply_target_change_between_write_and_physics_is_rejected():
+    import torch
+    from types import SimpleNamespace
+    term,asset,clock,evidence,events=applied_fixture()
+    state=SimpleNamespace(control_step=torch.tensor([0,0]),episode_id=torch.tensor([0,0]))
+    output=SimpleNamespace(action=torch.zeros(2,16),active_target=torch.tensor([0,0]))
+    evidence.begin(state,output,SimpleNamespace(_rows=[{},{}]),10.)
+    term.process_actions(output.action); term.apply_actions(); evidence.observe_write()
+    asset.data.joint_pos_target.fill_(99.)
+    with pytest.raises(AssertionError,match='before physics'):
+        evidence.observe_physics()
+
+
+def test_scope_schedule_preserves_original_stage_and_uses_all_preparation_wheels():
+    module=probe()
+    assert module.teacher_schedule('flat-preparation',None)==[(0,0),(0,1),(0,2),(0,3)]
+    assert module.teacher_schedule('single-wheel',2)==[(0,2)]
+    assert module.teacher_schedule('first-obstacle',None)==[(3,None)]
+    assert module.teacher_schedule('transitions',None)==[(3,None)]
+    assert module.teacher_schedule('course',None)==[(0,None),(3,None)]
+
+
+@pytest.mark.parametrize('mutation',[
+    lambda s:s['teacher_diagnostic'].update(reference_valid=0),
+    lambda s:s['teacher_diagnostic'].update(diagnostic_only=1),
+    lambda s:s.update(teacher_scope='single-wheel'),
+])
+def test_label_must_agree_with_named_reference_valid_and_scope(mutation):
+    e=episode(); mutation(e['samples'][2])
+    assert not probe().verify_episode(e)['success']
+
+
+def test_empty_failed_attempt_counts_without_becoming_complete_evidence():
+    e=episode(); e['samples']=[]; e['terminal']=None
+    result=probe().verify_suite([e])
+    assert result['counted_episodes']==1 and result['complete_episodes']==0
+    assert result['milestone_a']=='FAIL'
+
+
+def test_bootstrap_preserves_bit_pattern_of_nonreset_actual_buffers():
+    import torch
+    term,asset,clock,evidence,events=applied_fixture()
+    term.process_actions(torch.full((2,16),.2)); term.apply_actions()
+    # Irrelevant velocity buffer of a leg must also be bit-identical. IEEE
+    # signed zeros compare equal numerically but are not an unchanged buffer.
+    index=asset.joint_names.index('FBL_ABAD_JOINT')
+    asset.data.joint_vel_target[1,index]=-0.
+    previous=term.apply_actions
+    def changed():
+        previous(); asset.data.joint_vel_target[1,index]=0.
+    term.apply_actions=changed
+    with pytest.raises(RuntimeError,match='non-reset actual target buffers'):
+        evidence.bootstrap_reset(torch.tensor([True,False]))

@@ -2,7 +2,9 @@
 
 ## 2026-10-13 工作分支：`10-13`
 
-当天候选与后续支撑姿态/IK重设计改用`10-13`，`10-12`保留历史。用户已确认统一坐标系的机身姿态目标、实测支撑准备和受约束IK架构，允许教师主动降低、前后和侧移机身，并已确认[书面规格](docs/superpowers/specs/2026-10-13-m1-support-ik-redesign-design.md)。[六项子代理实施计划](docs/superpowers/plans/2026-10-13-m1-support-ik-redesign.md)已自审、待用户审阅。当前教师仍未通过10cm验收，重设计未实现/部署，未开始学生训练；不改变机器人PD/物理或放宽成功判据。见[设计调查](notes/log/2026-10-13-m1-support-ik-redesign.md)。
+当天候选与后续支撑姿态/IK重设计改用`10-13`，`10-12`保留历史。用户已确认统一坐标系的机身姿态目标、实测支撑准备和受约束IK架构，允许教师主动降低、前后和侧移机身，并已确认[书面规格](docs/superpowers/specs/2026-10-13-m1-support-ik-redesign-design.md)及[六项子代理实施计划](docs/superpowers/plans/2026-10-13-m1-support-ik-redesign.md)。Task1–5已在隔离候选实现，尚未部署、新原生验收或学生训练；当前教师仍未通过10cm完整验收。见[设计调查](notes/log/2026-10-13-m1-support-ik-redesign.md)。
+
+Task5探针schema3按关节名读取每个物理子步真实apply目标，核验一次process、四次apply/write/physics与20ms时序；reset后单独通过真实process/apply初始化命令缓冲并回读，不增加物理步、也不作为示范标签。新增`--teacher-scope`分级诊断与锁定失败最多额外5步收尾，局部scope不能正式验收。冻结run2输入49→输出50因缺真实关节名明确拒绝；run3输入57→输出58只比较实测轮锚点几何，缺COM/上一实际执行目标/旧被拒绝参考，不能称完整新教师反事实或物理成功。CPU结果与限制见[Task5记录](notes/log/2026-10-13-m1-support-ik-redesign.md#task5cpu证据与冻结几何)。
 
 本仓库研究 M1 轮足机器人在 Isaac Lab 中的越障学习。2026-10-13 用户批准的新路线为：16维教师示范预训练、完全撤除教师、无教师验收后接续 AME + PPO。该路线目前仅在隔离候选目录实施与验收，尚未部署或启动学生训练；旧训练与自动监控保持暂停。历史纯 PPO 入口为 [`train_m1_cross_large_complex_ame.py`](Go2Pvcnn/scripts/train_m1_cross_large_complex_ame.py)，启动包装为 [`run_m1_pure_ppo.sh`](Go2Pvcnn/scripts/run_m1_pure_ppo.sh)，不得直接用旧入口恢复新方案。
 

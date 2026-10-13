@@ -54,3 +54,13 @@ run3四个10cm回合仍未进入LIFT，先IK_INVALID58/59，再unsafe87；无rec
 用户再次回复“确认”，本轮将书面规格标为已批准，并形成六项计划：真实测量/执行目标、受约束IK、机身参考、状态提交、诊断证据、分级原生验收。沿用已指定子代理方式，每项先RED/GREEN后规格与质量审查；主代理独占GPU调度。计划明确当前host/candidate/Python和实际apply目标来源，未读取或修改全局配置。
 
 Baseline Ref：`cb6fde98452efd8fb076eddbd1c8f4fc654ee971`（已独立确认远端10-13）。本轮仅计划/规格状态/README变更；Key Files为`docs/superpowers/plans/2026-10-13-m1-support-ik-redesign.md`与对应spec。Last Feature/Verified Ref不变。文档检查为相对链接、占位符、diff及规格覆盖，不是CPU控制测试。按writing-plans要求等待计划审阅，不重复询问执行方式；原生A未通过仍不允许学生训练。
+
+## Task5：CPU证据与冻结几何
+
+基线`fd63472`，工作分支`10-13`。Task5只实现候选探针/冻结几何CLI及其CPU测试，未启动Isaac/native/GPU、未修改生产/训练/PD/场景、未删除旧PT。旧dirty notes/watchers保留。主控裁定允许probe-only reset-command bootstrap：真实动作process/apply后读取实际position/velocity目标，非reset行processed及全部actual缓冲逐位不变；事件单独计数、零额外物理步，不能作为执行完成/BC证据。新回合身份只在runner赋值时绑定；旧terminal/process/apply快照独立保留。
+
+schema3记录一次process与实际decimation四次apply目标，每个子步核验scene write和physics前目标一致，输入/执行身份、20ms、上一真实腿目标/.05rad连续性、命名176列诊断、failure_locked、视频与trace SHA。旧schema仍可解析，但缺新证据不能补造为成功示范。早停失败仍计固定200尝试分母；证据不完整不通过验收。局部scope仅诊断，不移除目标/填充/required集合、不直接摆姿态。完整course仍原20s平地及10cm/16receipt合同。
+
+冻结CLI：`scripts/replay_m1_teacher_geometry.py --trace PATH --frames 49,57 --output PATH`。本次分别选run2输入49/输出50与run3输入57/输出58；本地原件与候选原件SHA一致。run2 SHA `f4e5f48bee9c06d0c99bc0eecb92111c0d86fe86d6bc09f3c9ef57aeeb55ef47`，明确拒绝缺`raw_joint_names`，未注入历史交叉推断的映射。run3 SHA `d96c9d35973f33778355593cda4781f8202d67f657ed7c63271ec42c1f7f9584`，按真实raw名字提取实角，仅比较记录processed目标FK和实测world轮锚点经完整实测root变换的body目标；后者四腿残差分别`.000247325496/.000200416804/.000199861048/.000199913183m`，理由均OK/迭代0。旧processed目标可能是fallback，不能恢复旧被拒绝请求；缺COM、真实prior-target、捕获锚点及旧拒绝参考，明确拒绝完整新状态机重放。几何输出的physical_success/full_teacher_replay/student_demonstration_usable均false。
+
+CPU RED先出现12 failed/69 passed（含wrapper目标不符/局部scope误判成功/锁定早停分母/旧schema标签反例），随后有界自审补齐write→physics间目标变化、命名reference_valid/diagnostic_only矛盾、空失败轨迹统计、非reset缓冲signed-zero位变化。最终相关335 passed/55.42s，最后逐位processed比较改动后focused103 passed/29.15s。详细结果见Task5报告（`.superpowers/sdd/2026-10-13-m1-support-ik-redesign/task-5-report.md`，该工作报告不发布为仓库文档）。尚未证明实际reset bootstrap与native actuator接口、四轮分别抬落、10cm跨越或95/100；这些留给主控Task6串行原生验证。
