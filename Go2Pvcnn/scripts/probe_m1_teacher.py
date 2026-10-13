@@ -228,6 +228,12 @@ def cylinder_penetration_witness(pos,quat,centers_top,half_extents,radius=.0959,
     return (inside_xy & below_top).any(-1)
 
 
+def course_tile_coordinates(terrain,course):
+    """Authoring uses tile origins; reset spawn env_origins may be offset -2m."""
+    origins=terrain.terrain_origins[terrain.terrain_levels,terrain.terrain_types]
+    return course['centers_top']-origins[:,None,:]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--candidate', required=True)
@@ -427,19 +433,30 @@ class NativeProbe:
                 for obj in objects:
                     bounds=bbox.ComputeWorldBound(usd.GetPrimAtPath(obj.prim_path)).ComputeAlignedRange()
                     size=[float(bounds.GetMax()[k]-bounds.GetMin()[k]) for k in range(3)]
+                    for k in range(3):
+                        center=float((bounds.GetMax()[k]+bounds.GetMin()[k])/2)
+                        assert abs(center-obj.world_center[k])<2e-4, 'USD/grounded-record world center mismatch'
                     assert abs(size[2]-.10)<2e-4
                     if obj.required_crossing:
                         assert abs(size[0]-.10)<2e-4 and abs(size[1]-.18)<2e-4
                     actual.append(dict(id=obj.slot_index,center=list(obj.world_center),size=size,required=obj.required_crossing))
         if stage==3:
+            tile_centers=course_tile_coordinates(terrain,course)
             for row in range(4):
                 valid=course['valid'][row]
-                centers=course['centers_top'][row,valid]-self.env.scene.env_origins[row]
+                authored=sorted([r for r in records if r.row==stage and
+                    r.col==int(terrain.terrain_types[row]) and r.required_crossing],key=lambda r:r.slot_index)
+                world_top=t.tensor([[*obj.world_center[:2],obj.world_center[2]+obj.shape_params['size'][2]/2]
+                    for obj in authored],device=self.env.device)
+                t.testing.assert_close(course['centers_top'][row,valid],world_top,atol=2e-4,rtol=0)
+                centers=tile_centers[row,valid]
                 t.testing.assert_close(centers[:,0],t.arange(8,device=self.env.device)*1.1-1.2,atol=2e-4,rtol=0)
                 assert bool((centers[:,1].abs()-.215).abs().max()<2e-4)
                 assert bool((centers[:,2]-.10).abs().max()<2e-4)
         self.write(f'terrain_stage{stage}.json',dict(levels=terrain.terrain_levels.tolist(),
             types=terrain.terrain_types.tolist(),geometry=actual,course_ids=course['ids'].tolist(),
+            tile_origins=terrain.terrain_origins[terrain.terrain_levels,terrain.terrain_types].tolist(),
+            spawn_origins=self.env.scene.env_origins.tolist(),
             required=required.tolist(),sha256=digest(actual)))
         print('TERRAIN_CONTRACT '+json.dumps(dict(stage=stage,levels=terrain.terrain_levels.tolist(),
             types=terrain.terrain_types.tolist(),targets=8 if stage else 0,fill=70 if stage else 0,

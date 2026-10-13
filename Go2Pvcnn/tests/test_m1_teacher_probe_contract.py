@@ -260,3 +260,20 @@ def test_candidate_namespace_package_has_only_candidate_search_locations(tmp_pat
     namespace.__path__.append(str(tmp_path/'go2_pvcnn/sensor'))
     with pytest.raises(ValueError,match='outside candidate'):
         probe().loaded_candidate_modules(candidate)
+
+
+def test_course_coordinates_use_authored_tile_not_two_meter_spawn_offset():
+    import torch
+    from types import SimpleNamespace
+    module=probe()
+    assert hasattr(module,'course_tile_coordinates'), 'authored tile-frame extraction missing'
+    origins=torch.zeros(4,2,3); origins[3,1]=torch.tensor([48.,8.,0.])
+    terrain=SimpleNamespace(terrain_origins=origins,
+        terrain_levels=torch.tensor([3]),terrain_types=torch.tensor([1]),
+        env_origins=torch.tensor([[46.,8.,0.]]))
+    local=torch.tensor([[[-1.2+1.1*i,.215 if i%2==0 else -.215,.1] for i in range(8)]])
+    world=local+origins[3,1]
+    actual=module.course_tile_coordinates(terrain,{'centers_top':world})
+    torch.testing.assert_close(actual,local,atol=3e-6,rtol=0)
+    assert not torch.allclose(world-terrain.env_origins[:,None],local)
+    torch.testing.assert_close(world,local+origins[3,1])  # geometry was not mutated
