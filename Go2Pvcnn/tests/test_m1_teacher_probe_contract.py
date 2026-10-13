@@ -38,7 +38,12 @@ def episode(stage=3, seed=101, episode_id=0):
     frames = []
     count = 1000 if stage == 0 else 10
     for f in range(1, count+1):
+        from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES
         frames.append(dict(env_id=0, episode_id=episode_id, attempt_id=1, frame=f,
+            teacher_input_frame=f-1,teacher_input_episode_id=episode_id,teacher_input_sim_time=(f-1)*.02,
+            teacher_action=[0.]*16,executed_action=[0.]*16,processed_targets=[0.]*16,
+            action_joint_names=list(M1_ASSET_JOINT_NAMES),processed_target_joint_names=list(M1_ASSET_JOINT_NAMES),
+            active_target=0,teacher_ages_after_decision=dict(age=0,body_age=-1,lift_age=-1),
             sim_time=f*.02, active_wheel=0, Fz=[50.]*4, wheel_bottom=[0.]*4,
             obstacle_top=[.10]*8, collision=False, support_lost=False,
             penetration=False, failure=False, teacher_valid=True,
@@ -294,3 +299,61 @@ def test_probe_render_configuration_disables_temporal_reconstruction_only():
     assert cfg.sim.render_interval==before.sim.render_interval
     assert vars(cfg.sim.physx)==vars(before.sim.physx)
     assert cfg.sim.render.enable_shadows==before.sim.render.enable_shadows
+
+
+@pytest.mark.parametrize('change',[
+    lambda s:s.pop('executed_action'),
+    lambda s:s.update(processed_targets=[]),
+    lambda s:s.update(executed_action=[float('nan')]*16),
+    lambda s:s.update(teacher_input_frame=999),
+    lambda s:s.update(teacher_input_episode_id=999),
+    lambda s:s.update(teacher_input_sim_time=s['sim_time']),
+    lambda s:s.update(action_joint_names=list(reversed(s['action_joint_names']))),
+    lambda s:s.update(processed_target_joint_names=[]),
+    lambda s:s.pop('active_target'),
+])
+def test_action_evidence_is_required_and_tied_to_precontrol_identity(change):
+    e=episode(); change(e['samples'][2])
+    assert not probe().verify_episode(e)['success']
+
+
+def test_action_evidence_freezes_real_processed_values_before_row_reset():
+    import torch
+    from types import SimpleNamespace
+    from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES
+    module=probe()
+    assert hasattr(module,'ActionEvidence'), 'pre-reset executed action observer missing'
+    term=SimpleNamespace(_joint_names=M1_ASSET_JOINT_NAMES,processed_actions=torch.zeros(2,16))
+    calls=[]
+    def process(action):
+        calls.append(action.clone()); term.processed_actions.copy_(action+7.)
+        return 'original-result'
+    term.process_actions=process
+    evidence=module.ActionEvidence(term)
+    state=SimpleNamespace(control_step=torch.tensor([37,91]),episode_id=torch.tensor([0,4]))
+    output=SimpleNamespace(action=torch.full((2,16),.3),active_target=torch.tensor([9900,9901]))
+    teacher=SimpleNamespace(_rows=[dict(age=2,body_age=3,lift_age=2),dict(age=9)])
+    evidence.begin(state,output,teacher,10.)
+    with pytest.raises(AssertionError,match='processed'):
+        evidence.row(0,10.02)
+    executed=output.action.clamp(-.2,.2)
+    assert term.process_actions(executed)=='original-result'
+    terminal=evidence.row(0,10.02)
+    # Natural reset can clear/reuse all live buffers; snapshots stay old-episode.
+    term.processed_actions.zero_(); executed.zero_(); output.action.zero_()
+    state.control_step.zero_(); state.episode_id.zero_(); teacher._rows[0]['lift_age']=99
+    assert len(calls)==1
+    assert terminal==evidence.row(0,10.02)
+    assert terminal['teacher_input_frame']==37 and terminal['teacher_input_episode_id']==0
+    assert terminal['executed_action']==pytest.approx([.2]*16)
+    assert terminal['teacher_action']==pytest.approx([.3]*16)
+    assert terminal['processed_targets']==pytest.approx([7.2]*16)
+    assert terminal['action_joint_names']==list(M1_ASSET_JOINT_NAMES)
+    assert terminal['processed_target_joint_names']==list(M1_ASSET_JOINT_NAMES)
+    assert terminal['active_target']==9900
+    assert terminal['teacher_ages_after_decision']==dict(age=2,body_age=3,lift_age=2)
+    assert evidence.row(1,10.02)['teacher_input_episode_id']==4
+    with pytest.raises(AssertionError,match='20ms'):
+        evidence.row(0,10.04)
+    with pytest.raises(AssertionError,match='once'):
+        term.process_actions(executed)

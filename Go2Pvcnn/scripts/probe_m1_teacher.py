@@ -4,6 +4,7 @@ The pure verifier imports no simulator. Native entry imports AppLauncher before
 Isaac/pxr/omni. A diagnostic run can never report milestone A PASS.
 """
 import argparse
+import copy
 from collections import Counter
 from dataclasses import asdict
 import hashlib
@@ -17,7 +18,10 @@ from functools import lru_cache
 
 SAMPLE_KEYS = {'env_id','episode_id','attempt_id','frame','sim_time','active_wheel',
     'Fz','wheel_bottom','obstacle_top','collision','support_lost','penetration',
-    'failure','teacher_valid','far_side_recovery','receipt','root'}
+    'failure','teacher_valid','far_side_recovery','receipt','root',
+    'teacher_input_frame','teacher_input_episode_id','teacher_input_sim_time',
+    'teacher_action','executed_action','processed_targets','action_joint_names',
+    'processed_target_joint_names','active_target','teacher_ages_after_decision'}
 
 
 def digest(value):
@@ -44,6 +48,7 @@ def inspect_video(path, size, mtime_ns):
 def verify_episode(record):
     """Evidence validation and success are distinct; failures still count episodes."""
     errors = []
+    from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES
     samples = record.get('samples', [])
     stage = record.get('stage')
     if not samples or stage not in (0,3):
@@ -56,6 +61,16 @@ def verify_episode(record):
             errors.append('episode identity changed')
         if sample['frame'] != index or not math.isclose(sample['sim_time']-start_time, index*.02, abs_tol=1e-6):
             errors.append('not a contiguous 50Hz trajectory')
+        if (sample['teacher_input_frame']!=sample['frame']-1
+                or sample['teacher_input_episode_id']!=sample['episode_id']
+                or not math.isclose(sample['sim_time']-sample['teacher_input_sim_time'],.02,abs_tol=1e-6)):
+            errors.append('action not tied to precontrol identity/time')
+        if any(sample[key]!=list(M1_ASSET_JOINT_NAMES) for key in
+                ('action_joint_names','processed_target_joint_names')):
+            errors.append('action target joint order mismatch')
+        if any(len(sample[key])!=16 or not all(math.isfinite(x) for x in sample[key])
+                for key in ('teacher_action','executed_action','processed_targets')):
+            errors.append('missing or nonfinite action measurement')
         if len(sample['Fz'])!=4 or len(sample['wheel_bottom'])!=4 or len(sample['root'])!=13:
             errors.append('missing physical measurement dimensions')
         if not all(math.isfinite(x) for key in ('Fz','wheel_bottom','obstacle_top','root') for x in sample[key]):
@@ -293,6 +308,47 @@ def main():
         launcher.app.close()
 
 
+class ActionEvidence:
+    """Observe the actual term once, before physics and automatic row resets.
+
+    Teacher action is pre-wrapper; executed_action is the term's real input
+    (including any wrapper clipping). Targets are read back, never recomputed.
+    Their named order uses leg radians and wheel rad/s, as in the mixed term.
+    """
+    def __init__(self,term):
+        self.pending=None
+        self.names=list(term._joint_names)
+        original=term.process_actions
+        def process_hook(action):
+            if self.pending is not None:
+                assert self.processed is None, 'action term must process exactly once'
+            result=original(action)
+            if self.pending is not None:
+                self.executed=action.detach().clone().tolist()
+                self.processed=term.processed_actions.detach().clone().tolist()
+            return result
+        term.process_actions=process_hook
+
+    def begin(self,state,output,teacher,sim_time):
+        self.pending=[]; self.processed=None; self.executed=None
+        for row in range(len(state.episode_id)):
+            ages=teacher._rows[row] or {}
+            self.pending.append(dict(teacher_input_frame=int(state.control_step[row]),
+                teacher_input_episode_id=int(state.episode_id[row]),teacher_input_sim_time=float(sim_time),
+                teacher_action=output.action[row].detach().clone().tolist(),
+                active_target=int(output.active_target[row]),
+                teacher_ages_after_decision={key:int(ages.get(key,-1)) for key in ('age','body_age','lift_age')}))
+
+    def row(self,row,sim_time):
+        if self.pending is None: return {}  # Non-teacher contract fixture.
+        assert self.processed is not None, 'actual processed targets have not been observed'
+        result=copy.deepcopy(self.pending[row])
+        assert math.isclose(sim_time-result['teacher_input_sim_time'],.02,abs_tol=1e-6), 'sample must follow action by 20ms'
+        result.update(executed_action=list(self.executed[row]),processed_targets=list(self.processed[row]),
+            action_joint_names=list(self.names),processed_target_joint_names=list(self.names))
+        return result
+
+
 class NativeProbe:
     """Probe-only observers. Exactly one wrapper.step per 20ms sample."""
     def __init__(self, env, wrapper, output, candidate):
@@ -311,6 +367,7 @@ class NativeProbe:
         self.support_acquired=torch.zeros(4,dtype=torch.bool,device=env.device)
         self.inner_failed=torch.zeros_like(self.support_acquired)
         self.last_output=None; self.current_stage=0
+        self.action_evidence=ActionEvidence(env.action_manager.get_term('JointPositionAction'))
         self.tracker_calls=0; self.video_validated=False
         files={str(p.relative_to(candidate)):file_digest(p) for folder in CANDIDATE_DOMAINS
             for p in sorted((candidate/folder).rglob('*.py'))}
@@ -659,7 +716,7 @@ class NativeProbe:
             failure=failure,timeout=timeout,termination_terms=failures,budget={k:v[row].tolist() for k,v in snap.items()},
             receipt=self.pairs(ids,receipt),far_side_recovery=self.pairs(ids,receipt&far),
             root=self.robot.data.root_state_w[row].tolist(),joints=self.robot.data.joint_pos[row].tolist(),
-            course_ids=ids.tolist())
+            course_ids=ids.tolist(),**self.action_evidence.row(row,float(env.sim.current_time)))
 
     def begin_video(self,row,seed,stage):
         import imageio.v2 as imageio
@@ -725,7 +782,10 @@ class NativeProbe:
                     self.frames.zero_()
                     for row in range(4): self.begin_video(row,seed,stage)
                     while self.recording:
-                        self.last_output=teacher.step(self.state())
+                        input_time=float(self.env.sim.current_time)
+                        input_state=self.state()
+                        self.last_output=teacher.step(input_state)
+                        self.action_evidence.begin(input_state,self.last_output,teacher,input_time)
                         command=self.env.command_manager.get_command('base_velocity')[:,0]
                         for row,rec in self.recording.items(): rec['command_distance']+=float(command[row])*.02
                         _,_,done,_=self.step(self.last_output.action)
