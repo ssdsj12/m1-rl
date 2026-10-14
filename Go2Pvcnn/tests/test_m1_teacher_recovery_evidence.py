@@ -169,3 +169,20 @@ def test_raw_recovery_identity_and_boolean_types_do_not_coerce(kind,key,bad):
 def test_measurement_valid_string_cannot_become_true_in_replay():
     record=episode(); record['samples'][-1]['measurement_valid']='true'
     assert probe().verify_recovery_record(record)
+
+
+@pytest.mark.parametrize('change',['whole_window','first_qualifying','one_obligation','wrong_identity'])
+def test_window_receipts_cannot_be_removed_while_far_side_and_cached_success_remain(change):
+    record=episode()
+    assert verify_episode(record)['success']
+    if change=='whole_window':
+        for sample in record['samples'][4:-1]: sample['receipt']=[]
+    elif change=='first_qualifying': record['samples'][4]['receipt']=[]
+    elif change=='one_obligation': record['samples'][11]['receipt'].pop()
+    else: record['samples'][11]['receipt'].append([999,0])
+    # The final old receipts, raw recovery input and cached recovery result are
+    # untouched, and verify_episode rebinds a real trace after the mutation.
+    assert record['samples'][-1]['receipt']==record['required']
+    checked=verify_episode(record)
+    assert not checked['success'] and checked['errors']
+    assert probe().verify_recovery_record(record)

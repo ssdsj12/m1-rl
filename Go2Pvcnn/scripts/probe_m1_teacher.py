@@ -159,18 +159,20 @@ def recovery_input_from_sample(sample, scope):
         raise ValueError('recovery defaults differ from actual default joint pose')
     if len(sample['course_ids'])!=len(sample['course_valid']): raise ValueError('course validity/identity mismatch')
     ids=[target for target,valid in zip(sample['course_ids'],sample['course_valid']) if valid]
-    receipts={tuple(pair) for pair in sample['far_side_recovery']}
+    receipts={tuple(pair) for pair in sample['receipt']}
+    far={tuple(pair) for pair in sample['far_side_recovery']}
     if (any(type(target) is not int or target<0 for target in ids) or len(set(ids))!=len(ids)
             or any(type(target) is not int or type(wheel) is not int or target not in ids or wheel not in range(4)
-                for target,wheel in receipts)):
+                for target,wheel in receipts|far)):
         raise ValueError('receipt identity does not match measured course')
+    if not far<=receipts: raise ValueError('far-side recovery lacks same-frame receipt')
     return dict(env_id=[sample['env_id']],episode_id=[sample['episode_id']],scope_id=scope.scope_id.tolist(),
         frame=[sample['frame']],sim_time_s=[sample['sim_time']],dt_s=[sample['control_dt_s']],
         root_state_w=[sample['root']],leg_pos=[[sample['joints'][i] for i in columns]],
         default_leg_pos=[sample['default_leg_pos']],wheel_pos_w=[sample['wheel_position']],
         wheel_quat_w=[sample['wheel_quaternion']],wheel_force_w=[sample['force']],
         nominal_root_z_w=[sample['nominal_root_z_w']],course_ids=[ids],
-        recovered=[[[ (target,wheel) in receipts for wheel in range(4)] for target in ids]],
+        recovered=[[[ (target,wheel) in far for wheel in range(4)] for target in ids]],
         valid=[bool(sample['measurement_valid'] and sample['teacher_executable'] and
             sample['action_matches_request'] and sample['applied_target_valid'] and
             sample['actuation_evidence']['valid'] and not sample['failure_locked'])],
