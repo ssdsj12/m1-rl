@@ -1,5 +1,7 @@
 # TestPvcnnWithIsaacsim Notes Index
 
+最新2026-10-14：[跨越优先与0.3秒恢复设计](log/2026-10-14-m1-crossing-recovery-outcome-design.md)：用户最终确认0.3秒而非1秒，整机跨完后在前进中验收，不给每腿加等候；书面细化待审阅/未runtime。新host root@a21506654554025984756592尚未连接，不沿用旧PID；Teacher A/BC/PPO仍未通过。
+
 最新2026-10-14：[10-14快照发布](log/2026-10-14-m1-release-10-14.md)按用户要求优先，README区分已实现/验证局限/已批准待实施。双几何书面规格已确认，实施计划未完成；未runtime/服务器/训练变更，后续无需重复规格审批。
 
 最新2026-10-14 UTC：用户确认双几何筛选方向，[书面规格](../docs/superpowers/specs/2026-10-14-m1-dual-support-selection-design.md)已自审待审阅；固定IK锚点、PD/包络/真实ready不变，拟仅扩展候选筛选及对应证据。[设计记录](log/2026-10-14-m1-dual-support-selection-design.md)。尚未runtime/新native/训练，不把几何候选当跨越成功。

@@ -1,5 +1,7 @@
 ## 2026-10-11 active: T306/pure-ppo-learning
 
+最新2026-10-14 T306/teacher-feasibility/crossing-recovery-outcome SPEC REVIEW：用户确认跨后稳定前进0.3秒，已写整机与单轮分离的[规格记录](log/2026-10-14-m1-crossing-recovery-outcome-design.md)。关联双几何准备修订；不凭此放宽物理/控制底线，不启动训练。新host a21506654554025984756592待只读核实。
+
 最新2026-10-14 T306/publication/10-14：用户优先发布当前快照与README；双几何规格已批准，实施计划未完成，不把设计当运行功能。此轮仅发布文档与既有代码，不训练/不改生产。[发布记录](log/2026-10-14-m1-release-10-14.md)。
 
 最新2026-10-14 UTC T306/candidate-retention/dual-support-selection SPEC REVIEW：用户确认方向，[规格](../docs/superpowers/specs/2026-10-14-m1-dual-support-selection-design.md)写就自审；待书面审阅后编写实施计划。仅候选双几何筛选/证据合同，不改物理或成功标准，A仍BLOCKED。[记录](log/2026-10-14-m1-dual-support-selection-design.md)。

@@ -1,5 +1,7 @@
 # T306 M1 AME Long-Train Stability
 
+LATEST 2026-10-14 crossing-recovery-outcome SPEC REVIEW：新增teacher-feasibility子节点，与dual-support-selection关联；用户最终确认跨越优先/过程允许短暂倾斜/跨后0.3秒稳定前进。5帧只作局部记录，拟整机末端窗口及实际净前进门槛见[规格依据](../log/2026-10-14-m1-crossing-recovery-outcome-design.md)。Last Feature/Verified runtime39a6590/verifier de46186不变，Current Work baseline4a48652，未实现/服务器/原生/训练；新host root@a21506654554025984756592尚未核实，旧PID不是续跑依据。Next：审阅书面细化后计划。
+
 LATEST 2026-10-14 publication/10-14：用户要求先上传当前快照，基线fc140ea，README新增准确进度。dual-support-selection书面规格已确认（下方待审为历史），计划未完成/未实施；runtime39a6590和verifier de46186不变，A/BC/PPO仍BLOCKED。不启动服务器任务。[发布记录](../log/2026-10-14-m1-release-10-14.md)。
 
 LATEST 2026-10-14 UTC candidate-retention/dual-support-selection SPEC REVIEW：用户确认固定锚点+实测三角形候选筛选；[书面规格](../../docs/superpowers/specs/2026-10-14-m1-dual-support-selection-design.md)已自审，待审阅。当前仅文档，不更新Last Feature/Verified runtime39a6590/verifier de46186；Current Work baseline b4b5f03。下一步计划→负例→独立审查→串行逐级验证，仍阻挡A/BC/PPO。[设计记录](../log/2026-10-14-m1-dual-support-selection-design.md)。
