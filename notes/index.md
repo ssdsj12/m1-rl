@@ -1,5 +1,9 @@
 # TestPvcnnWithIsaacsim Notes Index
 
+最新2026-10-14 UTC：用户确认双几何筛选方向，[书面规格](../docs/superpowers/specs/2026-10-14-m1-dual-support-selection-design.md)已自审待审阅；固定IK锚点、PD/包络/真实ready不变，拟仅扩展候选筛选及对应证据。[设计记录](log/2026-10-14-m1-dual-support-selection-design.md)。尚未runtime/新native/训练，不把几何候选当跨越成功。
+
+最新2026-10-14 UTC：[准备目标停滞调查](log/2026-10-14-m1-measured-support-selection-diagnosis.md)确认v4 env1连续969帧选择上一参考125；旧锚点预测合格而实际准备未达。CPU冻结几何及独立审查支持“双支撑几何候选筛选”新修订，非物理成功、尚待设计确认；runtime/生产未改，未新native/BC/PPO。
+
 最新2026-10-14 UTC：[显式后端复核与v4原生](log/2026-10-14-m1-feedback-backend-native.md)de46186修复/相关测试/独立审查及新合同通过，3049帧逐记录证据errors空；控制/物理未改。wheel0准备env0连续6帧达标，另三行20s仍未ready（最大实际COM9.598mm<10mm），后续抬落/10cm未跑；真实支撑几何跟踪为当前阻挡，Teacher A/BC/PPO仍BLOCKED。下方“待确认”为历史。
 
 最新2026-10-13：[有界反馈实现](log/2026-10-13-m1-teacher-bounded-feedback-implementation.md)及限定复审完成39a6590；[v3原生](log/2026-10-13-m1-teacher-bounded-feedback-native.md)合同通过，env0实际ready44–49，但反馈事务证据不一致触发停止，后续NOT_RUN。Teacher A BLOCKED，未抬腿/未BC/PPO/未生产部署。以下旧实施中状态仅为历史。

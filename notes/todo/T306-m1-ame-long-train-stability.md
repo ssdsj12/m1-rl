@@ -1,5 +1,9 @@
 # T306 M1 AME Long-Train Stability
 
+LATEST 2026-10-14 UTC candidate-retention/dual-support-selection SPEC REVIEW：用户确认固定锚点+实测三角形候选筛选；[书面规格](../../docs/superpowers/specs/2026-10-14-m1-dual-support-selection-design.md)已自审，待审阅。当前仅文档，不更新Last Feature/Verified runtime39a6590/verifier de46186；Current Work baseline b4b5f03。下一步计划→负例→独立审查→串行逐级验证，仍阻挡A/BC/PPO。[设计记录](../log/2026-10-14-m1-dual-support-selection-design.md)。
+
+LATEST 2026-10-14 UTC actual-support-geometry-gap/candidate-retention OPEN：新增此子节点因为v4 env1第32–1000帧选择125/accepted XYZ恒定，原最小位移代价允许预测合格但实际准备未达的姿态持续保留。CPU冻结几何比较发现原网格内双几何候选，独立审查确认这是设计局限而非已证实实现偏差；建议仅新增实测三角形候选筛选，固定IK锚点/原包络/PD/门槛不变，待新设计确认。Last Feature/Verified runtime39a6590、verifier de46186均不变；Current Work Ref b4b5f03。未新原生或训练，A仍BLOCKED。[本轮调查](../log/2026-10-14-m1-measured-support-selection-diagnosis.md)。
+
 LATEST 2026-10-14 UTC bounded-feedback/native-verifier/backend-replay FIXED IN CANDIDATE：Last Feature/Verified Ref de46186（仅验证器；控制runtime仍39a6590），76相关CPU/10probe gates/19最终backend测试及独立GPU正负例通过，独立审查无新阻断。v4合同通过，3049帧逐记录errors空；wheel0准备env0六帧局部达标，另三行20s仍不达标。新增同父子节点bounded-feedback/actual-support-geometry-gap OPEN：真实轮位相对锚点漂移，预测COM不等于真实COM，root误差收敛仍不能保证实际余量；三行最大9.598mm<10mm、无碰撞/失载/抬腿，动力学因果未隔离。该节点阻挡四腿准备/抬落/10cm/A及BC/PPO，不自动改PD/参考或门槛。生产未动。[证据和下一步](../log/2026-10-14-m1-feedback-backend-native.md)。
 
 LATEST bounded-feedback v3 STOPPED：Last Feature Ref39a6590，任务及限定复审关闭I1/M1/M2；原生合同通过。flat-preparation env0真实ready44–49，事务证据复核不一致在49停止、同行最多54结束，无物理失败。其余wheel/抬落/越障/正式验收NOT_RUN，Teacher A BLOCKED；BC/PPO/生产/旧训练继续不动。native-verifier OPEN，继承abort审计Minor OPEN且不可BC。[实现](../log/2026-10-13-m1-teacher-bounded-feedback-implementation.md)、[冻结原生证据](../log/2026-10-13-m1-teacher-bounded-feedback-native.md)。

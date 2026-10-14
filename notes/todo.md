@@ -1,5 +1,9 @@
 ## 2026-10-11 active: T306/pure-ppo-learning
 
+最新2026-10-14 UTC T306/candidate-retention/dual-support-selection SPEC REVIEW：用户确认方向，[规格](../docs/superpowers/specs/2026-10-14-m1-dual-support-selection-design.md)写就自审；待书面审阅后编写实施计划。仅候选双几何筛选/证据合同，不改物理或成功标准，A仍BLOCKED。[记录](log/2026-10-14-m1-dual-support-selection-design.md)。
+
+最新2026-10-14 UTC T306/actual-support-geometry-gap/candidate-retention OPEN：v4连续969帧保持候选125，预测旧锚点合格但实测准备未达；行为符合原设计。只读CPU几何/独立审查已完成，双几何筛选修订待设计确认；未runtime/native/训练变化。[证据](log/2026-10-14-m1-measured-support-selection-diagnosis.md)。
+
 最新2026-10-14 UTC T306：de46186验证器修复/审查/v4合同通过，3049帧errors空；wheel0准备env0局部达标，另三行20s实际COM最大9.598mm仍不达10mm。新增bounded-feedback/actual-support-geometry-gap OPEN（支撑轮锚点和真实三角形分离，动力学因果未定），阻挡抬落/10cm/A/BC/PPO；不自动调参。[证据](log/2026-10-14-m1-feedback-backend-native.md)。
 
 最新2026-10-13 T306：Teacher bounded-feedback39a6590已实现并完成限定复审；v3合同通过，flat-preparation因evidence_invalid停止。env0局部ready连续6帧不是跨越；其他scope/Teacher A/BC/PPO仍未通过或未运行。需先根据冻结证据定位复核差异，不追加原生或修改PD/物理/门槛。[原生记录](log/2026-10-13-m1-teacher-bounded-feedback-native.md)。
