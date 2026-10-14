@@ -329,7 +329,10 @@ class CrossingRecoveryTracker:
                 displacement = frame.root_state_w[index, :3].double()-self._start_pos[index]
                 net = (displacement*self._scope.forward_w[index].double()).sum()
                 self._state['net_forward_m'][index] = net
-                tolerance = self._time_tolerance(.3, float(self._min_dt[index]))
+                # Elapsed time subtracts two global clock values. Its roundoff
+                # follows those operands, even though the duration is only .3 s.
+                clock_scale = max(abs(time), abs(float(self._state['start_time_s'][index])))
+                tolerance = self._time_tolerance(clock_scale, float(self._min_dt[index]))
                 duration_ok = float(self._state['elapsed_s'][index])+tolerance >= .3
                 success = duration_ok and float(net) >= .01
                 self._state['success'][index] = success

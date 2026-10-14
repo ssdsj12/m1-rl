@@ -85,6 +85,26 @@ def test_fifteen_intervals_not_fifteen_observations(recovery):
     assert result.net_forward_m.item() == pytest.approx(.03)
 
 
+@pytest.mark.parametrize('start,dt,intervals',[(100.,.02,15),(10000.,.02,15),(10000.,.03,10)])
+def test_global_clock_roundoff_does_not_lose_a_complete_window(recovery,start,dt,intervals):
+    frozen=scope(recovery); tracker=recovery.CrossingRecoveryTracker(frozen)
+    for step in range(intervals+1):
+        result=tracker.update(frame(recovery,frozen,step,time=start+step*dt,dt=dt))
+        assert result.success.item()==(step==intervals)
+    assert result.interval_count.item()==intervals
+
+
+@pytest.mark.parametrize('start', [100.,10000.,1e16])
+def test_global_clock_never_rounds_up_missing_intervals(recovery,start):
+    frozen=scope(recovery); tracker=recovery.CrossingRecoveryTracker(frozen)
+    for step in range(15):
+        result=tracker.update(frame(recovery,frozen,step,time=start+step*.02))
+    assert not result.success.item()
+    # A missing step is invalid even when the two endpoints span .3 seconds.
+    result=tracker.update(frame(recovery,frozen,16,time=start+.32))
+    assert not result.success.item() and result.interval_count.item()==0
+
+
 @pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
 def test_real_nonstandard_dt_and_no_step_sized_epsilon(recovery, dtype):
     frozen = scope(recovery, dtype=dtype)
