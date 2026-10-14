@@ -857,6 +857,8 @@ def diagnostic_runner(tmp_path,monkeypatch,scenario):
     run.wheels=list(range(4)); run.video_validated=True; run.started=[]; run.control_calls=0
     run.env=NS(device='cpu',sim=NS(current_time=0.),seed=lambda seed:None,
         command_manager=NS(get_command=lambda name:torch.zeros(4,3)))
+    run.producer_backend=module.capture_producer_backend(run.env.device)
+    run.replay_backend=run.producer_backend['device']
     flat_horizon=scenario.startswith('flat-horizon-')
     tx=transaction_fixture(stationary=not flat_horizon)
     if flat_horizon:

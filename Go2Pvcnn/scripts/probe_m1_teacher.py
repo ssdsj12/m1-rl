@@ -136,8 +136,46 @@ def feedback_producer_class():
     return ReferenceTeacher
 
 
+def capture_producer_backend(device):
+    """Read trusted device/runtime provenance; never change ambient math/device."""
+    import torch
+    device=torch.device(device)
+    if device.type=='cpu': device=torch.device('cpu')
+    elif (device.type!='cuda' or device.index is None or not torch.cuda.is_available()
+            or device.index>=torch.cuda.device_count()):
+        raise ValueError('requested replay backend unavailable or not explicitly indexed')
+    return dict(device=str(device),origin='producer_tensor_device_and_runtime_math_settings',
+        torch_version=str(torch.__version__),cuda_version=torch.version.cuda,
+        device_name=torch.cuda.get_device_name(device) if device.type=='cuda' else 'cpu',
+        matmul_allow_tf32=bool(torch.backends.cuda.matmul.allow_tf32),
+        float32_matmul_precision=torch.get_float32_matmul_precision())
+
+
+def check_producer_backend(metadata,replay_backend,*,required=False):
+    """Caller selects backend; untrusted evidence only agrees or is rejected.
+
+    Legacy metadata-free CPU fixtures remain supported. Native callers require
+    provenance, as do all explicitly selected CUDA replays; never fall back.
+    """
+    expected=capture_producer_backend(replay_backend)
+    if metadata is None:
+        if required or expected['device']!='cpu': raise ValueError('missing producer backend evidence')
+    elif metadata!=expected: raise ValueError('producer backend/runtime differs from trusted replay configuration')
+    return expected
+
+
+def replay_feedback_transaction(context_json,config_json,dtype,phase,*,replay_backend='cpu'):
+    import torch
+    backend=capture_producer_backend(replay_backend)
+    # Pure replay only: existing IK as_tensor calls inherit the ambient device.
+    # A trusted, scoped guard restores it before returning to any live control.
+    with torch.device(backend['device']):
+        return _cached_replay_feedback_transaction(context_json,config_json,dtype,phase,
+            backend['device'],json.dumps(backend,sort_keys=True))
+
+
 @lru_cache(maxsize=1024)
-def replay_feedback_transaction(context_json,config_json,dtype,phase):
+def _cached_replay_feedback_transaction(context_json,config_json,dtype,phase,backend,backend_json):
     """Cache only pure expected math for byte-identical complete inputs.
 
     No sample validity, receipt, source, identity or artifact check is cached.
@@ -150,12 +188,12 @@ def replay_feedback_transaction(context_json,config_json,dtype,phase):
     from ame_baseline.m1_teacher_pose import BodyPose,PoseReference
     context=json.loads(context_json); config=json.loads(config_json)
     config['feedback']=FeedbackConfig(**config['feedback']); cfg=TeacherConfig(**config)
-    tensor=lambda value:torch.tensor([value],dtype=getattr(torch,dtype))
+    tensor=lambda value:torch.tensor([value],dtype=getattr(torch,dtype),device=backend)
     ref=lambda value:PoseReference(BodyPose(tensor(value['root'][:3]),tensor(value['root'][3:])),tensor(value['wheels']))
     old=FeedbackState(tensor(context['integral_before']),tensor(context['output_before']))
     state=SimpleNamespace(root_pos_w=tensor(context['measured_root']),dt=tensor([context['dt']]).reshape(1),
         default_joint_pos=tensor(context['default_joint_pos']),last_applied_leg_target=tensor(context['last_applied_q']),
-        applied_target_valid=torch.tensor([True]))
+        applied_target_valid=torch.tensor([True],device=backend))
     work=dict(feedback=old,prepared=context['active'],phase=1,yaw=tensor([context['captured_yaw']]).reshape(1))
     teacher=feedback_producer_class()(cfg); evidence={'requested':ref(context['requested'])}
     solved,selected=teacher._feedback_transaction(state,0,work,ref(context['accepted_before']),
@@ -182,9 +220,17 @@ def replay_feedback_transaction(context_json,config_json,dtype,phase):
     return json.dumps(expected,sort_keys=True),tuple(action[0].tolist()),bool(executable)
 
 
-def verify_feedback_transaction(sample,cfg):
+replay_feedback_transaction.cache_clear=_cached_replay_feedback_transaction.cache_clear
+replay_feedback_transaction.cache_info=_cached_replay_feedback_transaction.cache_info
+
+
+def verify_feedback_transaction(sample,cfg,*,replay_backend='cpu',require_backend_evidence=False):
     """Authenticate first/final/committed claims and the actual returned command."""
     from ame_baseline.m1_reference_teacher import TEACHER_DIAGNOSTIC_INTEGER_FIELDS
+    try:
+        check_producer_backend(sample.get('producer_backend'),replay_backend,required=require_backend_evidence)
+    except (ValueError,RuntimeError,TypeError):
+        return ['producer/replay backend evidence unavailable or mismatched']
     try:
         d=sample['teacher_diagnostic']; context=sample['feedback_context']
         if context is None:
@@ -201,7 +247,7 @@ def verify_feedback_transaction(sample,cfg):
             return []
         if sample['action_target_dtype'] not in ('float32','float64'): raise ValueError('invalid dtype')
         expected_json,action,executable=replay_feedback_transaction(json.dumps(context,sort_keys=True),
-            json.dumps(asdict(cfg),sort_keys=True),sample['action_target_dtype'],sample['phase'])
+            json.dumps(asdict(cfg),sort_keys=True),sample['action_target_dtype'],sample['phase'],replay_backend=replay_backend)
         expected=json.loads(expected_json)
         checked=[name for name in expected if name.startswith(('feedback_','wheel_','command_requested_',
             'command_attempted_','command_accepted_','nominal_ik_','ik_','attempted_','accepted_','requested_','last_applied_q_'))]
@@ -215,17 +261,18 @@ def verify_feedback_transaction(sample,cfg):
             elif name in integer:
                 if type(a) is not int or a!=b: raise ValueError(name)
             else:
-                # CPU replay and native CUDA DLS are independent arithmetic.
+                # Independent replay on the producer-matching backend.
                 # These are audit roundoff allowances, not controller gates.
                 tolerance=2e-5 if '_q_' in name or 'ik_residual_m_' in name else 2e-6 if (
                     '_root_' in name or '_wheel_' in name and not name.startswith('wheel_')) else 2e-7
                 if not math.isclose(a,b,rel_tol=2e-5,abs_tol=tolerance): raise ValueError(name)
-        decoded=decoded_request_targets(tuple(sample['teacher_action']),tuple(context['default_joint_pos']),sample['action_target_dtype'])
+        decoded=decoded_request_targets(tuple(sample['teacher_action']),tuple(context['default_joint_pos']),
+            sample['action_target_dtype'],replay_backend=replay_backend)
         if list(decoded)!=sample['applied_targets']: raise ValueError('actual receipt')
         from ame_baseline.m1_reference_teacher import LEG_COLUMNS
         from ame_baseline.m1_ame_contract import M1_LEG_ACTION_SCALE_RAD,M1_WHEEL_ACTION_SCALE_RAD_S
         from extension.parallelism.m1_kinematics import M1_WHEEL_RADIUS_M
-        # Only the independent CPU mathematical replay is approximate. The
+        # Only the independent mathematical replay is approximate. The
         # actual teacher request/process/all four apply receipts remain exact.
         if not executable or any(not math.isclose(a,b,rel_tol=0.,abs_tol=(
             2e-5/M1_LEG_ACTION_SCALE_RAD if i in LEG_COLUMNS else
@@ -427,15 +474,26 @@ def verify_trace(trace,samples,*,allow_empty=False):
     return errors
 
 
+def decoded_request_targets(action,defaults,dtype,*,replay_backend='cpu'):
+    import torch
+    backend=capture_producer_backend(replay_backend)
+    with torch.device(backend['device']):
+        return _cached_decoded_request_targets(action,defaults,dtype,backend['device'],json.dumps(backend,sort_keys=True))
+
+
 @lru_cache(maxsize=256)
-def decoded_request_targets(action,defaults,dtype):
+def _cached_decoded_request_targets(action,defaults,dtype,backend,backend_json):
     """Cache pure decoding for identical inputs only; never cache validity."""
     import torch
     from ame_baseline.m1_ame_contract import m1_action_targets
     if dtype not in ('float32','float64'): raise ValueError('unsupported recorded action target dtype')
-    target=m1_action_targets(torch.tensor([action],dtype=getattr(torch,dtype)),
-        torch.tensor([defaults],dtype=getattr(torch,dtype)))
+    target=m1_action_targets(torch.tensor([action],dtype=getattr(torch,dtype),device=backend),
+        torch.tensor([defaults],dtype=getattr(torch,dtype),device=backend))
     return tuple(target[0].tolist())
+
+
+decoded_request_targets.cache_clear=_cached_decoded_request_targets.cache_clear
+decoded_request_targets.cache_info=_cached_decoded_request_targets.cache_info
 
 
 @lru_cache(maxsize=256)
@@ -477,11 +535,14 @@ def verify_aborted_decision(record):
         return ['aborted decision artifact verification failed']
 
 
-def verify_episode(record):
+def verify_episode(record,*,replay_backend='cpu',require_backend_evidence=False):
     """Evidence validation and success are distinct; failures still count episodes."""
     aborted=(record.get('end')=='teacher_nonexecutable' or 'aborted_decision' in record
         or 'abort_artifact' in record or 'execution_abort' in record)
     errors = verify_aborted_decision(record) if aborted else []
+    try:
+        check_producer_backend(record.get('producer_backend'),replay_backend,required=require_backend_evidence)
+    except (ValueError,RuntimeError,TypeError): errors.append('producer/replay backend evidence unavailable or mismatched')
     from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES
     raw_names=record.get('raw_joint_names',[])
     redesigned=record.get('schema_version')==SCHEMA_VERSION
@@ -508,6 +569,12 @@ def verify_episode(record):
             unsafe=False,invalid_teacher=True,failure_locked=False,student_demonstration_usable=False)
     start_time = samples[0].get('sim_time', 0.)-.02
     for index, sample in enumerate(samples, 1):
+        try:
+            check_producer_backend(sample.get('producer_backend'),replay_backend,required=require_backend_evidence)
+        except (ValueError,RuntimeError,TypeError):
+            errors.append('sample producer/replay backend evidence unavailable or mismatched')
+        if sample.get('producer_backend')!=record.get('producer_backend'):
+            errors.append('sample producer backend differs from record')
         if not SAMPLE_KEYS <= sample.keys():
             errors.append('missing sample fields'); continue
         if redesigned:
@@ -541,7 +608,8 @@ def verify_episode(record):
                 if any(type(sample['teacher_diagnostic'].get(name)) is not int for name in TEACHER_DIAGNOSTIC_INTEGER_FIELDS):
                     errors.append('invalid discrete teacher diagnostic evidence')
                 errors.extend(verify_actuation_evidence(sample))
-                if readiness_cfg is not None: errors.extend(verify_feedback_transaction(sample,readiness_cfg))
+                if readiness_cfg is not None: errors.extend(verify_feedback_transaction(sample,readiness_cfg,
+                    replay_backend=replay_backend,require_backend_evidence=require_backend_evidence))
                 context=sample.get('feedback_context')
                 if context is not None:
                     try:
@@ -588,7 +656,8 @@ def verify_episode(record):
                 errors.append('missing or nonfinite requested target decoding evidence')
             else:
                 try:
-                    decoded=decoded_request_targets(tuple(sample['teacher_action']),tuple(defaults),sample['action_target_dtype'])
+                    decoded=decoded_request_targets(tuple(sample['teacher_action']),tuple(defaults),
+                        sample['action_target_dtype'],replay_backend=replay_backend)
                     if list(decoded)!=requested or requested!=sample['processed_targets'] or requested!=sample.get('applied_targets'):
                         errors.append('requested target decoding disagrees with processed or applied targets')
                 except (ValueError,TypeError,RuntimeError):
@@ -663,9 +732,10 @@ def verify_episode(record):
                 student_demonstration_usable=bool(success))
 
 
-def verify_suite(records, *, diagnostic=False):
+def verify_suite(records, *, diagnostic=False,replay_backend='cpu',require_backend_evidence=False):
     identities = [(r['stage'],r['seed'],r['env_id'],r['episode_id']) for r in records]
-    verified = [verify_episode(r) for r in records]
+    verified = [verify_episode(r,replay_backend=replay_backend,
+        require_backend_evidence=require_backend_evidence) for r in records]
     counts = Counter((r['stage'],r['seed']) for r in records)
     successes = Counter(r['stage'] for r,v in zip(records,verified) if v['success'])
     full = (len(identities) == len(set(identities)) == 200 and
@@ -972,6 +1042,7 @@ class ActionEvidence:
     def begin(self,state,output,teacher,sim_time):
         if not bool(output.executable.all()):
             raise RuntimeError('nonexecutable teacher batch cannot begin action evidence')
+        producer_backend=capture_producer_backend(output.action.device)
         self.pending=[]; self.observing=True; self.processed=None; self.executed=None; self.applied=[]
         for row in range(len(state.episode_id)):
             ages=teacher._rows[row] or {}
@@ -980,6 +1051,7 @@ class ActionEvidence:
                 from ame_baseline.m1_ame_contract import m1_action_targets
                 requested=m1_action_targets(output.action[row:row+1],state.default_joint_pos[row:row+1])[0].tolist()
             self.pending.append(dict(teacher_input_frame=int(state.control_step[row]),
+                producer_backend=copy.deepcopy(producer_backend),
                 teacher_input_episode_id=int(state.episode_id[row]),teacher_input_sim_time=float(sim_time),
                 teacher_action=output.action[row].detach().clone().tolist(),
                 teacher_executable=bool(output.executable[row]),
@@ -1026,6 +1098,8 @@ class NativeProbe:
         from ame_baseline.m1_reference_teacher import TeacherConfig
         from extension.parallelism.rl_adapter import resolve_named_indices
         self.torch=torch; self.env=env; self.w=wrapper; self.output=output
+        self.producer_backend=capture_producer_backend(env.device)
+        self.replay_backend=self.producer_backend['device']
         self.robot=env.scene['robot']; self.sensor=env.scene['contact_forces']
         self.raw_joint_names=tuple(self.robot.joint_names)
         self.adapter=ReferenceTeacherAdapter(wrapper); self.teacher_cfg=TeacherConfig()
@@ -1055,6 +1129,7 @@ class NativeProbe:
             for p in sorted((candidate/folder).rglob('*.py'))}
         files['scripts/probe_m1_teacher.py']=file_digest(Path(__file__))
         self.write('source.json',dict(candidate=str(candidate),python=sys.executable,files=files,
+            producer_backend=copy.deepcopy(self.producer_backend),
             code_sha256=digest(files),teacher=asdict(self.teacher_cfg),teacher_hash=self.teacher_cfg.fingerprint,
             loaded_modules=loaded_candidate_modules(candidate),
             effective_cfg_sha256=digest(env.cfg.to_dict()),effective_cfg=env.cfg.to_dict()))
@@ -1098,6 +1173,10 @@ class NativeProbe:
 
     def write(self,name,value):
         (self.output/name).write_text(json.dumps(value,indent=2,default=str),encoding='utf-8')
+
+    def verification_options(self):
+        # Backend is trusted probe configuration, never chosen by a sample.
+        return dict(replay_backend=self.replay_backend,require_backend_evidence=True)
 
     def bootstrap_reset(self,mask):
         time=float(self.env.sim.current_time); count=self.env.common_step_counter
@@ -1459,6 +1538,7 @@ class NativeProbe:
         rec['indices'].append(frame); rec['times'].append(float(self.env.sim.current_time))
 
     def finish_episode(self,row,required,end,natural,timeout):
+        verification_options=self.verification_options()
         rec=self.recording[row]
         self.video_frame(row,terminal=True)
         rec['writer'].close(); rec['trace'].close()
@@ -1466,6 +1546,7 @@ class NativeProbe:
             isolated_robot=self.video_validated,nonblack=self.video_validated,
             frame_indices=rec['indices'],sim_times=rec['times'],first_frame=rec['indices'][0],last_frame=rec['indices'][-1])
         result=dict(schema_version=SCHEMA_VERSION,teacher_scope=self.scope,
+            producer_backend=copy.deepcopy(self.producer_backend),
             diagnostic_active_wheel=self.diagnostic_wheel,
             stage=rec['stage'],seed=rec['seed'],env_id=row,episode_id=int(self.episode[row]),
             raw_joint_names=list(self.raw_joint_names),
@@ -1477,7 +1558,7 @@ class NativeProbe:
             if key in rec: result[key]=rec[key]
         trace_path=self.output/(rec['path'].stem+'.jsonl')
         result['trace']=dict(path=str(trace_path),sha256=file_digest(trace_path),bytes=trace_path.stat().st_size)
-        result['verification']=verify_episode(result)
+        result['verification']=verify_episode(result,**verification_options)
         result['student_demonstration_usable']=result['verification']['student_demonstration_usable']
         self.write(rec['path'].stem+'.json',result)
         del self.recording[row]
@@ -1520,7 +1601,7 @@ class NativeProbe:
             record['student_demonstration_usable']=False
             self.write(Path(record['video']['path']).stem+'.json',record)
             records.append(record)
-        result=verify_suite(records,diagnostic=not acceptance)
+        result=verify_suite(records,diagnostic=not acceptance,**self.verification_options())
         planned=200 if acceptance else 4*len(schedule)
         result.update(execution_aborted=True,execution_abort=abort,planned_episodes=planned,
             attempted_episodes=len(records),failed_attempts=len(failed),
@@ -1685,9 +1766,9 @@ class NativeProbe:
                                     diagnostic_interruption=copy.deepcopy(gate.failure),student_demonstration_usable=False)
                                 changed=True
                             if changed:
-                                record['verification']=verify_episode(record)
+                                record['verification']=verify_episode(record,**self.verification_options())
                                 self.write(Path(record['video']['path']).stem+'.json',record)
-                    result=verify_suite(records,diagnostic=not acceptance)
+                    result=verify_suite(records,diagnostic=not acceptance,**self.verification_options())
                     result.update(diagnostic_stopped=gate.failure is not None,
                         diagnostic_stop=copy.deepcopy(gate.failure),
                         not_run=[dict(stage=s,wheel=w,scope=scope,status='not_run',reason='prior_diagnostic_stop')
