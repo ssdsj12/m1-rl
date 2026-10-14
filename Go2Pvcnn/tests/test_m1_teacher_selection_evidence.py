@@ -17,23 +17,52 @@ def observed(teacher, s, *, diagnostic=True):
     return out, contexts
 
 
-def test_not_ready_can_search_but_cannot_lift(monkeypatch):
-    t = api(); s = near_state(); teacher = t.ReferenceTeacher()
-    s.com_pos_w[:, :2] = (s.wheel_pos_w[:, 1, :2]+s.wheel_pos_w[:, 2, :2])/2
-    assert hasattr(teacher, '_select_preparation_pose'), 'single preparation selection boundary missing'
+@pytest.mark.parametrize('actual_margin_m,can_lift', [(.009, False), (.012, True)])
+def test_not_ready_can_search_but_cannot_lift(monkeypatch, actual_margin_m, can_lift):
+    t = api(); teacher, s, _ = prepared_teacher()
+    row = teacher._rows[0]
+    assert row['prepared'] and row['phase'] == t.Phase.BALANCE
+    # The measured root is 2mm outward from its tracked accepted goal. The
+    # candidate's predicted COM can therefore pass 10mm while actual COM fails.
+    edge = s.wheel_pos_w[0, 2, :2]-s.wheel_pos_w[0, 1, :2]
+    inward = torch.stack((-edge[1], edge[0])); inward /= inward.norm()
+    midpoint = (s.wheel_pos_w[:, 1, :2]+s.wheel_pos_w[:, 2, :2])/2
+    root, com = s.root_pos_w.clone(), s.com_pos_w.clone()
+    root[:, :2] -= .002*inward
+    com[:, :2] = midpoint+actual_margin_m*inward
+    s = replace(s, root_pos_w=root, com_pos_w=com)
+    assert teacher._tracked(s, 0, row['accepted']) and teacher._quiet(s, 0)
+    support_forces = s.wheel_force_w[0, [1, 2, 3]]
+    assert (support_forces[:, 2] > teacher.cfg.support_min_force_n).all()
+    assert (support_forces[:, :2].norm(dim=-1) <=
+        teacher.cfg.support_max_tangential_ratio*support_forces[:, 2]).all()
     original = teacher._select_preparation_pose; calls = []
     def selected(st, i, work, accepted, q, branch):
-        assert st is s
+        assert st is s and row['prepared']
         result = original(st, i, work, accepted, q, branch)
+        assert teacher._tracked(st, i, result.reference), 'goal tracking must not mask the COM gate'
         calls.append(result)
         return result
     monkeypatch.setattr(teacher, '_select_preparation_pose', selected)
-    out, contexts = observed(teacher, s)
+    # Normal course decisions allow LIFT, unlike diagnostic_step(lift=False).
+    out, contexts = observed(teacher, s, diagnostic=False)
     d = probe().diagnostic_json(out.diagnostic[0].tolist())
     assert len(calls) == 1 and calls[0].valid.item()
-    assert d['measured_com_margin_m'] < .010 and out.phase.item() != t.Phase.LIFT
+    assert out.valid.item() and out.executable.item()
+    assert d['measured_com_margin_m'] == pytest.approx(actual_margin_m, abs=1e-7)
+    assert out.phase.item() == (t.Phase.LIFT if can_lift else t.Phase.BALANCE)
+    assert d['preparation_ready'] == int(can_lift)
+    assert d['candidate_com_margin_m'] >= .010
     assert d['candidate_measured_triangle_margin_m'] >= .010
     assert contexts[0]['measured_wheels_w'] == s.wheel_pos_w[0].tolist()
+
+
+def test_interpolation_margin_is_not_a_final_target_gate():
+    s = near_state(); teacher = api().ReferenceTeacher()
+    s.com_pos_w[:, :2] = (s.wheel_pos_w[:, 1, :2]+s.wheel_pos_w[:, 2, :2])/2
+    out, _ = observed(teacher, s)
+    d = probe().diagnostic_json(out.diagnostic[0].tolist())
+    assert d['candidate_measured_triangle_margin_m'] >= .010
     # Accepted interpolation can remain below the final-target threshold.
     assert d['predicted_com_margin_m'] < .010 and d['reference_valid'] == 1
 
