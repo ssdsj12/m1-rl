@@ -159,6 +159,11 @@ def recovery_input_from_sample(sample, scope):
         raise ValueError('recovery defaults differ from actual default joint pose')
     if len(sample['course_ids'])!=len(sample['course_valid']): raise ValueError('course validity/identity mismatch')
     ids=[target for target,valid in zip(sample['course_ids'],sample['course_valid']) if valid]
+    for key in ('receipt','far_side_recovery'):
+        pairs=sample[key]
+        if (not isinstance(pairs,list) or any(not isinstance(pair,list) or len(pair)!=2
+                or any(type(value) is not int for value in pair) for pair in pairs)):
+            raise ValueError('invalid raw receipt identity')
     receipts={tuple(pair) for pair in sample['receipt']}
     far={tuple(pair) for pair in sample['far_side_recovery']}
     if (any(type(target) is not int or target<0 for target in ids) or len(set(ids))!=len(ids)

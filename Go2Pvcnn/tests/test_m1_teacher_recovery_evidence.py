@@ -186,3 +186,16 @@ def test_window_receipts_cannot_be_removed_while_far_side_and_cached_success_rem
     checked=verify_episode(record)
     assert not checked['success'] and checked['errors']
     assert probe().verify_recovery_record(record)
+
+
+@pytest.mark.parametrize('key,bad_pair',[
+    ('receipt',[False,0]),('receipt',[0.0,0]),
+    ('far_side_recovery',[False,0]),('far_side_recovery',[0.0,0]),
+])
+def test_same_value_noninteger_receipt_pair_cannot_hide_behind_a_valid_pair(key,bad_pair):
+    record=episode(); sample=record['samples'][11]
+    assert sample[key][0]==[0,0]
+    sample[key].append(bad_pair)
+    checked=verify_episode(record)
+    assert not checked['success'] and checked['errors']
+    assert probe().verify_recovery_record(record)
