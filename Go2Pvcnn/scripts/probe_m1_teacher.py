@@ -6,7 +6,7 @@ Isaac/pxr/omni. A diagnostic run can never report milestone A PASS.
 import argparse
 import copy
 from collections import Counter
-from dataclasses import asdict
+from dataclasses import asdict, fields
 import hashlib
 import importlib.machinery
 import json
@@ -29,6 +29,214 @@ APPLY_KEYS = {'schema_version','teacher_scope','failure_locked','student_demonst
     'physics_decimation','action_matches_request','applied_target_valid','teacher_diagnostic',
     'last_applied_leg_target','requested_processed_targets','action_default_joint_pos','action_target_dtype','teacher_executable',
     'actuation_evidence','feedback_context','selection_context'}
+
+
+def recovery_json(value):
+    return {field.name: (getattr(value,field.name).detach().cpu().tolist()
+        if hasattr(getattr(value,field.name),'detach') else list(getattr(value,field.name)))
+        for field in fields(value)}
+
+
+def recovery_raw_types(value, scalar_types):
+    """Reject coercion of untrusted JSON identity/boolean measurements."""
+    if isinstance(value,list): return all(recovery_raw_types(item,scalar_types) for item in value)
+    return type(value) in scalar_types
+
+
+def recovery_pairs(required, scope):
+    """Freeze diagnostic obligations once; retain the full old course contract."""
+    ids=list(dict.fromkeys(target for target,_ in required))
+    if scope in ('flat-preparation','single-wheel'): return []
+    if scope=='first-obstacle': ids=ids[:1]
+    elif scope=='transitions': ids=ids[:2]
+    return [pair for pair in required if pair[0] in ids]
+
+
+def capture_recovery_scope(state: 'TeacherState', rows: 'Tensor', required_pairs: list,
+        *, scope_ids: 'Tensor') -> 'RecoveryScope':
+    from ame_baseline.m1_crossing_recovery import RecoveryScope, CrossingRecoveryTracker
+    import torch
+    if rows.dtype==torch.bool: rows=rows.nonzero().flatten()
+    if (rows.dtype!=torch.long or rows.ndim!=1 or rows.unique().numel()!=rows.numel()
+            or len(required_pairs)!=rows.numel() or scope_ids.shape!=rows.shape):
+        raise ValueError('recovery scope rows/identity mismatch')
+    selected=[]; masks=[]
+    for row,pairs in zip(rows.tolist(),required_pairs):
+        ids=list(dict.fromkeys(target for target,_ in pairs))
+        actual={}
+        for index in state.course_valid[row].nonzero().flatten().tolist():
+            target=int(state.course_ids[row,index])
+            if target<0 or target in actual: raise ValueError('ambiguous course identity')
+            actual[target]=index
+        indices=[]; mask=torch.zeros(len(ids),4,dtype=torch.bool,device=rows.device)
+        for col,target in enumerate(ids):
+            if target not in actual: raise ValueError('missing course identity')
+            index=actual[target]
+            indices.append(index)
+            for pair_target,wheel in pairs:
+                if pair_target==target:
+                    if wheel not in range(4) or not bool(state.required_wheels[row,index,wheel]):
+                        raise ValueError('scope obligation differs from actual course')
+                    mask[col,wheel]=True
+        selected.append(torch.tensor(indices,dtype=torch.long,device=rows.device)); masks.append(mask)
+    if len({len(indices) for indices in selected})>1: raise ValueError('scope subbatch needs equal course counts')
+    # The simulator clock is double precision. Promote measured float32 values
+    # exactly for the outcome path so long-running global clocks keep real dt.
+    quat=state.root_quat_w[rows].double()
+    quat=quat/quat.norm(dim=-1,keepdim=True)
+    w,x,y,z=quat.unbind(-1)
+    yaw=torch.atan2(2*(w*z+x*y),1-2*(y*y+z*z))
+    forward=torch.stack((torch.cos(yaw),torch.sin(yaw),torch.zeros_like(yaw)),-1)
+    scope=RecoveryScope(env_id=rows.clone(),episode_id=state.episode_id[rows].clone(),scope_id=scope_ids.clone(),
+        course_ids=torch.stack([state.course_ids[row,indices] for row,indices in zip(rows.tolist(),selected)]),
+        required=torch.stack(masks),centers_w=torch.stack([state.centers_top[row,indices] for row,indices in zip(rows.tolist(),selected)]).double(),
+        half_extents=torch.stack([state.half_extents[row,indices] for row,indices in zip(rows.tolist(),selected)]).double(),forward_w=forward)
+    # Validate the complete captured interface, and clone away from live buffers.
+    CrossingRecoveryTracker(scope)
+    return scope
+
+
+def recovery_scope_from_json(raw):
+    import torch
+    from ame_baseline.m1_crossing_recovery import RecoveryScope
+    if set(raw)!={f.name for f in fields(RecoveryScope)}|{'dtype'} or raw['dtype'] not in ('float32','float64'):
+        raise ValueError('missing recovery scope fields/dtype')
+    for field in fields(RecoveryScope):
+        types=(int,) if field.name in ('env_id','episode_id','scope_id','course_ids') else (
+            (bool,) if field.name=='required' else (float,int))
+        if not recovery_raw_types(raw[field.name],types): raise ValueError('invalid raw recovery scope type')
+    dtype=getattr(torch,raw['dtype']); n=len(raw['env_id']); c=len(raw['course_ids'][0])
+    values={f.name:torch.tensor(raw[f.name],dtype=torch.long if f.name in
+        ('env_id','episode_id','scope_id','course_ids') else torch.bool if f.name=='required' else dtype)
+        for f in fields(RecoveryScope)}
+    for name,shape in (('course_ids',(n,c)),('required',(n,c,4)),('centers_w',(n,c,3)),('half_extents',(n,c,2))):
+        values[name]=values[name].reshape(shape)
+    return RecoveryScope(**values)
+
+
+def capture_recovery_frame(snapshot: dict, scope: 'RecoveryScope') -> 'RecoveryFrame':
+    """Explicitly map actual course IDs to the frozen scope before consumption."""
+    import torch
+    from ame_baseline.m1_crossing_recovery import RecoveryFrame
+    names={f.name for f in fields(RecoveryFrame)}
+    if set(snapshot)!=names|{'course_ids'}: raise ValueError('missing raw recovery frame fields')
+    dtype=scope.centers_w.dtype; device=scope.centers_w.device; n=len(scope.env_id)
+    values={}
+    booleans={'valid','collision','penetration','base_contact','physical_failure','reset','ended','recovered'}
+    integers={'env_id','episode_id','scope_id','frame'}
+    for name in names|{'course_ids'}:
+        types=(int,) if name in integers|{'course_ids'} else (bool,) if name in booleans else (float,int)
+        if not recovery_raw_types(snapshot[name],types): raise ValueError('invalid raw recovery frame type')
+    for name in names-{'recovered'}:
+        values[name]=torch.tensor(snapshot[name],dtype=torch.long if name in integers else
+            torch.bool if name in booleans else dtype,device=device)
+    mapped=torch.zeros_like(scope.required)
+    if len(snapshot['course_ids'])!=n or len(snapshot['recovered'])!=n: raise ValueError('course identity batch mismatch')
+    for row in range(n):
+        actual=snapshot['course_ids'][row]; recovered=snapshot['recovered'][row]
+        if (len(set(actual))!=len(actual) or len(recovered)!=len(actual)
+                or any(len(mask)!=4 or any(type(flag) is not bool for flag in mask) for mask in recovered)):
+            raise ValueError('ambiguous actual receipt identity')
+        for col,target in enumerate(scope.course_ids[row].tolist()):
+            if target not in actual: raise ValueError('missing actual course identity')
+            mapped[row,col]=torch.tensor(recovered[actual.index(target)],dtype=torch.bool,device=device)
+    values['recovered']=mapped
+    return RecoveryFrame(**values)
+
+
+def recovery_input_from_sample(sample, scope):
+    from extension.parallelism.m1_kinematics import M1_PLANNER_JOINT_NAMES, M1_ASSET_JOINT_NAMES
+    from extension.parallelism.rl_adapter import resolve_named_indices
+    columns=resolve_named_indices(sample['raw_joint_names'],M1_PLANNER_JOINT_NAMES)
+    defaults=resolve_named_indices(M1_ASSET_JOINT_NAMES,M1_PLANNER_JOINT_NAMES)
+    flags=('measurement_valid','teacher_executable','action_matches_request','applied_target_valid',
+        'failure_locked','collision','penetration','base_contact','failure','support_lost','timeout')
+    if (any(type(sample[key]) is not bool for key in flags)
+            or type(sample['actuation_evidence']['valid']) is not bool
+            or type(sample.get('natural_done',False)) is not bool):
+        raise ValueError('invalid raw recovery boolean measurement')
+    if sample['default_leg_pos']!=[sample['action_default_joint_pos'][i] for i in defaults]:
+        raise ValueError('recovery defaults differ from actual default joint pose')
+    if len(sample['course_ids'])!=len(sample['course_valid']): raise ValueError('course validity/identity mismatch')
+    ids=[target for target,valid in zip(sample['course_ids'],sample['course_valid']) if valid]
+    receipts={tuple(pair) for pair in sample['far_side_recovery']}
+    if (any(type(target) is not int or target<0 for target in ids) or len(set(ids))!=len(ids)
+            or any(type(target) is not int or type(wheel) is not int or target not in ids or wheel not in range(4)
+                for target,wheel in receipts)):
+        raise ValueError('receipt identity does not match measured course')
+    return dict(env_id=[sample['env_id']],episode_id=[sample['episode_id']],scope_id=scope.scope_id.tolist(),
+        frame=[sample['frame']],sim_time_s=[sample['sim_time']],dt_s=[sample['control_dt_s']],
+        root_state_w=[sample['root']],leg_pos=[[sample['joints'][i] for i in columns]],
+        default_leg_pos=[sample['default_leg_pos']],wheel_pos_w=[sample['wheel_position']],
+        wheel_quat_w=[sample['wheel_quaternion']],wheel_force_w=[sample['force']],
+        nominal_root_z_w=[sample['nominal_root_z_w']],course_ids=[ids],
+        recovered=[[[ (target,wheel) in receipts for wheel in range(4)] for target in ids]],
+        valid=[bool(sample['measurement_valid'] and sample['teacher_executable'] and
+            sample['action_matches_request'] and sample['applied_target_valid'] and
+            sample['actuation_evidence']['valid'] and not sample['failure_locked'])],
+        collision=[sample['collision']],penetration=[sample['penetration']],base_contact=[sample['base_contact']],
+        physical_failure=[sample['failure'] or sample['support_lost']],reset=[False],
+        ended=[bool(sample.get('natural_done',False) or sample['timeout'])])
+
+
+def recovery_result_matches(actual, recorded):
+    if set(actual)!=set(recorded): return False
+    for key,want in actual.items():
+        got=recorded[key]
+        if not isinstance(got,list) or len(got)!=len(want): return False
+        for a,b in zip(want,got):
+            if isinstance(a,float):
+                if not isinstance(b,(float,int)) or isinstance(b,bool): return False
+                if math.isnan(a) and math.isnan(b): continue
+                if not math.isclose(a,b,rel_tol=1e-6,abs_tol=1e-7): return False
+            elif type(a)!=type(b) or a!=b: return False
+    return True
+
+
+def verify_recovery_record(record: dict) -> list[str]:
+    """Replay every raw observation; cached success never grants completion."""
+    from ame_baseline.m1_crossing_recovery import CrossingRecoveryTracker, RECOVERY_CONTRACT
+    import torch
+    errors=[]
+    try:
+        if record['recovery_contract']!=RECOVERY_CONTRACT or record['schema_version']!=SCHEMA_VERSION:
+            raise ValueError('incompatible recovery contract')
+        scope=recovery_scope_from_json(record['recovery_scope']); tracker=CrossingRecoveryTracker(scope)
+        if scope.env_id.tolist()!=[record['env_id']] or scope.episode_id.tolist()!=[record['episode_id']]:
+            raise ValueError('recovery scope episode identity mismatch')
+        required={(int(target),wheel) for target,mask in zip(scope.course_ids[0].tolist(),scope.required[0].tolist())
+            for wheel,needed in enumerate(mask) if needed}
+        if required!={tuple(pair) for pair in recovery_pairs(record['required'],record['teacher_scope'])}:
+            raise ValueError('recovery scope obligations changed')
+        quat=record['initial_root_quat_w']; norm=math.sqrt(sum(value*value for value in quat))
+        if not math.isfinite(norm) or norm==0: raise ValueError('invalid fixed recovery direction')
+        w,x,y,z=[value/norm for value in quat]
+        yaw=math.atan2(2*(w*z+x*y),1-2*(y*y+z*z))
+        if any(not math.isclose(a,b,abs_tol=1e-6) for a,b in zip(scope.forward_w[0].tolist(),[math.cos(yaw),math.sin(yaw),0.])):
+            raise ValueError('fixed recovery direction changed')
+        for sample in record['samples']:
+            raw=sample['recovery_input']
+            expected=recovery_input_from_sample(sample,scope)
+            if sample['nominal_root_z_w']!=record['recovery_nominal_root_z_w']:
+                raise ValueError('nominal recovery height changed during the episode')
+            if not same_json_evidence(raw,expected): raise ValueError('raw recovery input differs from actual sample')
+            for col,target in enumerate(scope.course_ids[0].tolist()):
+                index=sample['course_ids'].index(target)
+                if (not sample['course_valid'][index] or
+                        not torch.equal(torch.tensor(sample['course_centers_top'][index],dtype=scope.centers_w.dtype),scope.centers_w[0,col]) or
+                        not torch.equal(torch.tensor(sample['course_half_extents'][index],dtype=scope.centers_w.dtype),scope.half_extents[0,col])):
+                    raise ValueError('frozen recovery geometry changed')
+            result=recovery_json(tracker.update(capture_recovery_frame(raw,scope)))
+            if not recovery_result_matches(result,sample['recovery_result']):
+                raise ValueError('cached recovery result differs from replay')
+        final=result['success']==[True]
+        if record['teacher_scope'] in ('flat-preparation','single-wheel') and final:
+            raise ValueError('local diagnostic cannot claim whole-body recovery')
+        if record['end'] in ('task_complete','scope_observed') and record['stage']==3 and not final:
+            raise ValueError('completion lacks measured recovery window')
+    except (KeyError,ValueError,TypeError,IndexError,RuntimeError,UnboundLocalError):
+        errors.append('missing or inconsistent measured recovery evidence')
+    return errors
 
 
 def validate_scope(scope, *, acceptance, active_wheel):
@@ -708,6 +916,7 @@ def verify_episode(record,*,replay_backend='cpu',require_backend_evidence=False)
     raw_names=record.get('raw_joint_names',[])
     redesigned=record.get('schema_version')==SCHEMA_VERSION
     if not redesigned: errors.append('legacy schema incompatible with dual selection/apply evidence')
+    errors.extend(verify_recovery_record(record))
     if len(raw_names)!=16 or len(set(raw_names))!=16 or set(raw_names)!=set(M1_ASSET_JOINT_NAMES):
         errors.append('missing unique raw joint contract')
     samples = record.get('samples', [])
@@ -877,6 +1086,7 @@ def verify_episode(record,*,replay_backend='cpu',require_backend_evidence=False)
     if stage == 3:
         obligation_valid = len(required) == 16 and len({x[0] for x in required}) == 8
         success = (complete and obligation_valid and required <= receipt and required <= far
+            and samples[-1].get('recovery_result',{}).get('success')==[True]
             and record.get('end') == 'task_complete' and not record.get('natural_done',True)
             and not record.get('timeout',True) and not unsafe and not invalid)
     else:
@@ -1289,6 +1499,7 @@ class NativeProbe:
             return original_physics(*args,**kwargs)
         env.sim.step=physics_hook
         self.tracker_calls=0; self.video_validated=False
+        from ame_baseline.m1_crossing_recovery import RECOVERY_CONTRACT
         files={str(p.relative_to(candidate)):file_digest(p) for folder in CANDIDATE_DOMAINS
             for p in sorted((candidate/folder).rglob('*.py'))}
         files['scripts/probe_m1_teacher.py']=file_digest(Path(__file__))
@@ -1302,9 +1513,11 @@ class NativeProbe:
         original_reset=env._reset_idx
         def reset_hook(ids):
             if self.reset_reason == 'natural':
+                # Freeze peers too: original_reset reuses live state/receipt and
+                # command buffers before wrapper.step returns to the runner.
+                self.pre_reset_samples=self.capture_batch_samples()
                 for row in ids.tolist():
-                    snap=self.sample(row)
-                    self.terminal[row]=snap
+                    self.terminal[row]=self.pre_reset_samples.get(row) or self.sample(row)
                     if row in self.recording: self.video_frame(row,terminal=True)
             out=original_reset(ids)
             mask=torch.zeros(4,dtype=torch.bool,device=env.device); mask[ids]=True
@@ -1529,7 +1742,7 @@ class NativeProbe:
         env=self.env
         old_time=float(env.sim.current_time); old_count=env.common_step_counter
         old_calls=self.tracker_calls
-        self.terminal={}; self.inner_failed.zero_(); self.frames+=1
+        self.terminal={}; self.pre_reset_samples={}; self.inner_failed.zero_(); self.frames+=1
         result=self.w.step(action)
         assert env.common_step_counter==old_count+1
         assert self.tracker_calls==old_calls+1
@@ -1632,6 +1845,7 @@ class NativeProbe:
     def sample(self,row):
         from ame_baseline.m1_collision_budget import current_collision_snapshot
         from ame_baseline.m1_reference_geometry import cylinder_bottom
+        from ame_baseline.m1_reference_teacher import LEG_COLUMNS
         env,t=self.env,self.torch; course=self.w._m1_current_course()
         force=self.sensor.data.net_forces_w[row,self.contacts]
         position=self.robot.data.body_pos_w[row:row+1,self.wheels]
@@ -1663,7 +1877,9 @@ class NativeProbe:
         action=self.action_evidence.row(row,float(env.sim.current_time))
         action['actuation_evidence']=actuation_snapshot(self.robot,row,env_id=row,
             episode_id=int(self.episode[row]),frame=int(self.frames[row]),sim_time=float(env.sim.current_time))
-        action['preparation_output']=readiness_measurement(self.state(),row,float(env.sim.current_time))
+        state=getattr(self,'_sample_state',None)
+        if state is None: state=self.state()
+        action['preparation_output']=readiness_measurement(state,row,float(env.sim.current_time))
         locked=bool(output.failure_locked[row]) if output is not None else False
         return dict(schema_version=SCHEMA_VERSION,teacher_scope=self.scope,
             diagnostic_active_wheel=self.diagnostic_wheel,failure_locked=locked,
@@ -1676,20 +1892,37 @@ class NativeProbe:
             teacher_reason=int(output.reason[row]) if output is not None else -1,
             teacher_valid=bool(output.valid[row]) if output is not None else True,
             Fz=force[:,2].tolist(),force=force.tolist(),wheel_position=position[0].tolist(),
+            wheel_quaternion=quat[0].tolist(),default_leg_pos=state.default_joint_pos[row,list(LEG_COLUMNS)].tolist(),
+            nominal_root_z_w=float(state.nominal_root_z_w[row]),control_dt_s=float(state.dt[row]),
+            measurement_valid=bool(state.measurement_valid[row]),base_contact=failures['base_contact'],
             wheel_bottom=bottom.tolist(),obstacle_top=course['centers_top'][row,:,2].tolist(),
             collision=bool(snap['signal'][row]>0),support_lost=lost,penetration=penetration,
             failure=failure,timeout=timeout,termination_terms=failures,budget={k:v[row].tolist() for k,v in snap.items()},
             receipt=self.pairs(ids,receipt),far_side_recovery=self.pairs(ids,receipt&far),
             root=self.robot.data.root_state_w[row].tolist(),**raw_joint_snapshot(self.robot,row),
-            course_ids=ids.tolist(),**action)
+            course_ids=ids.tolist(),course_centers_top=course['centers_top'][row].tolist(),
+            course_half_extents=course['half_extents'][row].tolist(),course_valid=course['valid'][row].tolist(),**action)
+
+    def capture_batch_samples(self):
+        """Observe every recording row before any automatic or manual reset."""
+        self._sample_state=self.state()
+        try: return {row:self.sample(row) for row in list(self.recording)}
+        finally: self._sample_state=None
 
     def begin_video(self,row,seed,stage):
         import imageio.v2 as imageio
+        from ame_baseline.m1_crossing_recovery import CrossingRecoveryTracker
+        state=self.state(); rows=self.torch.tensor([row],dtype=self.torch.long,device=self.env.device)
+        pairs=recovery_pairs(self.pairs(state.course_ids[row],state.required_wheels[row]),self.scope)
+        scope=capture_recovery_scope(state,rows,[pairs],scope_ids=self.episode[rows])
         stem=f'stage{stage}_seed{seed}_env{row}_episode{int(self.episode[row])}'
         path=self.output/(stem+'.mp4')
         self.recording[row]=dict(writer=imageio.get_writer(str(path),fps=10,codec='libx264'),
             path=path,indices=[],times=[],samples=[],seed=seed,stage=stage,
             initial_root=self.robot.data.root_pos_w[row].tolist(),command_distance=0.,
+            initial_root_quat_w=state.root_quat_w[row].tolist(),recovery_scope_object=scope,
+            recovery_nominal_root_z_w=float(state.nominal_root_z_w[row]),
+            recovery_tracker=CrossingRecoveryTracker(scope),
             initial_wheel_z=float(self.robot.data.body_pos_w[row,self.wheels[self.diagnostic_wheel or 0],2]),
             measured_lift_seen=False,local_recovery_count=0,
             trace=(self.output/(stem+'.jsonl')).open('x',encoding='utf-8'))
@@ -1702,6 +1935,7 @@ class NativeProbe:
         rec['indices'].append(frame); rec['times'].append(float(self.env.sim.current_time))
 
     def finish_episode(self,row,required,end,natural,timeout):
+        from ame_baseline.m1_crossing_recovery import RECOVERY_CONTRACT
         verification_options=self.verification_options()
         rec=self.recording[row]
         self.video_frame(row,terminal=True)
@@ -1717,6 +1951,10 @@ class NativeProbe:
             teacher_config=asdict(self.teacher_cfg),teacher_hash=self.teacher_cfg.fingerprint,
             required=required,samples=rec['samples'],terminal=rec['samples'][-1] if rec['samples'] else None,video=video,
             initial_root=rec['initial_root'],command_distance=rec['command_distance'],
+            initial_root_quat_w=rec['initial_root_quat_w'],recovery_contract=RECOVERY_CONTRACT,
+            recovery_nominal_root_z_w=rec['recovery_nominal_root_z_w'],
+            recovery_scope={**recovery_json(rec['recovery_scope_object']),
+                'dtype':str(rec['recovery_scope_object'].centers_w.dtype).removeprefix('torch.')},
             end=end,natural_done=natural,timeout=timeout)
         for key in ('aborted_decision','abort_artifact'):
             if key in rec: result[key]=rec[key]
@@ -1839,11 +2077,22 @@ class NativeProbe:
                         _,_,done,_=self.step(self.last_output.action)
                         # Freeze and inspect the whole batch before ending/resetting
                         # any row, so env ordering cannot hide a peer failure.
-                        batch_samples={row:self.terminal.get(row) if bool(done[row]) else self.sample(row)
+                        frozen=getattr(self,'pre_reset_samples',{})
+                        current=self.capture_batch_samples() if not frozen else frozen
+                        batch_samples={row:self.terminal.get(row) if bool(done[row]) else current[row]
                             for row in list(self.recording)}
                         for sample in batch_samples.values():
                             assert sample is not None, 'natural terminal snapshot lost before reset'
                             gate.observe_sample(sample,batch_step)
+                        # Complete raw/result capture for every row before any
+                        # finish_episode, reset, or Teacher identity bootstrap.
+                        endings=[]
+                        for row,sample in batch_samples.items():
+                            rec=self.recording[row]; frozen_scope=rec['recovery_scope_object']
+                            sample['natural_done']=bool(done[row])
+                            sample['recovery_input']=recovery_input_from_sample(sample,frozen_scope)
+                            sample['recovery_result']=recovery_json(rec['recovery_tracker'].update(
+                                capture_recovery_frame(sample['recovery_input'],frozen_scope)))
                         for row,sample in batch_samples.items():
                             rec=self.recording[row]; rec['samples'].append(sample)
                             diagnostic=sample.get('teacher_diagnostic',{})
@@ -1868,21 +2117,15 @@ class NativeProbe:
                                 local_complete=(rec['measured_lift_seen'] and rec['local_recovery_count']>=5
                                     and sample.get('teacher_recovery_stable_count',0)>=self.teacher_cfg.stable_samples)
                             elif scope in ('first-obstacle','transitions'):
-                                ids=[]
-                                for target,_ in required[row]:
-                                    if target not in ids: ids.append(target)
-                                needed=set(ids[:1 if scope=='first-obstacle' else 2])
-                                subset={tuple(p) for p in required[row] if p[0] in needed}
-                                local_complete=bool(subset and subset<={tuple(p) for p in sample['far_side_recovery']})
+                                local_complete=sample['recovery_result']['success']==[True]
                             local_complete=bool(local_complete and not sample['failure_locked'] and
                                 sample.get('action_matches_request',False) and
                                 not any(sample[k] for k in ('collision','support_lost','penetration','failure')))
                             sample['scope_observation_complete']=local_complete
                             sample['measured_local_lift_seen']=bool(rec['measured_lift_seen'])
                             sample['local_recovery_count']=int(rec['local_recovery_count'])
-                            complete=(scope=='course' and stage==3 and len(required[row])==16 and
-                                {tuple(p) for p in required[row]} <= {tuple(p) for p in sample['receipt']} and
-                                {tuple(p) for p in required[row]} <= {tuple(p) for p in sample['far_side_recovery']})
+                            complete=(scope=='course' and stage==3 and len(required[row])==16
+                                and sample['recovery_result']['success']==[True])
                             horizon=scope=='course' and stage==0 and int(self.frames[row])==1000
                             failure_end=self.failure_bound.update(row,sample['failure_locked'])
                             diagnostic_end=not acceptance and int(self.frames[row])>=diagnostic_steps
@@ -1890,7 +2133,7 @@ class NativeProbe:
                             ending=bool(done[row]) or complete or horizon or diagnostic_end or failure_end or local_complete or batch_end
                             end=None
                             if ending:
-                                end='flat_horizon' if horizon else ('natural_done' if bool(done[row]) else
+                                end='flat_horizon' if horizon and sample['timeout'] else ('natural_done' if bool(done[row]) else
                                     ('teacher_failure_locked' if failure_end else 'task_complete' if complete else
                                      'scope_observed' if local_complete else 'diagnostic_bound' if diagnostic_end else
                                      'diagnostic_failure' if gate.is_source(sample) or gate.sample_reason(sample) else 'diagnostic_interrupted'))
@@ -1901,21 +2144,25 @@ class NativeProbe:
                             rec['trace'].write(json.dumps(sample)+'\n'); rec['trace'].flush()
                             if int(self.frames[row])%5==0 and not bool(done[row]): self.video_frame(row)
                             if ending:
-                                record=self.finish_episode(row,required[row],end,bool(done[row]),sample['timeout'])
-                                gate.observe_record(record,batch_step)
-                                records.append(record); quotas[row]-=1
-                                print('TEACHER_EPISODE '+json.dumps({k:v for k,v in record.items() if k not in ('samples','terminal','video')}),flush=True)
-                                if quotas[row]>0:
-                                    if not bool(done[row]): self.reset_row(row)
-                                    self.episode[row]+=1; self.frames[row]=0; self.attempt[row]=0
-                                    self.bind_reset_identity([row])
-                                    self.support_acquired[row]=False; self.inner_failed[row]=False
-                                    self.failure_bound.reset(row)
-                                    # Teacher sees identity change at synthetic pre-control -1 only.
-                                    mask=t.zeros(4,dtype=t.bool,device=self.env.device); mask[row]=True
-                                    saved=self.frames.clone(); self.frames[row]=-1
-                                    decide(self.state(reset=mask)); self.frames.copy_(saved)
-                                    self.begin_video(row,seed,stage)
+                                endings.append((row,end,sample))
+                        # Every peer's raw trace is durable before row reset can
+                        # mutate shared command or observation buffers.
+                        for row,end,sample in endings:
+                            record=self.finish_episode(row,required[row],end,bool(done[row]),sample['timeout'])
+                            gate.observe_record(record,batch_step)
+                            records.append(record); quotas[row]-=1
+                            print('TEACHER_EPISODE '+json.dumps({k:v for k,v in record.items() if k not in ('samples','terminal','video')}),flush=True)
+                            if quotas[row]>0:
+                                if not bool(done[row]): self.reset_row(row)
+                                self.episode[row]+=1; self.frames[row]=0; self.attempt[row]=0
+                                self.bind_reset_identity([row])
+                                self.support_acquired[row]=False; self.inner_failed[row]=False
+                                self.failure_bound.reset(row)
+                                # Teacher sees identity change at synthetic pre-control -1 only.
+                                mask=t.zeros(4,dtype=t.bool,device=self.env.device); mask[row]=True
+                                saved=self.frames.clone(); self.frames[row]=-1
+                                decide(self.state(reset=mask)); self.frames.copy_(saved)
+                                self.begin_video(row,seed,stage)
                     if gate.failure is not None:
                         # Includes peers already finished before a later artifact
                         # error. Update only the summary; trace/video stay intact.

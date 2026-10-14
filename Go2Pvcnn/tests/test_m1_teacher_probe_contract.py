@@ -76,7 +76,7 @@ def real_video_files(tmp_path_factory):
     import imageio.v2 as imageio
     import numpy as np
     root=tmp_path_factory.mktemp('teacher_video')
-    for count in (10,1000):
+    for count in (10,20,1000):
         path=root/f'{count}.mp4'
         with imageio.get_writer(str(path),fps=10) as writer:
             for i in range(count//5+1):
@@ -116,7 +116,7 @@ def verify_episode(record):
 def episode(stage=3, seed=101, episode_id=0):
     required = [[i, w] for i in range(8) for w in ((0, 2) if i % 2 == 0 else (1, 3))]
     frames = []
-    count = 1000 if stage == 0 else 10
+    count = 1000 if stage == 0 else 20
     for f in range(1, count+1):
         from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES
         from ame_baseline.m1_reference_teacher import TEACHER_DIAGNOSTIC_FIELDS
@@ -169,6 +169,8 @@ def episode(stage=3, seed=101, episode_id=0):
         video=dict(path=str(VIDEOS[count]), sha256=probe().file_digest(VIDEOS[count]), bytes=VIDEOS[count].stat().st_size,
             isolated_robot=True, nonblack=True, frame_indices=list(range(0,count+1,5)),
             sim_times=[f*.02 for f in range(0,count+1,5)], first_frame=0, last_frame=count))
+    from test_m1_teacher_recovery_evidence import recovery_evidence
+    recovery_evidence(record)
     write_trace(record)
     return record
 
@@ -576,6 +578,12 @@ def test_wrapper_changed_target_rejects_label():
 
 def test_locked_failure_counts_in_suite_denominator():
     e=episode(); e['end']='teacher_failure_locked'; e['samples'][-1]['failure_locked']=True
+    # A real lock invalidates this final recovery observation; stale cached
+    # success would be a contradictory record rather than a counted failure.
+    e['samples'][-1]['recovery_input']['valid']=[False]
+    e['samples'][-1]['recovery_result']=dict(eligible=[True],stable=[False],success=[False],vetoed=[False],
+        interval_count=[0],start_frame=[-1],last_frame=[-1],elapsed_s=[0.],
+        start_time_s=[float('nan')],net_forward_m=[float('nan')],reason=['invalid_data'])
     e['terminal']=copy.deepcopy(e['samples'][-1])
     assert verify_episode(e)['complete']
     result=probe().verify_suite([e])
@@ -861,7 +869,7 @@ def diagnostic_runner(tmp_path,monkeypatch,scenario):
     run.producer_backend=module.capture_producer_backend(run.env.device)
     run.replay_backend=run.producer_backend['device']
     flat_horizon=scenario.startswith('flat-horizon-')
-    tx=transaction_fixture(stationary=not flat_horizon)
+    tx=transaction_fixture(stationary=not (flat_horizon or scenario=='crossing'))
     if flat_horizon:
         command=torch.zeros(4,3); command[:,0]=.3
         run.env.command_manager.get_command=lambda name:command
@@ -895,9 +903,14 @@ def diagnostic_runner(tmp_path,monkeypatch,scenario):
         forces=torch.zeros(4,4,3); forces[:,:,2]=50.
         if scenario=='stale-post-load' and bool((run.frames>0).any()): forces.zero_()
         return NS(course_ids=torch.arange(8).expand(4,-1),required_wheels=mask,
+            centers_top=torch.tensor([[-2.+i*.1,0.,.1] for i in range(8)]).expand(4,-1,-1).clone(),
+            half_extents=torch.tensor([.05,.09]).expand(4,8,-1).clone(),
+            course_valid=torch.ones(4,8,dtype=torch.bool),
             root_pos_w=root,root_quat_w=torch.tensor([1.,0.,0.,0.]).expand(4,-1),
             root_lin_vel_w=torch.zeros(4,3),root_ang_vel_w=torch.zeros(4,3),
             com_pos_w=com,wheel_pos_w=wheels,wheel_force_w=forces,measurement_valid=torch.ones(4,dtype=torch.bool),
+            wheel_quat_w=torch.tensor([1.,0.,0.,0.]).expand(4,4,-1).clone(),
+            nominal_root_z_w=torch.full((4,),.62),dt=torch.full((4,),.02),
             control_step=run.frames.clone(),episode_id=run.episode.clone(),
             last_applied_leg_target=torch.tensor(tx['q']).expand(4,-1).clone(),default_joint_pos=defaults.clone(),
             leg_pos=torch.tensor(tx['q']).expand(4,-1).clone())
@@ -935,7 +948,7 @@ def diagnostic_runner(tmp_path,monkeypatch,scenario):
                 executable[3]=False
             return NS(action=torch.tensor(action).expand(4,-1).clone(),active_target=torch.full((4,),-1,dtype=torch.long),
                 active_wheel=torch.full((4,),wheel or 0,dtype=torch.long),diagnostic=data,
-                failure_locked=locked,valid=torch.full((4,),flat_horizon,dtype=torch.bool),
+                failure_locked=locked,valid=torch.full((4,),flat_horizon or scenario=='crossing',dtype=torch.bool),
                 executable=executable,reason=torch.full((4,),10,dtype=torch.long),phase=torch.ones(4,dtype=torch.long))
         def diagnostic_step(self,state,*,active_wheel,lift): return self.decide(state,active_wheel)
         def step(self,state): return self.decide(state,None)
@@ -967,10 +980,15 @@ def diagnostic_runner(tmp_path,monkeypatch,scenario):
             teacher_valid=flat_horizon,student_demonstration_usable=flat_horizon,
             failure_locked=bool(run.last_output.failure_locked[row]),Fz=[0. if scenario=='stale-post-load' else 50.]*4,
             force=measured['forces'],wheel_position=measured['wheels'],wheel_bottom=[0.]*4,obstacle_top=[.1]*8,
+            wheel_quaternion=state().wheel_quat_w[row].tolist(),
+            default_leg_pos=state().leg_pos[row].tolist(),nominal_root_z_w=float(state().nominal_root_z_w[row]),
+            measurement_valid=True,base_contact=False,course_ids=state().course_ids[row].tolist(),
+            control_dt_s=.02,course_centers_top=state().centers_top[row].tolist(),
+            course_half_extents=state().half_extents[row].tolist(),course_valid=state().course_valid[row].tolist(),
             collision=False,support_lost=False,penetration=False,failure=False,
             timeout=flat_horizon and run.stage==0 and int(run.frames[row])>=1000,
             receipt=[],far_side_recovery=[],root=measured['root'],
-            raw_joint_names=list(M1_ASSET_JOINT_NAMES),joints=[0.]*16,**action)
+            raw_joint_names=list(M1_ASSET_JOINT_NAMES),joints=defaults[row].tolist(),**action)
     run.sample=sample
     run.reset_row=lambda row:None
     return run
