@@ -1,5 +1,9 @@
 # M1 AME 越障学习
 
+## 2026-10-14：验证器后端修复与新原生验证
+
+显式使用producer匹配后端复核Teacher证据（de46186），不放宽容差、执行或物理标准。相关测试/独立审查及v4合同通过，3049帧记录无证据错误；但wheel0准备只有env0局部达标，另三行20s实测COM最大9.598mm仍不足10mm，未进入抬落/10cm验证。**当前阻挡是真实支撑几何跟踪，不是跨后端复核；Teacher A仍阻挡BC/PPO，生产/控制器不变。** [最新验证记录](notes/log/2026-10-14-m1-feedback-backend-native.md)。下方旧事务复核阻挡为修复前历史。
+
 ## 2026-10-13 最新：Teacher 有界反馈候选（尚未通过验收）
 
 已实现X轮速/YZ虚拟位移有界反馈、双参考IK和真实执行证据。Ref39a6590经任务审查、整体修复及限定复审；原生合同通过。局部回放env0第44–49帧连续满足实际准备条件，但schema6反馈事务复核不一致，按约定立即停止后续scope；其他三行尚未ready。**尚未抬腿跨越，Teacher A仍BLOCKED，BC/PPO未启动。** PD/物理/成功门槛未放宽，生产及旧PT未动。详见[实施与CPU证据](notes/log/2026-10-13-m1-teacher-bounded-feedback-implementation.md)和[原生停止证据](notes/log/2026-10-13-m1-teacher-bounded-feedback-native.md)。

@@ -1,5 +1,7 @@
 # TestPvcnnWithIsaacsim Notes Index
 
+最新2026-10-14 UTC：[显式后端复核与v4原生](log/2026-10-14-m1-feedback-backend-native.md)de46186修复/相关测试/独立审查及新合同通过，3049帧逐记录证据errors空；控制/物理未改。wheel0准备env0连续6帧达标，另三行20s仍未ready（最大实际COM9.598mm<10mm），后续抬落/10cm未跑；真实支撑几何跟踪为当前阻挡，Teacher A/BC/PPO仍BLOCKED。下方“待确认”为历史。
+
 最新2026-10-13：[有界反馈实现](log/2026-10-13-m1-teacher-bounded-feedback-implementation.md)及限定复审完成39a6590；[v3原生](log/2026-10-13-m1-teacher-bounded-feedback-native.md)合同通过，env0实际ready44–49，但反馈事务证据不一致触发停止，后续NOT_RUN。Teacher A BLOCKED，未抬腿/未BC/PPO/未生产部署。以下旧实施中状态仅为历史。
 
 最新[固定ABAD/8维实施](log/2026-10-12-m1-fixed-abad-eight-action-design.md)：用户最终fresh从0，撤销200迁移。399cf7b/235相关CPU/审查2项修复/5stage原生通过；11runtime逐SHA部署，新PID10660/run20-55-34实际0–3轮/8维/2048/loss有限。model0 CPU39有限模型/33新Adam(step20)/8正std/stage0/v3完整；TB10838/remote6006已指新run。固定目标非锁死，旧PT保留。下方暂停与200续训均历史。
