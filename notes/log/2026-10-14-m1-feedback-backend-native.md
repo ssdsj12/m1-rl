@@ -59,4 +59,6 @@ env0实际局部准备完成保留于49帧的scope_observation_complete；批次
 
 ## 发布
 
-实现已普通push，独立ls-remote确认`10-13=de46186424e0db220f6a1236f32c8f68559ac1bf`；当前追加运行记录尚未提交。
+实现已普通push并独立确认de46186；本日志、README及四个notes入口随后以`41572a3222dc1c3a5eb4ac61e428dfcdf3dfdf67`发布，独立ls-remote确认10-13一致。未stage旧watchers/PT或无关历史notes。
+
+该已发布七文件归档已同步候选根目录（非生产），tar-diff通过，双方tar SHA为`d535cfba0c74a777abcb662e1b8347d6d9be4c4123299da2a15e333985c368da`；候选此前无README/notes，未覆盖现有记录。原生进程和训练进程均未在运行，旧证据/PT/生产保持原样。本段为发布回执补充，不改变原生结果。
