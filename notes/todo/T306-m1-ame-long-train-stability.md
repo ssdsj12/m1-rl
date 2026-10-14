@@ -1,5 +1,7 @@
 # T306 M1 AME Long-Train Stability
 
+LATEST 2026-10-14 UTC teacher-feasibility/crossing-recovery-outcome/physics-callback-clock-quantization OPEN：[最终验证](../log/2026-10-14-m1-dual-support-final-validation.md)。Last Feature02a70cf，相关532CPU及原生控制合同通过；准备探针中PhysX callback实际四步.019999999552965164与配置记录.02不一致，结果监视器逐帧invalid_interval。新增此子节点阻塞恢复验收；下一步绑定回调时间来源/精度并补真实量化时钟反例，不能单纯取相邻差掩盖缺步。SIGINT后exit0但仅四行各91帧部分记录，无最终episode/result，后续单轮/跨越/A/BC/PPO均NOT_RUN。GPU释放/无任务/生产不改。最后完整物理准备旧证据39a6590/de46186保留，新控制合同Verified02a70cf，不混为跨越通过。
+
 LATEST 2026-10-14 UTC teacher-feasibility PLAN REVIEW：[共同计划](../log/2026-10-14-m1-dual-support-crossing-recovery-plan.md)覆盖双几何/生产端证据/0.3秒与1cm恢复/探针生命周期/串行验收。书面规格均已确认，子代理方式保持；Current Work baseline ccbd00f，Last Feature/Verified runtime39a6590/verifier de46186不变。未实现或连接新主机，A/BC/PPO未通过；Next计划审阅。
 
 LATEST 2026-10-14 crossing-recovery-outcome SPEC REVIEW：新增teacher-feasibility子节点，与dual-support-selection关联；用户最终确认跨越优先/过程允许短暂倾斜/跨后0.3秒稳定前进。5帧只作局部记录，拟整机末端窗口及实际净前进门槛见[规格依据](../log/2026-10-14-m1-crossing-recovery-outcome-design.md)。Last Feature/Verified runtime39a6590/verifier de46186不变，Current Work baseline4a48652，未实现/服务器/原生/训练；新host root@a21506654554025984756592尚未核实，旧PID不是续跑依据。Next：审阅书面细化后计划。

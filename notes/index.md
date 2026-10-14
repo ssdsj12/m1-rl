@@ -1,5 +1,7 @@
 # TestPvcnnWithIsaacsim Notes Index
 
+最新2026-10-14 UTC：[最终验证/原生阻塞](log/2026-10-14-m1-dual-support-final-validation.md)。候选02a70cf相关532CPU通过，原生控制合同通过；准备关暴露physics-callback-clock-quantization，四行各91帧部分记录后主动停止，后续抬落/跨越/A均NOT_RUN。GPU已释放，生产/训练未改。下方设计/审批状态为历史。
+
 最新2026-10-14 UTC：[共同实施计划](log/2026-10-14-m1-dual-support-crossing-recovery-plan.md)已写并自审待计划审阅；两份规格已确认，沿用子代理。0.3秒/1cm是跨后整机验收，不逐腿加等待；未runtime/服务器/原生/训练变更。
 
 最新2026-10-14：[跨越优先与0.3秒恢复设计](log/2026-10-14-m1-crossing-recovery-outcome-design.md)：用户最终确认0.3秒而非1秒，整机跨完后在前进中验收，不给每腿加等候；书面细化待审阅/未runtime。新host root@a21506654554025984756592尚未连接，不沿用旧PID；Teacher A/BC/PPO仍未通过。

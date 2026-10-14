@@ -1,5 +1,7 @@
 ## 2026-10-11 active: T306/pure-ppo-learning
 
+最新2026-10-14 UTC T306/teacher-feasibility/crossing-recovery-outcome/physics-callback-clock-quantization OPEN：[最终验证](log/2026-10-14-m1-dual-support-final-validation.md)；02a70cf相关532CPU及原生控制合同通过，准备关发现实际回调时钟与配置dt精度不一致，阻塞恢复验收。已停探针、释放GPU；后续抬落/跨越/A/BC/PPO不运行，先解决时间证据来源，不改控制/物理门槛。
+
 最新2026-10-14 UTC T306/teacher-feasibility PLAN REVIEW：[双几何与跨后恢复计划](log/2026-10-14-m1-dual-support-crossing-recovery-plan.md)完成自审，规格确认已收；待计划审阅后子代理执行。新主机未核实，无runtime/原生/训练变更。
 
 最新2026-10-14 T306/teacher-feasibility/crossing-recovery-outcome SPEC REVIEW：用户确认跨后稳定前进0.3秒，已写整机与单轮分离的[规格记录](log/2026-10-14-m1-crossing-recovery-outcome-design.md)。关联双几何准备修订；不凭此放宽物理/控制底线，不启动训练。新host a21506654554025984756592待只读核实。

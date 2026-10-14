@@ -2,9 +2,9 @@
 
 日期：2026-10-14 UTC；分支10-14；Baseline Ref：4a48652feab8c95f9d4021cce4205f81fd193f63。
 
-状态：用户已确认本书面细化，包括跨后0.3秒恢复、1cm实际净前进及沿用恢复容差。[实施计划](../plans/2026-10-14-m1-dual-support-crossing-recovery.md)已写并自审待计划审阅，未实现、未部署、未开始训练或原生测试。
+状态：用户已确认本书面细化及[实施计划](../plans/2026-10-14-m1-dual-support-crossing-recovery.md)。隔离候选02a70cf已实现，532项相关CPU和原生控制合同通过；准备关发现物理回调时间与配置dt精度不一致，结果端invalid_interval，现已停止后续。0.3秒/1cm目标和物理门槛不变，时间证据来源需修订，未开训练、未证明跨越。[最终证据](../../../notes/log/2026-10-14-m1-dual-support-final-validation.md)优先于下方历史设计状态。
 
-新服务器由用户指定为 `root@a21506654554025984756592`。尚未连接核实文件、环境或进程；旧主机路径/PID不能当作新主机事实。
+新服务器由用户指定为 `root@a21506654554025984756592`，本轮已核实环境及隔离candidate20261014；原生启动前仍需重验进程/GPU。旧主机路径/PID不能当作新主机事实。
 
 关联：[双几何准备筛选](2026-10-14-m1-dual-support-selection-design.md)、[支撑/IK规格](2026-10-13-m1-support-ik-redesign-design.md)、[设计记录](../../../notes/log/2026-10-14-m1-crossing-recovery-outcome-design.md)。本规格是验收语义补充，不替代双几何筛选或授权新的动态控制器。
 

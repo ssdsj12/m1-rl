@@ -1,0 +1,27 @@
+# 双几何准备与跨后恢复实施记录
+
+- 日期：2026-10-14 UTC；Stage/Todo：T306/teacher-feasibility/dual-support-selection + crossing-recovery-outcome。
+- Baseline Ref：abfdf0e52618b0e8aac8e55823374a82de05a03d；Candidate Ref：02a70cfcf0a9c16101f581c60f5193b1a17728a8；相关532CPU及原生控制合同已验证，完整准备旧证据runtime39a6590/verifier de46186保留。新准备关发现时间证据精度问题，当前阻塞，不能宣称完成。
+- 输入：[已批准计划](../../docs/superpowers/plans/2026-10-14-m1-dual-support-crossing-recovery.md)与两份规格；用户确认执行，沿用子代理。
+- 隔离：应用worktree工具在上层仓库无法解析abfdf0e，改用目标仓库已忽略的.worktrees/dual-support-recovery；分支codex/m1-dual-support-recovery。主目录10-14历史dirty/watchers原样保留，不自动发布。
+- 新主机root@a21506654554025984756592已只读确认；/opt/conda/envs/env_issacsim/bin/python，torch2.7.0+cu128/pytest9.0.3。快照无train/play/probe，GPU0为1MiB；非持续安全保证，启动原生前须重验。
+- 新隔离目录/tmp/m1-teacher-student-candidate-20261014事前确认不存在，已从本地BASE归档Go2Pvcnn/m1创建。旧candidate20261013/生产均未改。
+- 本地内置Python缺torch；CPU测试在新隔离目录运行，CUDA_VISIBLE_DEVICES为空/PYTHONPATH=.:tests:rsl_rl。基线命令python -m pytest tests/test_m1_teacher_pose.py tests/test_m1_teacher_ik.py -q：57 passed in4.21s，exit0。旧候选的57passed4.43s只是环境先验，不混为新目录结果。
+- 过程裁定：实现任务串行避免共享Git索引/探针/候选冲突；Task1允许为必填新参数机械迁移Teacher调用点，Task2才加生产端证据；CPU测试后端显式记录，不冒充本地/GPU物理验证。代价分别是串行时间、Task1审查面略增及远程延迟。
+- Task1候选2232be5：RED17failed/19passed（新增必填接口未实现）；GREEN pose36passed3.65s，IK/reference_commit81passed12.89s；3文件本地/候选SHA逐项一致。全库pytest一次收集2errors10.06s：缺pxr、既有同名test_m1_teacher_obstacle_hold.py冲突，不是全库通过。独立规格/质量审查通过，无Critical/Important/Minor；物理验证仍未运行。
+- Task2候选fdb530a：首轮RED82passed/10failed（27.55s），新增边界/observer/schema7缺失的预期失败；自查补缺cfg/隐藏选择诊断及事务绑定反例，最终六文件150passed56.57s；四文件本地/远端SHA一致。全库收集仍2errors（pxr/重复basename）4.09s。独立审查进行中，未声称物理通过。
+- Task2审查修复3b37207：原低COM不LIFT测试被diagnostic lift=False/未prepared遮蔽；改为已prepared正常course的9mm/12mm成对用例。内存删除COM门槛时旧测试仍pass、新9mm失败，原实现两文件100passed32.98s；独立复查通过，无剩余问题。仅测试修改，控制门槛不变。
+- Task3纯恢复监视器开始；reset(rows,scope)采用选中行子批scope（B等于选中数），避免全批/子批自动推断；Task4适配器必须按此显式映射。尚无Task3完成结论。
+- Task3候选84af7ab：48passed3.14s，新增module/tests本地及远端SHA一致；全库收集仍2errors3.89s。独立审查规格/质量通过，0Critical/0Important；1Minor为多行非升序reset测试覆盖建议，记录供最终审查。Task4实际receipt-ID映射/终帧/探针接线开始，不能把pure monitor通过当作物理验收。
+- 主控补充probe_contract CPU测试中SSH中断；确认自身孤儿PID21981及candidate cwd后SIGTERM，该次部分进度不计通过。完整probe回归由Task4/5持久日志重新取证，无GPU/native/生产影响。
+- 当前：尚未新的native、训练、BC/PPO或真实跨越结果。Teacher A仍未通过。
+- Task4候选63a0e65+b47b17a：新增scope冻结、实际终帧/同行快照和逐帧恢复重放，结果端精确提升float32实测值到float64，并保留native double时间；修复100/10000秒全局时钟下完整0.3秒被舍入拒绝的问题，容差仍限8eps及min_dt/10000，不补控制步。严格拒绝浮点ID、数值/字符串冒充bool。六文件本地/远端SHA一致。
+- Task4最终冻结定向回归13文件：508passed、2deselected，394.83秒，exit0；排除项明确为两项200回合完整分母测试，留最终审查后冻结版本执行，不称完整套件通过。前次8failed/231passed来自终帧旧缓存和fake名义高度精度不一致，测试数据已修正；早期断线/终止测试只有部分输出，不计通过。独立Task4审查进行中。
+- CPU定向命令使用CUDA_VISIBLE_DEVICES为空、OMP_NUM_THREADS=1/MKL_NUM_THREADS=1，仅进程级减少小张量线程开销；不改全局环境，不据此推断GPU物理结果。Task4正式全量留Task5，避免运行时AST读盘遇到继续编辑而混版本。
+- Task4独立审查定位中间帧receipt未绑定far_side_recovery：删除窗口凭据且重绑trace仍会误成功，4负例复现。2b1d013逐帧验证far集合必须属于receipt，31恢复+4兼容测试通过；复审再发现集合化先于类型检查会隐藏bool/float同值重复，4负例复现，3db1259改为原始pair先检查后集合化，30证据+3生命周期正例通过。限定复审无剩余Critical/Important。此前508项不能冒充这两次修复后的完整回归。
+- Task1–4任务完成；Task5由独立整分支审查、最终冻结14文件完整测试及串行物理门禁收尾，当前均不宣称已通过。新主机再次只读核实GPU1MiB且无任务进程，实际启动前仍须重验。
+- 最终整分支审查：0Critical/1Important/1Minor；Important为原生观测把float32的20ms写入double时钟证据，完整窗口会被错误判为断帧。02a70cf仅令sample使用原生Python env.step_dt，未改控制dt或放宽容差；新增真实sample生产路径0/100/10000秒完整、少步及断帧测试。Minor多行reset顺序覆盖同步补齐。RED9failed/2passed；覆盖GREEN100passed38.31秒exit0；一次集中修复后的限定复审无剩余问题。
+- 最终冻结14文件收集532个测试，530项与两项各200回合测试分三进程运行；收集node ID排序并集与全量逐字一致。每组独立basetemp，代码/环境一致，保留全部样本分母。代价是三组之间不验证同进程测试顺序相互影响；不冒充全库或物理通过。日志/退出码目录：/tmp/m1-teacher-student-candidate-20261014/Go2Pvcnn/validation-final-02a70cf；实际运行结果待回收。
+- Next：最终CPU三组全部exit0后才控制合同→准备→抬落→首障碍→衔接→课程；首个关键失败按计划停止后续scope，不自动调整控制参数。
+- 最终命令、532节点分组、冻结SHA及各门禁回执集中在[最终验证记录](2026-10-14-m1-dual-support-final-validation.md)；本实施日志保留各任务RED/GREEN与审查历史。
+- 收尾最新：532/532相关CPU全部exit0；原生控制/空地/碰撞/终止/相机通过，140个实际source模块SHA匹配，空地2秒前进.571159m。准备关四行各91帧暴露PhysX callback float32步长与env.step_dt记录不一致，各90次invalid_interval；核实自身PID/cwd后SIGINT停止，GPU1MiB、无任务残留。信号后exit0但无最终result/episode，不是完成。新增T306/crossing-recovery-outcome/physics-callback-clock-quantization OPEN，后续全部NOT_RUN；未改控制/生产/奖励/PT，未开BC/PPO。本轮最终审查集中修复已用完，新增原生问题按计划先诊断交接，不继续临时修补或调参。
