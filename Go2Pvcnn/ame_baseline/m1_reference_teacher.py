@@ -699,7 +699,8 @@ class ReferenceTeacher:
             if phase == Phase.BALANCE:
                 choice = choose_support_pose(measured.body, work['anchor_pose'], accepted.body,
                     s.com_pos_w[i:i+1], work['wheel_anchor'], torch.tensor([wheel], device=q.device),
-                    s.nominal_root_z_w[i:i+1], q, branch, self.ik_cfg)
+                    s.nominal_root_z_w[i:i+1], q, branch, self.ik_cfg,
+                    measured_wheels_w=measured.wheels_w)
                 evidence.update(requested=choice.reference, attempted=choice.reference, ik=choice.ik,
                     predicted_com_margin_m=float(choice.predicted_margin_m[0]),
                     candidate_com_margin_m=float(choice.predicted_margin_m[0]),

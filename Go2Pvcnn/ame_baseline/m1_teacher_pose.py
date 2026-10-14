@@ -49,6 +49,7 @@ class PoseChoice:
     valid: torch.Tensor
     candidate_index: torch.Tensor
     predicted_margin_m: torch.Tensor
+    measured_triangle_margin_m: torch.Tensor
     candidate_count: torch.Tensor
 
 
@@ -147,13 +148,16 @@ def _ik_rows(result, ids):
 
 
 def choose_support_pose(measured, anchor, accepted, com_w, wheel_anchors_w,
-                        active_wheel, nominal_root_z_w, q_seed, branch_q, cfg: IKConfig):
+                        active_wheel, nominal_root_z_w, q_seed, branch_q, cfg: IKConfig,
+                        *, measured_wheels_w):
     """Search 125 fixed heading-frame offsets and previous accepted pose125.
 
     Ordering is x outer/y middle/lowering inner. Candidate count is the number
     within the geometric envelope and origin-relative height floor, including
     duplicates, before COM/IK filtering. Grid orientation is level with anchor
     yaw; previous accepted orientation may still be returning toward level.
+    The same predicted COM must pass both fixed-anchor and measured-wheel
+    support triangles. Only fixed anchors form the four-leg IK targets.
 
     No feasible choice returns candidate125 as diagnostics with index=-1 and
     valid=False. Its reference and IK still correspond; caller must retain its
@@ -167,6 +171,7 @@ def choose_support_pose(measured, anchor, accepted, com_w, wheel_anchors_w,
     batch, pos = measured.pos_w.shape[0], measured.pos_w
     for value, shape, name in ((com_w, (batch, 3), 'com_w'),
                               (wheel_anchors_w, (batch, 4, 3), 'wheel_anchors_w'),
+                              (measured_wheels_w, (batch, 4, 3), 'measured_wheels_w'),
                               (nominal_root_z_w, (batch,), 'nominal_root_z_w'),
                               (q_seed, (batch, 12), 'q_seed'), (branch_q, (batch, 12), 'branch_q')):
         _tensor(value, shape, pos, name)
@@ -203,10 +208,14 @@ def choose_support_pose(measured, anchor, accepted, com_w, wheel_anchors_w,
     predicted = positions+torch.einsum('bnij,bj->bni', _rotation(quats.reshape(-1, 4)).reshape(batch, 126, 3, 3), com_offset)
     margins, support_ok = support_margin(predicted.reshape(-1, 3), candidate.wheels_w,
                                          active_wheel[:, None].expand(-1, 126).reshape(-1))
+    measured_margins, measured_support_ok = support_margin(predicted.reshape(-1, 3),
+        measured_wheels_w[:, None].expand(-1, 126, -1, -1).reshape(-1, 4, 3),
+        active_wheel[:, None].expand(-1, 126).reshape(-1))
     solves = solve_constrained_ik(q_seed[:, None].expand(-1, 126, -1).reshape(-1, 12),
                                   world_to_goal_body(candidate),
                                   branch_q[:, None].expand(-1, 126, -1).reshape(-1, 12), cfg)
     eligible = (envelope & support_ok.reshape(batch, 126) & (margins.reshape(batch, 126) >= .01)
+                & measured_support_ok.reshape(batch, 126) & (measured_margins.reshape(batch, 126) >= .01)
                 & solves.valid.reshape(batch, 126) & _pose_valid(measured)[:, None]
                 & _pose_valid(accepted)[:, None])
     cost = ((offsets-accepted_offset[:, None])/pos.new_tensor([.04, .06, .08])).square().sum(-1)
@@ -217,7 +226,7 @@ def choose_support_pose(measured, anchor, accepted, com_w, wheel_anchors_w,
     ids = torch.arange(batch, device=pos.device)*126+diagnostic_index
     reference = PoseReference(BodyPose(candidate.body.pos_w[ids], candidate.body.quat_w[ids]), candidate.wheels_w[ids])
     return PoseChoice(reference, _ik_rows(solves, ids), valid,
-                       torch.where(valid, best, -1), margins[ids], count)
+                       torch.where(valid, best, -1), margins[ids], measured_margins[ids], count)
 
 
 def _slerp(start, end, alpha):

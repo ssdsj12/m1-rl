@@ -38,11 +38,153 @@ def setup(pose, batch=1, dtype=torch.float64):
     return q, body, pose.PoseReference(body, ik.body_feet(q)+body.pos_w[:, None])
 
 
-def search(pose, body, ref, q, com=None, accepted=None, nominal_z=None):
+def search(pose, body, ref, q, com=None, accepted=None, nominal_z=None, *, measured_wheels):
     return pose.choose_support_pose(body, body, body if accepted is None else accepted,
         ref.wheels_w[:, 1:].mean(1) if com is None else com, ref.wheels_w,
         torch.zeros(q.shape[0], dtype=torch.long), body.pos_w[:, 2] if nominal_z is None else nominal_z,
-        q, q, ik.IKConfig())
+        q, q, ik.IKConfig(),
+        measured_wheels_w=measured_wheels)
+
+
+def fixed_solver(pose, monkeypatch):
+    """Isolate candidate geometry from physical IK reachability."""
+    recorded = []
+    def solve(seed, target, branch, cfg):
+        recorded.append(target.clone())
+        rows = seed.shape[0]
+        ok = torch.ones((rows, 4), dtype=torch.bool, device=seed.device)
+        return ik.IKResult(seed.clone(), ok.all(-1), seed.new_zeros(rows, 4),
+            ok.clone(), ok.clone(), seed.new_full((rows, 4), .2), ok.clone(),
+            torch.zeros((rows, 4), dtype=torch.long, device=seed.device),
+            torch.zeros((rows, 4), dtype=torch.long, device=seed.device))
+    monkeypatch.setattr(pose, 'solve_constrained_ik', solve)
+    return recorded
+
+
+def triangle_setup(pose, batch=1, dtype=torch.float64):
+    q, body, _ = setup(pose, batch, dtype)
+    anchors = q.new_tensor([[[9., 9., 0.], [0., 0., 0.], [1., 0., 0.], [0., 1., 0.]]]).repeat(batch, 1, 1)
+    return q, body, pose.PoseReference(body, anchors), body.pos_w+q.new_tensor([[.3, .3, 0.]])
+
+
+def test_previous_candidate_must_pass_measured_triangle(pose, monkeypatch):
+    fixed_solver(pose, monkeypatch)
+    q, body, ref, com = triangle_setup(pose)
+    accepted = pose.BodyPose(body.pos_w+q.new_tensor([[.005, 0., 0.]]), body.quat_w)
+    measured = ref.wheels_w+q.new_tensor([[[.30, 0., 0.]]])
+    predicted_previous = com+(accepted.pos_w-body.pos_w)
+    anchor_margin, _ = pose.support_margin(predicted_previous, ref.wheels_w, torch.tensor([0]))
+    measured_margin, _ = pose.support_margin(predicted_previous, measured, torch.tensor([0]))
+    assert anchor_margin.item() >= .010 and measured_margin.item() < .010
+    choice = search(pose, body, ref, q, com=com, accepted=accepted, measured_wheels=measured)
+    assert choice.valid.all() and choice.candidate_index.item() != 125
+    assert choice.predicted_margin_m.item() >= .010 and choice.measured_triangle_margin_m.item() >= .010
+    assert choice.candidate_index.item() == 85 and choice.candidate_count.item() == 126
+    # Moving only the measured triangle beyond the envelope makes every candidate fail.
+    far_measured = measured+q.new_tensor([[[2., 0., 0.]]])
+    invalid = search(pose, body, ref, q, com=com, accepted=accepted, measured_wheels=far_measured)
+    assert not invalid.valid.any() and invalid.candidate_index.item() == -1
+    assert invalid.candidate_count.item() == 126 and invalid.ik.valid.all()
+    assert torch.equal(invalid.reference.body.pos_w, accepted.pos_w)
+    assert torch.equal(invalid.reference.wheels_w, ref.wheels_w)
+    assert torch.equal(invalid.predicted_margin_m, anchor_margin)
+    diagnostic_margin, _ = pose.support_margin(predicted_previous, far_measured, torch.tensor([0]))
+    assert torch.equal(invalid.measured_triangle_margin_m, diagnostic_margin)
+
+
+@pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
+def test_dual_geometry_contract_and_invariance(pose, monkeypatch, dtype):
+    recorded = fixed_solver(pose, monkeypatch)
+    q, body, ref, com = triangle_setup(pose, dtype=dtype)
+    anchors_before = ref.wheels_w.clone()
+    same = search(pose, body, ref, q, com=com, measured_wheels=ref.wheels_w.clone())
+    # Original single-geometry rule, including the 60/125 duplicate cost tie.
+    offsets = torch.stack(torch.meshgrid(q.new_tensor([-.04, -.02, 0., .02, .04]),
+        q.new_tensor([-.06, -.03, 0., .03, .06]), q.new_tensor([0., -.02, -.04, -.06, -.08]),
+        indexing='ij'), -1).reshape(125, 3)
+    offsets = torch.cat((offsets, q.new_zeros(1, 3)))
+    margins, geometry_ok = pose.support_margin(com+offsets, ref.wheels_w.expand(126, -1, -1), torch.zeros(126, dtype=torch.long))
+    costs = (offsets/q.new_tensor([.04, .06, .08])).square().sum(-1)
+    expected = torch.where(geometry_ok & (margins >= .010), costs, torch.full_like(costs, float('inf'))).argmin()
+    assert same.valid.all() and same.candidate_index.item() == expected.item() == 60
+    assert same.candidate_count.item() == 126
+    assert torch.equal(same.predicted_margin_m, same.measured_triangle_margin_m)
+    assert same.measured_triangle_margin_m.shape == (1,) and same.measured_triangle_margin_m.dtype == dtype
+    assert same.measured_triangle_margin_m.device == q.device
+    changed_anchor, changed_measured = ref.wheels_w.clone(), ref.wheels_w.clone()
+    changed_anchor[:, 0] = q.new_tensor([[-800., 300., -20.]])
+    changed_measured[:, 0] = q.new_tensor([[700., -900., 50.]])
+    changed = search(pose, body, pose.PoseReference(body, changed_anchor), q, com=com, measured_wheels=changed_measured)
+    assert torch.equal(changed.candidate_index, same.candidate_index)
+    assert torch.equal(changed.predicted_margin_m, same.predicted_margin_m)
+    assert torch.equal(changed.measured_triangle_margin_m, same.measured_triangle_margin_m)
+    # A second, rotated/translated row must independently select the same candidate.
+    accepted = pose.BodyPose(body.pos_w+q.new_tensor([[.005, 0., 0.]]), body.quat_w)
+    measured = ref.wheels_w+q.new_tensor([[[.30, 0., 0.]]])
+    single = search(pose, body, ref, q, com=com, accepted=accepted, measured_wheels=measured)
+    yaw, shift = .71, q.new_tensor([[5., -3., 2.]])
+    rot = rotation(0., 0., yaw, dtype)
+    batch_body = pose.BodyPose(torch.cat((body.pos_w, body.pos_w@rot.T+shift)), torch.cat((body.quat_w, quat(y=yaw, dtype=dtype))))
+    batch_accepted = pose.BodyPose(torch.cat((accepted.pos_w, accepted.pos_w@rot.T+shift)), batch_body.quat_w.clone())
+    batch_anchors = torch.cat((ref.wheels_w, ref.wheels_w@rot.T+shift[:, None]))
+    batch_measured = torch.cat((measured, measured@rot.T+shift[:, None]))
+    batch_com = torch.cat((com, com@rot.T+shift))
+    anchor_copy, measured_copy = batch_anchors.clone(), batch_measured.clone()
+    batched = search(pose, batch_body, pose.PoseReference(batch_body, batch_anchors), q.repeat(2, 1),
+        com=batch_com, accepted=batch_accepted, measured_wheels=batch_measured)
+    assert batched.valid.all() and batched.candidate_index.tolist() == [85, 85]
+    atol = 2e-6 if dtype == torch.float32 else 1e-12
+    assert torch.allclose(batched.predicted_margin_m, single.predicted_margin_m.expand(2), atol=atol)
+    assert torch.allclose(batched.measured_triangle_margin_m, single.measured_triangle_margin_m.expand(2), atol=atol)
+    assert torch.equal(ref.wheels_w, anchors_before) and torch.equal(batch_anchors, anchor_copy)
+    assert torch.equal(batch_measured, measured_copy) and torch.equal(batched.reference.wheels_w, batch_anchors)
+    # IK targets are anchored even when measured wheels differ.
+    selected_targets = recorded[-1].reshape(2, 126, 4, 3)[torch.arange(2), batched.candidate_index]
+    assert torch.allclose(selected_targets, pose.world_to_goal_body(batched.reference), atol=atol)
+    broken = batch_measured.clone()
+    broken[1, 1, 0] = float('nan')
+    isolated = search(pose, batch_body, pose.PoseReference(batch_body, batch_anchors), q.repeat(2, 1),
+        com=batch_com, accepted=batch_accepted, measured_wheels=broken)
+    assert isolated.valid.tolist() == [True, False] and isolated.candidate_index.tolist() == [85, -1]
+    assert torch.equal(isolated.predicted_margin_m[:1], batched.predicted_margin_m[:1])
+    assert torch.equal(isolated.measured_triangle_margin_m[:1], batched.measured_triangle_margin_m[:1])
+
+
+@pytest.mark.parametrize('geometry', ['anchor', 'measured'])
+@pytest.mark.parametrize('bad', ['nan', 'degenerate'])
+def test_dual_geometry_numeric_invalid_rows(pose, monkeypatch, geometry, bad):
+    fixed_solver(pose, monkeypatch)
+    q, body, ref, com = triangle_setup(pose, 2)
+    anchors, measured = ref.wheels_w.clone(), ref.wheels_w.clone()
+    broken = anchors if geometry == 'anchor' else measured
+    if bad == 'nan':
+        broken[1, 2, 2] = float('nan')
+    else:
+        broken[1, 3] = 2*broken[1, 2]-broken[1, 1]
+    choice = search(pose, body, pose.PoseReference(body, anchors), q, com=com, measured_wheels=measured)
+    assert choice.valid.tolist() == [True, False] and choice.candidate_index.tolist() == [60, -1]
+    assert choice.candidate_count.tolist() == [126, 126]
+    diagnostic_margin = choice.predicted_margin_m if geometry == 'anchor' else choice.measured_triangle_margin_m
+    assert torch.isnan(diagnostic_margin[1])
+
+
+@pytest.mark.parametrize('bad', ['shape', 'dtype', 'device'])
+def test_measured_wheels_structural_contract(pose, bad):
+    q, body, ref = setup(pose)
+    measured = {'shape': ref.wheels_w[:, :3], 'dtype': ref.wheels_w.float(),
+                'device': ref.wheels_w.to(device='meta')}[bad]
+    with pytest.raises(ValueError, match='measured_wheels_w'):
+        search(pose, body, ref, q, measured_wheels=measured)
+
+
+def test_measured_wheels_is_required_keyword(pose):
+    q, body, ref = setup(pose)
+    args = (body, body, body, ref.wheels_w[:, 1:].mean(1), ref.wheels_w,
+            torch.zeros(1, dtype=torch.long), body.pos_w[:, 2], q, q, ik.IKConfig())
+    with pytest.raises(TypeError, match='measured_wheels_w'):
+        pose.choose_support_pose(*args)
+    with pytest.raises(TypeError):
+        pose.choose_support_pose(*args, ref.wheels_w)
 
 
 def test_full_world_body_transform_with_roll_pitch_yaw(pose):
@@ -73,7 +215,7 @@ def test_origin_relative_height_floor(pose, monkeypatch):
     body.pos_w[:, 2] = q.new_tensor([.60, 7.60])
     ref = pose.PoseReference(body, ik.body_feet(q)+body.pos_w[:, None])
     recorded = record_solver(pose, monkeypatch)
-    result = search(pose, body, ref, q, nominal_z=q.new_tensor([.62, 7.62]))
+    result = search(pose, body, ref, q, nominal_z=q.new_tensor([.62, 7.62]), measured_wheels=ref.wheels_w)
     assert result.valid.all() and result.candidate_count.tolist() == [101, 101]
     target = recorded[0][0].reshape(2, 126, 4, 3)
     finite = torch.isfinite(target).all(dim=(-1, -2))
@@ -101,7 +243,7 @@ def test_search_envelope_and_stable_tie_order(pose, monkeypatch):
     ref = pose.PoseReference(body, wheels)
     com = ik.body_feet(q)[:, 1:].mean(1) @ rotation(.12, -.08, y).T+body.pos_w
     recorded = record_solver(pose, monkeypatch)
-    result = search(pose, body, ref, q, com=com, accepted=accepted)
+    result = search(pose, body, ref, q, com=com, accepted=accepted, measured_wheels=ref.wheels_w)
     assert result.valid.item() and result.candidate_count.item() == 126
     assert result.candidate_index.item() == 60  # x=0,y=0,z=0 before duplicate125.
     assert torch.equal(result.reference.wheels_w, wheels)
@@ -119,7 +261,7 @@ def test_candidate_cost_uses_heading_normalized_displacement(pose, monkeypatch):
     q, body, ref = setup(pose)
     accepted = pose.BodyPose(body.pos_w-q.new_tensor([[0., 0., .07]]), body.quat_w)
     recorded = record_solver(pose, monkeypatch)
-    result = search(pose, body, ref, q, accepted=accepted)
+    result = search(pose, body, ref, q, accepted=accepted, measured_wheels=ref.wheels_w)
     assert result.valid.item()
     targets, solves = recorded[0]
     positions = ref.wheels_w[0, 0]-targets[:, 0]
@@ -187,7 +329,7 @@ def test_predicted_com_does_not_certify_measured_support(pose):
     com = body.pos_w+q.new_tensor([[-.009, .009, -.05]])
     margin, valid = pose.support_margin(com, ref.wheels_w, torch.tensor([0]))
     assert valid.item() and margin.item() < .01
-    result = search(pose, body, ref, q, com=com)
+    result = search(pose, body, ref, q, com=com, measured_wheels=ref.wheels_w)
     assert result.valid.item() and result.predicted_margin_m.item() >= .01
     assert not {'success', 'phase', 'measured_support_ok'} & {f.name for f in fields(result)}
 
@@ -197,7 +339,7 @@ def test_invalid_row_isolation_and_accepted_envelope(pose):
     accepted = pose.BodyPose(body.pos_w.clone(), body.quat_w.clone())
     accepted.pos_w[1, 0] += .041
     body.quat_w[2] = 0.
-    result = search(pose, body, ref, q, accepted=accepted)
+    result = search(pose, body, ref, q, accepted=accepted, measured_wheels=ref.wheels_w)
     assert result.valid.tolist() == [True, True, False]
     assert result.candidate_count[1].item() == 125 and result.candidate_index[1].item() < 125
     assert result.candidate_index[2].item() == -1
@@ -265,7 +407,7 @@ def test_mixed_rows_preserve_first_accepted_step(pose):
 
 def test_no_support_candidate_does_not_expand_envelope(pose):
     q, body, ref = setup(pose)
-    result = search(pose, body, ref, q, com=body.pos_w+q.new_tensor([[2., 2., 0.]]))
+    result = search(pose, body, ref, q, com=body.pos_w+q.new_tensor([[2., 2., 0.]]), measured_wheels=ref.wheels_w)
     assert not result.valid.item() and result.candidate_index.item() == -1
     assert result.candidate_count.item() == 126
     assert torch.equal(result.reference.body.pos_w, body.pos_w)
