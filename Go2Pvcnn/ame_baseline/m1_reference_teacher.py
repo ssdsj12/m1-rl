@@ -35,7 +35,7 @@ from .m1_ame_contract import (M1_LEG_ACTION_SCALE_RAD, M1_WHEEL_ACTION_SCALE_RAD
 from .m1_reference_geometry import cylinder_bottom
 from .m1_crossing_landing import crossing_touchdown_safe
 from .m1_teacher_ik import body_feet, body_jacobian, dls_step, IKConfig
-from .m1_teacher_pose import (BodyPose, PoseReference, world_to_goal_body,
+from .m1_teacher_pose import (BodyPose, PoseReference, PoseChoice, world_to_goal_body,
     choose_support_pose, backtrack_feedback_reference, feedback_command, support_margin)
 from .m1_teacher_feedback import (FeedbackConfig, FeedbackState, propose_feedback,
     select_integral, recompute_feedback)
@@ -88,7 +88,8 @@ TEACHER_DIAGNOSTIC_FIELDS = tuple(
        'attempted_body', 'accepted_world', 'accepted_body')
        for leg in range(4) for axis in ('x', 'y', 'z')]
     + [f'com_{axis}' for axis in ('x', 'y', 'z')]
-    + ['measured_com_margin_m', 'predicted_com_margin_m', 'candidate_com_margin_m']
+    + ['measured_com_margin_m', 'predicted_com_margin_m', 'candidate_com_margin_m',
+       'candidate_measured_triangle_margin_m']
     + [f'ik_{name}_{leg}' for name in ('residual_m', 'joint_limit_ok', 'branch_ok',
        'extension_margin_rad', 'workspace_ok', 'iterations', 'reason') for leg in range(4)]
     + [f'{kind}_q_{joint}' for kind in ('attempted', 'accepted', 'last_applied') for joint in range(12)]
@@ -189,7 +190,7 @@ class TeacherConfig:
     @property
     def fingerprint(self):
         payload = dict(config=asdict(self), algorithm=REFERENCE_COMMIT,
-                       implementation='support-ik-transaction-v8', diagnostic_fields=TEACHER_DIAGNOSTIC_FIELDS,
+                       implementation='support-ik-transaction-v9', diagnostic_fields=TEACHER_DIAGNOSTIC_FIELDS,
                        diagnostic_integer_fields=TEACHER_DIAGNOSTIC_INTEGER_FIELDS,
                        asset_order=M1_ASSET_JOINT_NAMES, leg_scale=M1_LEG_ACTION_SCALE_RAD,
                        wheel_scale=M1_WHEEL_ACTION_SCALE_RAD_S,
@@ -532,7 +533,8 @@ class ReferenceTeacher:
                      'feedback_first_backtrack_index','feedback_first_transaction_valid'):
             values[name]=evidence.get(name,-1 if name == 'feedback_first_backtrack_index' else 0)
         put('support_slip_', evidence.get('slip'), tuple(f'{j}_{a}' for j in range(4) for a in ('x', 'y')))
-        for name in ('measured_com_margin_m', 'predicted_com_margin_m', 'candidate_com_margin_m', 'candidate_index',
+        for name in ('measured_com_margin_m', 'predicted_com_margin_m', 'candidate_com_margin_m',
+                     'candidate_measured_triangle_margin_m', 'candidate_index',
                      'candidate_count', 'backtrack_index'):
             if name in evidence:
                 values[name] = evidence[name]
@@ -557,6 +559,16 @@ class ReferenceTeacher:
             torch.tensor([executable], dtype=torch.bool, device=device))
         row['output'] = out
         return self._clone_output(out)
+
+    def _select_preparation_pose(self, s: TeacherState, i: int, work: dict,
+                                 accepted: PoseReference, q: torch.Tensor,
+                                 branch: torch.Tensor) -> PoseChoice:
+        """Single BALANCE target search from the same measured input snapshot."""
+        measured = self._reference(s, i)
+        return choose_support_pose(measured.body, work['anchor_pose'], accepted.body,
+            s.com_pos_w[i:i+1], work['wheel_anchor'],
+            torch.tensor([work['wheel']], device=q.device), s.nominal_root_z_w[i:i+1],
+            q, branch, self.ik_cfg, measured_wheels_w=measured.wheels_w)
 
     def _step_row(self, s, i, diagnostic):
         cfg, evidence = self.cfg, {}
@@ -697,13 +709,11 @@ class ReferenceTeacher:
             speed.zero_()
             goal = work.get('goal', accepted)
             if phase == Phase.BALANCE:
-                choice = choose_support_pose(measured.body, work['anchor_pose'], accepted.body,
-                    s.com_pos_w[i:i+1], work['wheel_anchor'], torch.tensor([wheel], device=q.device),
-                    s.nominal_root_z_w[i:i+1], q, branch, self.ik_cfg,
-                    measured_wheels_w=measured.wheels_w)
+                choice = self._select_preparation_pose(s, i, work, accepted, q, branch)
                 evidence.update(requested=choice.reference, attempted=choice.reference, ik=choice.ik,
                     predicted_com_margin_m=float(choice.predicted_margin_m[0]),
                     candidate_com_margin_m=float(choice.predicted_margin_m[0]),
+                    candidate_measured_triangle_margin_m=float(choice.measured_triangle_margin_m[0]),
                     candidate_index=int(choice.candidate_index[0]), candidate_count=int(choice.candidate_count[0]))
                 if not bool(choice.valid[0]):
                     return fail(Reason.IK_INVALID, FreezeReason.IK, count=True)

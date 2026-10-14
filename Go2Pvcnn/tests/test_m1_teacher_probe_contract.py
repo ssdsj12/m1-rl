@@ -129,7 +129,8 @@ def episode(stage=3, seed=101, episode_id=0):
             action_process_count=1,physics_decimation=4,action_matches_request=True,
             requested_processed_targets=[0.]*16,action_default_joint_pos=[0.]*16,
             action_target_dtype='float32',
-            teacher_diagnostic=no_transaction_diagnostic(),feedback_context=None,last_applied_leg_target=[0.]*12,
+            teacher_diagnostic=no_transaction_diagnostic(),feedback_context=None,selection_context=None,
+            last_applied_leg_target=[0.]*12,
             teacher_input_frame=f-1,teacher_input_episode_id=episode_id,teacher_input_sim_time=(f-1)*.02,
             teacher_action=[0.]*16,executed_action=[0.]*16,processed_targets=[0.]*16,
             action_joint_names=list(M1_ASSET_JOINT_NAMES),processed_target_joint_names=list(M1_ASSET_JOINT_NAMES),
@@ -614,7 +615,7 @@ def test_missing_video_or_hash_fails_acceptance():
 def test_old_schema_readable_without_new_field_fabrication():
     e=episode(); e.pop('schema_version')
     result=verify_episode(e)
-    assert not result['success'] and 'legacy schema lacks actual apply evidence' in result['errors']
+    assert not result['success'] and 'legacy schema incompatible with dual selection/apply evidence' in result['errors']
 
 
 def test_failed_early_attempt_stays_in_fixed_200_episode_denominator():

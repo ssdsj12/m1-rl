@@ -22,13 +22,13 @@ SAMPLE_KEYS = {'env_id','episode_id','attempt_id','frame','sim_time','active_whe
     'teacher_input_frame','teacher_input_episode_id','teacher_input_sim_time',
     'teacher_action','executed_action','processed_targets','action_joint_names',
     'processed_target_joint_names','active_target','teacher_ages_after_decision','raw_joint_names','joints'}
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 TEACHER_SCOPES = ('flat-preparation','single-wheel','first-obstacle','transitions','course')
 APPLY_KEYS = {'schema_version','teacher_scope','failure_locked','student_demonstration_usable',
     'applied_targets','applied_target_joint_names','applied_substeps','action_process_count',
     'physics_decimation','action_matches_request','applied_target_valid','teacher_diagnostic',
     'last_applied_leg_target','requested_processed_targets','action_default_joint_pos','action_target_dtype','teacher_executable',
-    'actuation_evidence','feedback_context'}
+    'actuation_evidence','feedback_context','selection_context'}
 
 
 def validate_scope(scope, *, acceptance, active_wheel):
@@ -128,6 +128,167 @@ def observe_feedback_transactions(teacher):
             retained_branch_q=take(teacher._rows[i]['branch_q']) if teacher._rows[i].get('branch_q') is not None else None)
         return original(s,i,work,accepted,requested,q,branch,nominal,evidence)
     teacher._feedback_transaction=observed
+
+
+def selection_input_digest(context):
+    """Bind the owned producer result to its complete preselection snapshot."""
+    payload={key:value for key,value in context.items() if key!='choice'}
+    return hashlib.sha256(json.dumps(payload,sort_keys=True,allow_nan=False).encode()).hexdigest()
+
+
+def selection_choice_json(choice):
+    finite=lambda value:float(value) if math.isfinite(float(value)) else None
+    return dict(candidate_index=int(choice.candidate_index[0]),valid=bool(choice.valid[0]),
+        candidate_count=int(choice.candidate_count[0]),predicted_margin_m=finite(choice.predicted_margin_m[0]),
+        measured_triangle_margin_m=finite(choice.measured_triangle_margin_m[0]),reference=pose_context(choice.reference))
+
+
+def observe_preparation_selection(teacher,state,contexts):
+    """Expire changed rows and wrap the single real BALANCE search once.
+
+    A duplicate input keeps the context belonging to its cached output. Reset
+    and preselection failures remove only that row's old owned snapshot.
+    """
+    teacher._probe_selection_context=contexts
+    resets=getattr(state,'reset_mask',None)
+    for row in list(contexts):
+        identity=dict(env_id=row,episode_id=int(state.episode_id[row]),input_frame=int(state.control_step[row]))
+        if contexts[row]['identity']!=identity or resets is not None and bool(resets[row]):
+            contexts.pop(row)
+    if getattr(teacher,'_probe_selection_observed',False): return
+    original=getattr(teacher,'_select_preparation_pose',None)
+    if original is None: return  # CPU lifecycle fixture without a selector.
+    def observed(s,i,work,accepted,q,branch):
+        from ame_baseline.m1_teacher_pose import PoseReference
+        take=lambda value:value.detach().clone().tolist()
+        measured=teacher._reference(s,i)
+        context=dict(identity=dict(env_id=i,episode_id=int(s.episode_id[i]),input_frame=int(s.control_step[i])),
+            measured=pose_context(measured),
+            anchor=pose_context(PoseReference(work['anchor_pose'],work['wheel_anchor'])),
+            accepted=pose_context(accepted),com_w=take(s.com_pos_w[i]),
+            wheel_anchors_w=take(work['wheel_anchor'][0]),measured_wheels_w=take(measured.wheels_w[0]),
+            active_wheel=int(work['wheel']),nominal_root_z_w=float(s.nominal_root_z_w[i]),
+            q_seed=take(q[0]),branch_q=take(branch[0]),cfg=asdict(teacher.cfg),
+            dtype=str(q.dtype).removeprefix('torch.'),producer_backend=capture_producer_backend(q.device))
+        choice=original(s,i,work,accepted,q,branch)
+        context['choice']={**selection_choice_json(choice),'identity':copy.deepcopy(context['identity']),
+            'input_digest':selection_input_digest(context)}
+        teacher._probe_selection_context[i]=context
+        return choice
+    teacher._select_preparation_pose=observed
+    teacher._probe_selection_observed=True
+
+
+def selection_context_for(teacher,state,row):
+    context=getattr(teacher,'_probe_selection_context',{}).get(row)
+    identity=dict(env_id=row,episode_id=int(state.episode_id[row]),input_frame=int(state.control_step[row]))
+    resets=getattr(state,'reset_mask',None)
+    if (context is None or context['identity']!=identity
+            or resets is not None and bool(resets[row])): return None
+    return copy.deepcopy(context)
+
+
+def verify_preparation_selection(context: dict,choice: dict,*,replay_backend: str,
+                                 require_backend_evidence: bool) -> list[str]:
+    """Replay the original selector on the explicitly trusted producer backend."""
+    try:
+        backend=check_producer_backend(context.get('producer_backend'),replay_backend,
+            required=require_backend_evidence)
+    except (ValueError,RuntimeError,TypeError,AttributeError):
+        return ['preparation selection producer/replay backend evidence unavailable or mismatched']
+    try:
+        import torch
+        from ame_baseline.m1_teacher_pose import BodyPose,PoseReference,choose_support_pose
+        from ame_baseline.m1_reference_teacher import TeacherConfig,ReferenceTeacher
+        from ame_baseline.m1_teacher_feedback import FeedbackConfig
+        required={'identity','measured','anchor','accepted','com_w','wheel_anchors_w','measured_wheels_w',
+            'active_wheel','nominal_root_z_w','q_seed','branch_q','cfg','producer_backend','dtype','choice'}
+        if set(context)!=required: raise ValueError('incomplete selection snapshot')
+        identity=context['identity']
+        if (set(identity)!={'env_id','episode_id','input_frame'}
+                or any(type(v) is not int for v in identity.values())
+                or identity['env_id']<0 or identity['episode_id']<0 or identity['input_frame']<0
+                or choice['identity']!=identity or choice['input_digest']!=selection_input_digest(context)):
+            raise ValueError('selection input identity/snapshot mismatch')
+        if (context['anchor']['wheels']!=context['wheel_anchors_w']
+                or context['measured']['wheels']!=context['measured_wheels_w']
+                or context['dtype'] not in ('float32','float64')
+                or type(context['active_wheel']) is not int): raise ValueError('selection input mismatch')
+        config=copy.deepcopy(context['cfg'])
+        if (set(config)!=set(asdict(TeacherConfig()))
+                or set(config['feedback'])!=set(asdict(FeedbackConfig()))):
+            raise ValueError('incomplete selection configuration')
+        config['feedback']=FeedbackConfig(**config['feedback'])
+        cfg=TeacherConfig(**config)
+        with torch.device(backend['device']):
+            tensor=lambda value:torch.tensor([value],dtype=getattr(torch,context['dtype']),device=backend['device'])
+            ref=lambda value:PoseReference(BodyPose(tensor(value['root'][:3]),tensor(value['root'][3:])),tensor(value['wheels']))
+            result=choose_support_pose(ref(context['measured']).body,ref(context['anchor']).body,
+                ref(context['accepted']).body,tensor(context['com_w']),tensor(context['wheel_anchors_w']),
+                torch.tensor([context['active_wheel']],device=backend['device']),
+                tensor(context['nominal_root_z_w']).reshape(1),tensor(context['q_seed']),tensor(context['branch_q']),
+                ReferenceTeacher(cfg).ik_cfg,measured_wheels_w=tensor(context['measured_wheels_w']))
+        expected=selection_choice_json(result)
+        if set(choice)!=set(expected)|{'identity','input_digest'}: raise ValueError('incomplete choice')
+        for name,value in expected.items():
+            actual=choice[name]
+            if name in ('candidate_index','candidate_count','valid'):
+                if type(actual) is not type(value) or actual!=value: raise ValueError(name)
+            elif name=='reference':
+                if (set(actual)!={'root','wheels'} or len(actual['root'])!=7
+                        or len(actual['wheels'])!=4 or any(len(wheel)!=3 for wheel in actual['wheels'])):
+                    raise ValueError('incomplete selected reference')
+                flatten=lambda ref:ref['root']+[v for wheel in ref['wheels'] for v in wheel]
+                if any(not math.isclose(a,b,rel_tol=2e-5,abs_tol=2e-6)
+                        for a,b in zip(flatten(actual),flatten(value))): raise ValueError(name)
+            elif actual is None or value is None:
+                if actual is not value: raise ValueError(name)
+            elif (isinstance(actual,bool) or not isinstance(actual,(int,float))
+                    or not math.isclose(actual,value,rel_tol=2e-5,abs_tol=2e-7)): raise ValueError(name)
+        return []
+    except (KeyError,TypeError,ValueError,RuntimeError,IndexError,AttributeError):
+        return ['preparation selection evidence mismatch']
+
+
+def verify_selection_sample(sample,cfg,*,replay_backend,require_backend_evidence):
+    """Bind selection to the real precontrol row; output measurements cannot substitute."""
+    try:
+        context=sample['selection_context']; d=sample['teacher_diagnostic']
+        if context is None:
+            feedback=sample.get('feedback_context')
+            if (d['candidate_index']!=-1 or d['candidate_count']!=-1
+                    or d['candidate_com_margin_m'] is not None
+                    or d['candidate_measured_triangle_margin_m'] is not None
+                    or feedback is not None and feedback['active'] and
+                        (sample['phase']==1 or d['preparation_ready']==1)):
+                raise ValueError('missing selection')
+            return []
+        choice=context['choice']; input_=sample['preparation_input']
+        if (context['identity']!=dict(env_id=sample['env_id'],episode_id=sample['teacher_input_episode_id'],
+                    input_frame=sample['teacher_input_frame'])
+                or context['identity']!=dict(env_id=input_['env_id'],episode_id=input_['episode_id'],input_frame=input_['frame'])
+                or context['measured']['root']!=input_['root'][:7]
+                or context['com_w']!=input_['com'] or context['measured_wheels_w']!=input_['wheels']
+                or context['q_seed']!=sample['teacher_input_leg_pos']
+                or context['active_wheel']!=sample['active_wheel']
+                or context['dtype']!=sample['action_target_dtype'] or context['cfg']!=asdict(cfg)
+                or context['producer_backend']!=sample['producer_backend']):
+            raise ValueError('selection differs from real input')
+        for name,key in (('candidate_index','candidate_index'),('candidate_count','candidate_count'),
+                         ('candidate_com_margin_m','predicted_margin_m'),
+                         ('candidate_measured_triangle_margin_m','measured_triangle_margin_m')):
+            if d[name]!=choice[key]: raise ValueError('diagnostic differs from producer choice')
+        if choice['valid']:
+            if [d['preparation_goal_root_'+axis] for axis in 'xyz']!=choice['reference']['root'][:3]:
+                raise ValueError('goal differs from selected candidate')
+        feedback=sample.get('feedback_context')
+        if feedback is not None and (feedback['accepted_before']!=context['accepted']
+                or feedback['branch_q']!=context['branch_q']):
+            raise ValueError('selection prior/branch differs from actual transaction')
+        return verify_preparation_selection(context,choice,replay_backend=replay_backend,
+            require_backend_evidence=require_backend_evidence)
+    except (KeyError,TypeError,ValueError,IndexError):
+        return ['preparation selection evidence mismatch']
 
 
 @lru_cache(maxsize=1)
@@ -546,7 +707,7 @@ def verify_episode(record,*,replay_backend='cpu',require_backend_evidence=False)
     from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES
     raw_names=record.get('raw_joint_names',[])
     redesigned=record.get('schema_version')==SCHEMA_VERSION
-    if not redesigned: errors.append('legacy schema lacks actual apply evidence')
+    if not redesigned: errors.append('legacy schema incompatible with dual selection/apply evidence')
     if len(raw_names)!=16 or len(set(raw_names))!=16 or set(raw_names)!=set(M1_ASSET_JOINT_NAMES):
         errors.append('missing unique raw joint contract')
     samples = record.get('samples', [])
@@ -609,6 +770,8 @@ def verify_episode(record,*,replay_backend='cpu',require_backend_evidence=False)
                     errors.append('invalid discrete teacher diagnostic evidence')
                 errors.extend(verify_actuation_evidence(sample))
                 if readiness_cfg is not None: errors.extend(verify_feedback_transaction(sample,readiness_cfg,
+                    replay_backend=replay_backend,require_backend_evidence=require_backend_evidence))
+                if readiness_cfg is not None: errors.extend(verify_selection_sample(sample,readiness_cfg,
                     replay_backend=replay_backend,require_backend_evidence=require_backend_evidence))
                 context=sample.get('feedback_context')
                 if context is not None:
@@ -1065,6 +1228,7 @@ class ActionEvidence:
                 teacher_diagnostic=diagnostic_json(output.diagnostic[row].tolist())
                     if hasattr(output,'diagnostic') else {},
                 feedback_context=feedback_context_for(teacher,state,row),
+                selection_context=selection_context_for(teacher,state,row),
                 teacher_input_leg_pos=state.leg_pos[row].detach().clone().tolist() if hasattr(state,'leg_pos') else None,
                 active_target=int(output.active_target[row]),
                 preparation_input=readiness_measurement(state,row,sim_time),
@@ -1653,6 +1817,7 @@ class NativeProbe:
                     required=[self.pairs(self.state().course_ids[i],self.state().required_wheels[i]) for i in range(4)]
                     def decide(state):
                         prepare_feedback_context(teacher,state)
+                        observe_preparation_selection(teacher,state,getattr(teacher,'_probe_selection_context',{}))
                         return teacher.step(state) if wheel is None else teacher.diagnostic_step(
                             state,active_wheel=wheel,lift=scope=='single-wheel')
                     # Initialize identity without executing an invalid RESET label.
