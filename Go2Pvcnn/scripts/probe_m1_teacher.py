@@ -1900,7 +1900,9 @@ class NativeProbe:
             teacher_valid=bool(output.valid[row]) if output is not None else True,
             Fz=force[:,2].tolist(),force=force.tolist(),wheel_position=position[0].tolist(),
             wheel_quaternion=quat[0].tolist(),default_leg_pos=state.default_joint_pos[row,list(LEG_COLUMNS)].tolist(),
-            nominal_root_z_w=float(state.nominal_root_z_w[row]),control_dt_s=float(state.dt[row]),
+            # Keep the verified double control period for the double simulator
+            # clock; state.dt remains the unchanged float32 Teacher input.
+            nominal_root_z_w=float(state.nominal_root_z_w[row]),control_dt_s=float(env.step_dt),
             measurement_valid=bool(state.measurement_valid[row]),base_contact=failures['base_contact'],
             wheel_bottom=bottom.tolist(),obstacle_top=course['centers_top'][row,:,2].tolist(),
             collision=bool(snap['signal'][row]>0),support_lost=lost,penetration=penetration,

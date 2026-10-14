@@ -375,6 +375,43 @@ def test_monitor_does_not_retain_action_autograd_graph(recovery):
     assert not result.net_forward_m.requires_grad
 
 
+@pytest.mark.parametrize('rows,order',[(torch.tensor([2,0]),[2,0]),
+    (torch.tensor([True,False,True]),[0,2])],ids=['long-reversed','bool-ascending'])
+def test_reset_multiple_rows_consumes_scope_in_selection_order_and_preserves_peer(recovery,rows,order):
+    frozen=scope(recovery,batch=3)
+    tracker=recovery.CrossingRecoveryTracker(frozen)
+    first=frame(recovery,frozen)
+    first.collision[0]=True; first.ended[2]=True
+    tracker.update(first)
+    before=run(recovery,tracker,frozen,start=1,count=15)
+    assert before.success.tolist()==[False,True,False]
+    selected=recovery.RecoveryScope(**{f.name:getattr(frozen,f.name)[order].clone() for f in fields(frozen)})
+    selected.episode_id[:]=torch.tensor([81,82]); selected.scope_id[:]=torch.tensor([91,92])
+    selected.course_ids[:]=torch.tensor([[201],[202]])
+    selected.centers_w[:,0,0]=torch.tensor([-2.,2.])
+    tracker.reset(rows,selected)
+    updated=recovery.RecoveryScope(**{f.name:getattr(frozen,f.name).clone() for f in fields(frozen)})
+    for f in fields(updated): getattr(updated,f.name)[order]=getattr(selected,f.name)
+    result=tracker.update(frame(recovery,updated,16))
+    assert result.vetoed.tolist()==[False,False,False]
+    assert result.interval_count[order].tolist()==[0,0]
+    assert result.start_frame[order].tolist()==[16,-1]
+    assert result.eligible[order].tolist()==[True,False]
+    assert result.success[order].tolist()==[False,False]
+    assert result.start_frame[1].item()==before.start_frame[1].item()==0
+    assert result.interval_count[1].item()==16
+    assert result.elapsed_s[1].item()==pytest.approx(.32)
+    assert result.success[1].item()
+    # The second selected scope can start a fresh window once its own far side
+    # is reached; no terminal state survives reset and the peer keeps counting.
+    next_frame=frame(recovery,updated,17)
+    next_frame.wheel_pos_w[order[1],:,0]=3.
+    result=tracker.update(next_frame)
+    assert result.start_frame[order].tolist()==[16,17]
+    assert result.interval_count[order].tolist()==[1,0]
+    assert result.interval_count[1].item()==17 and result.success[1].item()
+
+
 @pytest.mark.parametrize('name', ['sim_time_s', 'dt_s', 'root_state_w', 'leg_pos', 'default_leg_pos',
                                   'wheel_pos_w', 'wheel_quat_w', 'wheel_force_w', 'nominal_root_z_w'])
 def test_each_numeric_input_must_be_finite(recovery, name):

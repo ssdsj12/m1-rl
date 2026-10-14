@@ -146,6 +146,80 @@ def test_native_global_clock_keeps_fifteen_real_intervals_after_100_seconds(star
     assert result.interval_count.tolist()==[15]
 
 
+def native_sample_runner():
+    """Float32 simulator buffers, with the real NativeProbe sampling method."""
+    from types import SimpleNamespace as NS
+    from test_m1_reference_teacher import state
+    from ame_baseline.m1_reference_teacher import TeacherConfig
+    from extension.parallelism.m1_kinematics import M1_ASSET_JOINT_NAMES
+    module=probe(); s=state(); s.centers_top[:,:,0]=-2.
+    s.root_pos_w[:,0]=1.; s.root_lin_vel_w[:,0]=.1
+    s.wheel_pos_w[:,:,0]=1.; s.wheel_pos_w[:,:,2]=.0959
+    native=object.__new__(module.NativeProbe)
+    native.torch=torch; native.teacher_cfg=TeacherConfig()
+    native.scope='first-obstacle'; native.diagnostic_wheel=None
+    native.frames=torch.zeros(1,dtype=torch.long)
+    native.episode=s.episode_id.clone(); native.attempt=native.frames.clone()
+    native.support_acquired=torch.zeros(1,dtype=torch.bool)
+    native.inner_failed=native.support_acquired.clone(); native.last_output=None
+    native.wheels=native.contacts=list(range(4)); native.state=lambda:s
+    root=torch.cat((s.root_pos_w,s.root_quat_w,s.root_lin_vel_w,s.root_ang_vel_w),1)
+    native.robot=NS(joint_names=M1_ASSET_JOINT_NAMES,data=NS(
+        root_state_w=root,body_pos_w=s.wheel_pos_w,body_quat_w=s.wheel_quat_w,
+        joint_pos=s.default_joint_pos,joint_vel=torch.zeros(1,16),
+        computed_torque=torch.zeros(1,16),applied_torque=torch.zeros(1,16)))
+    native.sensor=NS(data=NS(net_forces_w=s.wheel_force_w))
+    course=dict(ids=s.course_ids,centers_top=s.centers_top,half_extents=s.half_extents,
+        valid=s.course_valid,landing_valid=torch.zeros(1,0,dtype=torch.bool),
+        landing_centers_top=torch.empty(1,0,3),landing_half_extents=torch.empty(1,0,2))
+    native.w=NS(_m1_current_course=lambda:course,
+        _m1_strict_crossing=NS(recovered_for_course=lambda course:s.required_wheels))
+    native.env=NS(step_dt=.02,sim=NS(current_time=0.),common_step_counter=0,
+        _m1_collision_budget=NS(step=0,snapshot=dict(signal=torch.zeros(1))),
+        termination_manager=NS(active_terms=['base_contact'],get_term=lambda name:torch.zeros(1,dtype=torch.bool),
+            time_outs=torch.zeros(1,dtype=torch.bool),terminated=torch.zeros(1,dtype=torch.bool)))
+    # Action publication is outside this sampling/clock boundary. Measurements,
+    # sampling, raw input mapping and the recovery monitor all remain real.
+    native.action_evidence=NS(row=lambda row,time:dict(action_matches_request=True,
+        teacher_executable=True,applied_target_valid=True,
+        action_default_joint_pos=s.default_joint_pos[row].tolist()))
+    return module,native,s
+
+
+@pytest.mark.parametrize('start_time',[0.,100.,10000.])
+@pytest.mark.parametrize('steps,success',[(list(range(16)),True),(list(range(15)),False),
+    (list(range(14))+[15],False)],ids=['fifteen-intervals','fifteen-observations','missing-frame'])
+def test_native_sample_float32_control_dt_preserves_double_recovery_clock(start_time,steps,success):
+    from ame_baseline.m1_crossing_recovery import CrossingRecoveryTracker
+    module,native,s=native_sample_runner()
+    before_dt=s.dt.clone()
+    frozen=module.capture_recovery_scope(s,torch.tensor([0]),[[[0,0],[0,2]]],scope_ids=torch.tensor([0]))
+    tracker=CrossingRecoveryTracker(frozen)
+    for step in steps:
+        native.frames[0]=step; s.control_step[0]=step
+        native.env.sim.current_time=start_time+step*.02
+        s.root_pos_w[0,0]=1.+step*.002
+        native.robot.data.root_state_w[0,0]=s.root_pos_w[0,0]
+        sample=native.sample(0)
+        raw=module.recovery_input_from_sample(sample,frozen)
+        result=tracker.update(module.capture_recovery_frame(raw,frozen))
+        if step<15: assert not result.success.item()
+    assert result.success.item()==success, result.reason
+    if success:
+        assert result.interval_count.item()==15
+        assert result.elapsed_s.item()==pytest.approx(.3)
+        assert result.net_forward_m.item()>=.01
+    elif steps[-1]==15:
+        assert result.interval_count.item()==0 and not result.stable.item()
+    else:
+        assert result.interval_count.item()==14
+    assert sample['control_dt_s']==native.env.step_dt
+    assert raw['dt_s']==[native.env.step_dt]
+    assert s.dt.dtype==s.root_pos_w.dtype==s.wheel_force_w.dtype==torch.float32
+    assert torch.equal(s.dt,before_dt)
+    assert float(s.dt[0])!=native.env.step_dt
+
+
 @pytest.mark.parametrize('kind,key,bad',[
     ('scope','env_id',[False]),('scope','episode_id',[.5]),('scope','scope_id',[True]),
     ('scope','course_ids',[[.5]+list(range(1,8))]),
