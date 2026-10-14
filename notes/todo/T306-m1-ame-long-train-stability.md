@@ -1,5 +1,7 @@
 # T306 M1 AME Long-Train Stability
 
+LATEST 2026-10-14 publication/10-14：用户要求先上传当前快照，基线fc140ea，README新增准确进度。dual-support-selection书面规格已确认（下方待审为历史），计划未完成/未实施；runtime39a6590和verifier de46186不变，A/BC/PPO仍BLOCKED。不启动服务器任务。[发布记录](../log/2026-10-14-m1-release-10-14.md)。
+
 LATEST 2026-10-14 UTC candidate-retention/dual-support-selection SPEC REVIEW：用户确认固定锚点+实测三角形候选筛选；[书面规格](../../docs/superpowers/specs/2026-10-14-m1-dual-support-selection-design.md)已自审，待审阅。当前仅文档，不更新Last Feature/Verified runtime39a6590/verifier de46186；Current Work baseline b4b5f03。下一步计划→负例→独立审查→串行逐级验证，仍阻挡A/BC/PPO。[设计记录](../log/2026-10-14-m1-dual-support-selection-design.md)。
 
 LATEST 2026-10-14 UTC actual-support-geometry-gap/candidate-retention OPEN：新增此子节点因为v4 env1第32–1000帧选择125/accepted XYZ恒定，原最小位移代价允许预测合格但实际准备未达的姿态持续保留。CPU冻结几何比较发现原网格内双几何候选，独立审查确认这是设计局限而非已证实实现偏差；建议仅新增实测三角形候选筛选，固定IK锚点/原包络/PD/门槛不变，待新设计确认。Last Feature/Verified runtime39a6590、verifier de46186均不变；Current Work Ref b4b5f03。未新原生或训练，A仍BLOCKED。[本轮调查](../log/2026-10-14-m1-measured-support-selection-diagnosis.md)。

@@ -4,6 +4,8 @@
 
 用户已确认在固定锚点之外增加实测支撑三角形筛选，保持原IK、PD、包络和成功门槛。已将[只读调查](2026-10-14-m1-measured-support-selection-diagnosis.md)与独立审查转为[书面规格](../../docs/superpowers/specs/2026-10-14-m1-dual-support-selection-design.md)，待书面审阅后进入计划。
 
+最新：用户已明确确认书面规格。writing-plans已开始只读接口梳理，随后用户要求优先上传当前快照到10-14；未产生实施计划文件，未编写或执行新控制代码。下方待审阅为此前状态；下一步是完成实施计划，而非重复设计审批。
+
 - Baseline Ref：`b4b5f03756fa44af099ea80526ca230bb4f708a3`；Teacher runtime `39a6590`、verifier `de46186`未变。
 - 方法：核对原候选选择/TeacherConfig fingerprint/probe schema，以及v4已冻结的969帧保持证据；本轮不重复原生测试。
 - 设计：全部126候选使用同一个预测COM，同时满足固定锚点和当前实测三角形余量≥10mm；固定world IK目标不变，保留原代价与失败处理。只用于候选终点，不要求未完成插值已满足候选余量，不以预测代替真实ready。

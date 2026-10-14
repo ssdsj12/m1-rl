@@ -2,7 +2,7 @@
 
 日期：2026-10-14 UTC；分支 `10-13`；基线 `b4b5f03`，Teacher runtime `39a6590`、证据验证器 `de46186`。
 
-状态：用户已确认双几何筛选方向；本书面细化待审阅。未修改runtime，未启动新原生或训练。
+状态：用户已确认双几何筛选方向及本书面规格。实施计划编写被“先发布当前快照到10-14”请求中断，计划尚未完成；未修改runtime，未启动新原生或训练。规格制定时分支为10-13，当前发布分支为10-14。
 
 关联：[调查证据](../../../notes/log/2026-10-14-m1-measured-support-selection-diagnosis.md)、[原支撑/IK规格](2026-10-13-m1-support-ik-redesign-design.md)、[有界反馈规格](2026-10-13-m1-teacher-bounded-feedback-design.md)、[T306](../../../notes/todo/T306-m1-ame-long-train-stability.md)。本规格只替代原候选筛选的单一支撑几何条件，其余合同保持。
 
@@ -83,5 +83,5 @@ Teacher fingerprint的implementation从 `support-ik-transaction-v8`更新为 `su
 - [x] 此处是算法/合同决策，不涉及UI视觉设计，不启用visual companion。
 - [x] 用户确认目标与不变条件、方案比较及双几何方向；无需重复原约束审批。
 - [x] 书面设计完成；自审核对目标/插值/真实ready、两组轮位、无效结果、版本与证据、物理/软件失败边界，未新增未定增益或控制机制。
-- [ ] 用户审阅本书面规格。
-- [ ] 审阅后用writing-plans形成实施及子代理审查任务；本轮尚未实施。
+- [x] 用户审阅并确认本书面规格。
+- [ ] 用writing-plans形成实施及子代理审查任务；用户优先发布当前快照，计划尚未完成，未实施。
