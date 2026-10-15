@@ -380,7 +380,9 @@ def test_translation_of_measured_rolling_supports_does_not_world_lock_feet():
     b.root_pos_w[:,0] += 10.
     b.wheel_pos_w[:,:,0] += 10.
     b.centers_top[:,:,0] += 10.
+    b.com_pos_w[:,0] += 10.
     result_a, result_b = first.step(a), second.step(b)
+    assert result_a.valid.all() and result_b.valid.all()
     assert torch.equal(result_a.valid, result_b.valid)
     assert torch.allclose(result_a.action, result_b.action, atol=2e-4)
 
@@ -457,10 +459,12 @@ def test_world_offset_does_not_change_body_ik_labels():
     b.root_pos_w[:,:2] += 100.
     b.wheel_pos_w[:,:,:2] += 100.
     b.centers_top[:,:,:2] += 100.
+    b.com_pos_w[:,:2] += 100.
     first, second = t.ReferenceTeacher(), t.ReferenceTeacher()
     for _ in range(3):
         out_a, out_b = first.step(a), second.step(b)
         a,b = advance(a),advance(b)
+    assert out_a.valid.all() and out_b.valid.all()
     assert torch.equal(out_a.valid, out_b.valid)
     assert torch.allclose(out_a.action,out_b.action,atol=3e-4)
 

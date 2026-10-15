@@ -335,14 +335,410 @@ def observe_feedback_transactions(teacher):
             retained_command=pose_context(work.get('accepted_command')),
             requested=pose_context(requested),q_seed=take(q),branch_q=take(branch),
             measured_root=take(s.root_pos_w[i]),captured_yaw=take(work.get('yaw',q.new_zeros(1)))[0],
+            measured_quat=take(s.root_quat_w[i]),execution_enabled=bool(evidence.get('execution_enabled',False)),
             integral_before=take(work['feedback'].integral),output_before=take(work['feedback'].output),
             active=bool(work['prepared'] and int(work['phase'])!=0),dt=float(s.dt[i]),
             nominal_speed=take(nominal),last_applied_q=take(s.last_applied_leg_target[i]),
             default_joint_pos=take(s.default_joint_pos[i]),
             retained_q=take(teacher._rows[i]['last_q']) if teacher._rows[i].get('last_q') is not None else None,
-            retained_branch_q=take(teacher._rows[i]['branch_q']) if teacher._rows[i].get('branch_q') is not None else None)
+            retained_branch_q=take(teacher._rows[i]['branch_q']) if teacher._rows[i].get('branch_q') is not None else None,
+            control_phase=int(work['phase']),active_wheel=int(work.get('wheel',-1)),
+            wheel_anchor=work['wheel_anchor'].detach().clone().tolist()[0] if work.get('wheel_anchor') is not None else None,
+            measured_wheels=s.wheel_pos_w[i].detach().clone().tolist())
+        if teacher.cfg.load_feedback and 'support_load_proposal' in work:
+            teacher._probe_feedback_context[i]['load_feedback']=dict(
+                previous=take(work.get('support_load_offset',q.new_zeros(1,4))),
+                proposed=take(work['support_load_proposal']),
+                fractions=take(work.get('support_load_fractions',q.new_zeros(1,3))),
+                geometry_valid=bool(work['support_load_geometry_valid'][0]) if 'support_load_geometry_valid' in work else False,
+                raw=take(s.wheel_force_w[i,:,2]),restore=int(work['phase'])==4)
+            if 'attitude_error' in evidence:
+                teacher._probe_feedback_context[i]['load_feedback']['attitude']=dict(
+                    command=pose_context(evidence['attitude_command']),error=take(evidence['attitude_error']),
+                    error0=take(evidence['attitude_error0']),delta=take(evidence['attitude_delta']),
+                    previous=take(work['support_attitude_error0']) if 'support_attitude_error0' in work else None)
+            teacher._probe_feedback_context[i]['support_height_previous']=(
+                take(work['support_execution_z']) if 'support_execution_z' in work else None)
+            for key in ('support_heave','support_heave_error0','support_capture_root_z'):
+                teacher._probe_feedback_context[i][key+'_previous']=take(work[key]) if key in work else None
         return original(s,i,work,accepted,requested,q,branch,nominal,evidence)
     teacher._feedback_transaction=observed
+
+
+def _dynamic_pack(value):
+    """JSON-only owned snapshot; no pickle or executable class names."""
+    import torch
+    from dataclasses import is_dataclass
+    if isinstance(value, torch.Tensor):
+        return dict(tensor=value.detach().cpu().tolist(), dtype=str(value.dtype).removeprefix('torch.'))
+    if is_dataclass(value):
+        return dict(kind=type(value).__name__, values={f.name:_dynamic_pack(getattr(value,f.name)) for f in fields(value)})
+    if isinstance(value, dict):
+        return {k:_dynamic_pack(v) for k,v in value.items() if k!='output'}
+    return int(value) if hasattr(value,'name') and isinstance(value,int) else value
+
+
+def _dynamic_unpack(value, device):
+    import torch
+    from ame_baseline.m1_teacher_pose import BodyPose, PoseReference
+    from ame_baseline.m1_teacher_feedback import FeedbackState
+    if not isinstance(value,dict): return value
+    if set(value)=={'tensor','dtype'}:
+        dtypes=dict(float32=torch.float32,float64=torch.float64,int64=torch.int64,bool=torch.bool)
+        return torch.tensor(value['tensor'],dtype=dtypes[value['dtype']],device=device)
+    if set(value)=={'kind','values'}:
+        classes=dict(BodyPose=BodyPose,PoseReference=PoseReference,FeedbackState=FeedbackState)
+        return classes[value['kind']](**{k:_dynamic_unpack(v,device) for k,v in value['values'].items()})
+    return {k:_dynamic_unpack(v,device) for k,v in value.items()}
+
+
+def observe_dynamic_support(teacher):
+    if getattr(teacher,'_probe_dynamic_observed',False): return
+    if not hasattr(teacher,'_step_row'): return  # Lifecycle-only CPU fixture.
+    teacher._probe_dynamic_observed=True
+    teacher._probe_dynamic_context={}
+    original=teacher._step_row
+    def observed(s,i,diagnostic):
+        identity=[int(s.episode_id[i]),int(s.control_step[i]),bool(s.reset_mask[i])]
+        cached=teacher._probe_dynamic_context.get(i)
+        if cached is not None and cached['identity']==identity:
+            return original(s,i,diagnostic)
+        if not teacher.cfg.slow_rolling or diagnostic is not None:
+            teacher._probe_dynamic_context.pop(i,None)
+            return original(s,i,diagnostic)
+        context=dict(identity=identity,fingerprint=teacher.cfg.fingerprint,
+            dynamic_candidate_limit=teacher.cfg.dynamic_candidate_limit,
+            input={f.name:_dynamic_pack(getattr(s,f.name)[i:i+1]) for f in fields(s)},
+            pre=_dynamic_pack(teacher._rows[i]))
+        out=original(s,i,diagnostic)
+        context.update(post=_dynamic_pack(teacher._rows[i]), action=out.action[0].tolist(),
+            diagnostic=diagnostic_json(out.diagnostic[0].tolist()),valid=bool(out.valid[0]))
+        teacher._probe_dynamic_context[i]=context
+        return out
+    teacher._step_row=observed
+
+
+def dynamic_context_for(teacher,state,row):
+    context=getattr(teacher,'_probe_dynamic_context',{}).get(row)
+    if context is None: return None
+    identity=[int(state.episode_id[row]),int(state.control_step[row]),bool(state.reset_mask[row])]
+    return copy.deepcopy(context) if context is not None and context['identity']==identity else None
+
+
+def _dynamic_equal(left,right):
+    if isinstance(left,dict) and isinstance(right,dict):
+        return left.keys()==right.keys() and all(_dynamic_equal(left[k],right[k]) for k in left)
+    if isinstance(left,list) and isinstance(right,list):
+        return len(left)==len(right) and all(_dynamic_equal(a,b) for a,b in zip(left,right))
+    if type(left) is float or type(right) is float:
+        return (math.isnan(left) and math.isnan(right)) or math.isclose(left,right,abs_tol=2e-6,rel_tol=2e-6)
+    return left==right
+
+
+def verify_tripod_sample(sample,cfg):
+    """Independent scalar equilibrium check, never production tripod helper."""
+    if not cfg.slow_rolling:
+        return []
+    try:
+        c=sample['dynamic_support']; d=sample['teacher_diagnostic']
+        if c is None: return ['missing tripod outer context']
+        inp=c['input']; pre=c['pre'] or {}; post=c['post'] or {}
+        take=lambda name:inp[name]['tensor'][0]
+        episode,step,reset=c['identity']
+        if reset:
+            if 'tripod_captured_load_n' in post: return ['tripod capture survived reset']
+            return []
+        # No prediction before preparation or after an early safety refusal.
+        if not d.get('tripod_current_total_n',0):
+            return []
+        current=sum(max(0.,f[2]) for f in take('wheel_force_w'))
+        finished=c['valid'] and pre.get('prepared') and not post.get('prepared')
+        row=post if c['valid'] and not finished else pre
+        captured=row.get('tripod_captured_load_n',{}).get('tensor',[current])[0]
+        forces=row.get('tripod_capture_forces_w',{}).get('tensor',[take('wheel_force_w')])[0]
+        identity=row.get('tripod_capture_identity',[episode,step,post.get('target_id'),post.get('wheel')])
+        active=int(row.get('wheel',-1))
+        if (identity[0]!=episode or identity[1]>step or identity[2]!=row.get('target_id')
+                or identity[3]!=active):
+            raise ValueError('capture identity mismatch')
+        def close(a,b,name,atol=3e-4):
+            if a is None or not math.isfinite(a) or not math.isclose(a,b,rel_tol=3e-5,abs_tol=atol):
+                raise ValueError(name)
+        close(captured,sum(max(0.,f[2]) for f in forces),'captured load differs from raw forces')
+        if identity[1]==step:
+            if forces!=take('wheel_force_w'): raise ValueError('capture differs from same input')
+            if c['valid'] and not post.get('prepared'): raise ValueError('capture without preparation')
+        elif pre.get('tripod_capture_identity')!=post.get('tripod_capture_identity') and c['valid'] and post.get('prepared'):
+            raise ValueError('capture replaced outside capture transaction')
+        total=min(current,captured)
+        close(d['tripod_current_total_n'],current,'current total')
+        close(d['tripod_captured_total_n'],captured,'captured total')
+        close(d['tripod_effective_total_n'],total,'effective total')
+        indices=[j for j in range(4) if j!=active]
+        def equilibrium(com,wheels):
+            x=[wheels[j][0]-com[0] for j in indices]
+            y=[wheels[j][1]-com[1] for j in indices]
+            det=(x[1]-x[0])*(y[2]-y[0])-(x[2]-x[0])*(y[1]-y[0])
+            if abs(det)<=1e-10 or total<=0: raise ValueError('invalid tripod')
+            a=(x[1]*y[2]-x[2]*y[1])/det
+            b=(x[2]*y[0]-x[0]*y[2])/det
+            fractions=[a,b,1-a-b]
+            return fractions,[f*total for f in fractions]
+        fractions,loads=equilibrium(take('com_pos_w'),take('wheel_pos_w'))
+        close(d['tripod_valid'],1.,'valid')
+        for j in range(3):
+            close(d[f'tripod_support_index_{j}'],indices[j],'support index')
+            close(d[f'tripod_fraction_{j}'],fractions[j],'fraction')
+            close(d[f'tripod_load_n_{j}'],loads[j],'load')
+        minimum=min(loads); reserve=max(0.,min(1.,(minimum-30.)/15.))
+        close(d['tripod_min_load_n'],minimum,'minimum')
+        close(d['tripod_reserve'],reserve,'reserve')
+        if c['valid'] and pre.get('phase')==1 and post.get('phase')==2 and minimum<=30.:
+            raise ValueError('lift entered without reserve')
+        combined=reserve
+        selected=post.get('tripod_selected_reference') if c['valid'] else None
+        if selected is not None and (d.get('dynamic_enabled') or d.get('candidate_index',-1)>=0):
+            ref=selected['values']; body=ref['body']['values']
+            pos=body['pos_w']['tensor'][0]; quat=body['quat_w']['tensor'][0]
+            def rotate(q,v):
+                w,x,y,z=q; a,b,c_=v
+                return [(1-2*y*y-2*z*z)*a+2*(x*y-z*w)*b+2*(x*z+y*w)*c_,
+                    2*(x*y+z*w)*a+(1-2*x*x-2*z*z)*b+2*(y*z-x*w)*c_,
+                    2*(x*z-y*w)*a+2*(y*z+x*w)*b+(1-2*x*x-2*y*y)*c_]
+            mq=take('root_quat_w'); mq=[mq[0],-mq[1],-mq[2],-mq[3]]
+            offset=rotate(mq,[a-b for a,b in zip(take('com_pos_w'),take('root_pos_w'))])
+            predicted=[a+b for a,b in zip(pos,rotate(quat,offset))]
+            if inp['root_pos_w']['dtype']=='float32':
+                # Match the recorded world-coordinate representation before
+                # independent scalar equilibrium. At |Y|~152m a float32 ULP
+                # is15um; comparing an unrounded double COM invents precision.
+                import struct
+                predicted=[struct.unpack('f',struct.pack('f',v))[0] for v in predicted]
+            for name,wheels in (('anchor',ref['wheels_w']['tensor'][0]),('measured',take('wheel_pos_w'))):
+                candidate_fractions,candidate_loads=equilibrium(predicted,wheels)
+                if name=='measured' and d.get('load_enabled') and not d.get('load_restore'):
+                    recorded=sample['feedback_context']['load_feedback']
+                    if recorded['geometry_valid'] is not True: raise ValueError('selected load geometry invalid')
+                    for a,b in zip(recorded['fractions'],candidate_fractions): close(a,b,'load fraction binding',2e-6)
+                close(d[f'tripod_selected_{name}_min_n'],min(candidate_loads),'selected minimum')
+                if min(candidate_loads)<30.-3e-4: raise ValueError('selected tripod below30N')
+                combined=min(combined,max(0.,min(1.,(min(candidate_loads)-30.)/15.)))
+            close(d['tripod_combined_reserve'],combined,'combined tripod reserve',3e-5)
+        if d.get('dynamic_enabled') and c['valid']:
+            if selected is None: raise ValueError('missing selected tripod geometry')
+            expected=min(combined,max(0.,min(1.,(d['dynamic_conservative_fz']-cfg.support_min_force_n)/cfg.measured_lift_force_band_n)),
+                max(0.,min(1.,(d['dynamic_conservative_margin']-cfg.com_margin_m)/cfg.measured_lift_margin_band_m)))
+            close(d['dynamic_reserve'],expected,'merged reserve',3e-5)
+            accepted=pre['accepted']['values']['wheels_w']['tensor'][0][active][2]
+            measured=take('wheel_pos_w')[active][2]
+            target=int(pre['target'])
+            ceiling=take('ground_z')[target]+.0959+(cfg.front_max_lift_m if active<2 else cfg.rear_max_lift_m)
+            reached=accepted>=ceiling or measured>=ceiling
+            base=max(accepted,measured) if expected>0 and not reached else accepted
+            increment=min(cfg.measured_lift_rate_m_s*take('dt')*expected,
+                max(0.,measured+cfg.measured_lift_lead_m-base),0. if reached else max(0.,ceiling-base))
+            if not d['wheel_progress_ready']: base=accepted; increment=0.
+            close(d['dynamic_accepted_z'],accepted,'accepted height',2e-7)
+            close(d['dynamic_measured_z'],measured,'measured height',2e-7)
+            close(d['dynamic_increment_m'],increment,'height increment',2e-7)
+            close(d['dynamic_requested_z'],base+increment,'next height',2e-7)
+            start=row['lift_start_z']['tensor']
+            if isinstance(start,list): start=start[0]
+            close(d['dynamic_actual_lift_m'],measured-start,'actual lift',2e-7)
+            fb=sample.get('feedback_context')
+            if fb is not None:
+                close(fb['requested']['wheels'][active][2],base+increment,'requested wheel height',2e-7)
+        return []
+    except (KeyError,ValueError,TypeError,IndexError,ZeroDivisionError) as exc:
+        return [f'tripod independent evidence mismatch: {exc}']
+
+
+def verify_active_horizontal_anchor(sample,cfg):
+    """Audit anchor history with scalar geometry, without producer replay.
+
+    Common support rolling is the only ordinary anchor translation. The first
+    committed BALANCE-to-LIFT step additionally captures active XY, never Z.
+    Failed transactions must retain the old anchors exactly.
+    """
+    if not cfg.slow_rolling: return []
+    try:
+        context=sample['dynamic_support']
+        pre,post=context['pre'],context['post']
+        if not pre.get('prepared') or not post.get('prepared'): return []
+        def wheels(value):
+            result=value['tensor'][0]
+            if len(result)!=4 or any(len(row)!=3 for row in result):
+                raise ValueError('anchor shape')
+            if any(not math.isfinite(float(x)) for row in result for x in row):
+                raise ValueError('nonfinite anchor')
+            return result
+        old=wheels(pre['wheel_anchor'])
+        actual=wheels(post['wheel_anchor'])
+        expected=copy.deepcopy(old)
+        if context['valid']:
+            wheel=int(pre['wheel'])
+            if wheel not in range(4): raise ValueError('active wheel')
+            measured=wheels(context['input']['wheel_pos_w'])
+            previous=wheels(pre['support_previous'])
+            yaw=float(pre['yaw']['tensor'][0])
+            if not math.isfinite(yaw): raise ValueError('nonfinite yaw')
+            forward=(math.cos(yaw),math.sin(yaw))
+            support=[i for i in range(4) if i!=wheel]
+            advance=sum(sum((measured[i][j]-previous[i][j])*forward[j]
+                            for j in range(2)) for i in support)/3.
+            for row in expected:
+                for j in range(2): row[j]+=advance*forward[j]
+            if int(pre['phase'])==1 and int(post['phase'])==2:
+                expected[wheel][:2]=measured[wheel][:2]
+        # Float32 world coordinates can have ~15um ULP in displaced envs.
+        tolerance=5e-5 if context['valid'] else 0.
+        if any(abs(actual[i][j]-expected[i][j])>tolerance
+               for i in range(4) for j in range(3)):
+            return ['active horizontal anchor history mismatch']
+        if context['valid'] and int(post['phase']) in (2,3):
+            requested=sample['feedback_context']['requested']['wheels']
+            if context['diagnostic']['wheel_progress_ready']:
+                request_xy=expected
+            else:
+                request_xy=copy.deepcopy(wheels(pre['accepted']['values']['wheels_w']))
+                for row in request_xy:
+                    for j in range(2): row[j]+=advance*forward[j]
+            if len(requested)!=4 or any(len(row)!=3 for row in requested):
+                raise ValueError('requested wheel shape')
+            if any(not math.isfinite(float(requested[i][j])) or
+                   abs(requested[i][j]-request_xy[i][j])>tolerance
+                   for i in range(4) for j in range(2)):
+                return ['active horizontal requested XY mismatch']
+        return []
+    except (KeyError,ValueError,TypeError,IndexError,OverflowError) as exc:
+        return [f'invalid active horizontal anchor history: {exc}']
+
+
+def verify_bounded_attitude(sample,cfg):
+    """Scalar raw-evidence check; does not call teacher search or replay."""
+    if not cfg.bounded_crossing_attitude: return []
+    try:
+        c=sample['dynamic_support'];pre=c['pre'];post=c['post'];d=c['diagnostic']
+        if c['fingerprint']!=cfg.fingerprint: raise ValueError('fingerprint')
+        if c['dynamic_candidate_limit']!=1126: raise ValueError('dynamic budget')
+        if not c['valid']: return []
+        restoring=bool(pre and pre.get('prepared') and
+            (pre.get('phase')==4 or post.get('phase')==4))
+        if not d.get('dynamic_enabled') and not restoring: return []
+        def quat(q):
+            if len(q)!=4 or not all(math.isfinite(v) for v in q): raise ValueError('quaternion shape/finite')
+            n=math.sqrt(sum(v*v for v in q))
+            if abs(n-1)>2e-6: raise ValueError('unit quaternion')
+            return [v/n for v in q]
+        def same(a,b):
+            a,b=quat(a),quat(b)
+            return min(sum((x-y)**2 for x,y in zip(a,b)),sum((x+y)**2 for x,y in zip(a,b)))<=1e-10
+        def rotate(q,v):
+            w,x,y,z=quat(q);a,b,h=v
+            return [(1-2*y*y-2*z*z)*a+2*(x*y-z*w)*b+2*(x*z+y*w)*h,
+                2*(x*y+z*w)*a+(1-2*x*x-2*z*z)*b+2*(y*z-x*w)*h,
+                2*(x*z-y*w)*a+2*(y*z+x*w)*b+(1-2*x*x-2*y*y)*h]
+        yaw=pre['yaw']['tensor'][0]
+        if not math.isfinite(yaw): raise ValueError('captured yaw')
+        if restoring:
+            goal=post['goal']['values']['body']['values']['quat_w']['tensor'][0]
+            if not same(goal,[math.cos(yaw/2),0.,0.,math.sin(yaw/2)]):
+                raise ValueError('restore baseline orientation')
+            return []
+        def bounded(q):
+            w,x,y,z=quat(q);actual=math.atan2(2*(w*z+x*y),1-2*(y*y+z*z))
+            delta=math.atan2(math.sin(actual-yaw),math.cos(actual-yaw))
+            return abs(delta)<=1e-5 and 1-2*(x*x+y*y)>=math.cos(.15)-1e-6
+        body=post['tripod_selected_reference']['values']['body']['values']
+        selected=body['quat_w']['tensor'][0]
+        if not bounded(selected): raise ValueError('selected yaw/tilt')
+        request=sample['feedback_context']['requested']['root'][3:]
+        if not same(selected,request): raise ValueError('selected/request orientation')
+        goal=post['goal']['values']['body']['values']['quat_w']['tensor'][0]
+        if not same(selected,goal): raise ValueError('selected/goal orientation')
+        index=d['dynamic_candidate_index']
+        if int(index)!=index or not 0<=index<1126: raise ValueError('candidate index')
+        accepted=pre['accepted']['values']['body']['values']
+        aq=accepted['quat_w']['tensor'][0]
+        if index==1125:
+            expected=aq
+        else:
+            pairs=[(0.,0.)]+[(r,p) for r in (-.1,0.,.1) for p in (-.1,0.,.1) if (r,p)!=(0.,0.)]
+            r,p=pairs[int(index)//125];cr,sr=math.cos(r/2),math.sin(r/2);cp,sp=math.cos(p/2),math.sin(p/2)
+            cy,sy=math.cos(yaw/2),math.sin(yaw/2)
+            expected=[cr*cp*cy+sr*sp*sy,sr*cp*cy-cr*sp*sy,cr*sp*cy+sr*cp*sy,cr*cp*sy-sr*sp*cy]
+        if not same(selected,expected): raise ValueError('selected pool membership')
+        anchor=pre['anchor_pose']['values']['pos_w']['tensor'][0]
+        ap=accepted['pos_w']['tensor'][0];dx,dy=ap[0]-anchor[0],ap[1]-anchor[1]
+        offsets=[dx*math.cos(yaw)+dy*math.sin(yaw),-dx*math.sin(yaw)+dy*math.cos(yaw),ap[2]-anchor[2]]
+        eps=(2**-23 if c['input']['root_pos_w']['dtype']=='float32' else 2**-52)*8
+        floor=c['input']['nominal_root_z_w']['tensor'][0]-anchor[2]-.08
+        count=225*sum(z>=floor-eps for z in (0.,-.02,-.04,-.06,-.08))
+        count+=int(abs(offsets[0])<=.04+eps and abs(offsets[1])<=.06+eps and
+            -.08-eps<=offsets[2]<=eps and offsets[2]>=floor-eps and bounded(aq))
+        if d['dynamic_candidate_count']!=count: raise ValueError('candidate count')
+        inp=c['input'];mq=inp['root_quat_w']['tensor'][0]
+        local=rotate([mq[0],-mq[1],-mq[2],-mq[3]],
+            [a-b for a,b in zip(inp['com_pos_w']['tensor'][0],inp['root_pos_w']['tensor'][0])])
+        predicted=[a+b for a,b in zip(body['pos_w']['tensor'][0],rotate(selected,local))]
+        for j,axis in enumerate('xy'):
+            value=d['dynamic_com_target_'+axis]
+            if value is None or not math.isfinite(value) or abs(value-predicted[j])>3e-5:
+                raise ValueError('selected COM orientation')
+        return []
+    except (KeyError,TypeError,ValueError,IndexError,OverflowError,ZeroDivisionError) as exc:
+        return [f'bounded attitude independent mismatch: {exc}']
+
+
+def verify_dynamic_support_sample(sample,cfg,*,replay_backend='cpu'):
+    """Replay the entire outer transaction, independent of feedback-only audit."""
+    from ame_baseline.m1_reference_teacher import ReferenceTeacher,TeacherState
+    context=sample.get('dynamic_support')
+    if context is None:
+        return ['missing dynamic outer context'] if cfg.slow_rolling else []
+    try:
+        if context['fingerprint']!=cfg.fingerprint: return ['dynamic fingerprint mismatch']
+        state=TeacherState(**_dynamic_unpack(context['input'],replay_backend))
+        state.validate()
+        identity=[int(state.episode_id[0]),int(state.control_step[0]),bool(state.reset_mask[0])]
+        if identity!=context['identity']: return ['dynamic identity mismatch']
+        real=sample['preparation_input']
+        root=[]
+        for name in ('root_pos_w','root_quat_w','root_lin_vel_w','root_ang_vel_w'):
+            root.extend(getattr(state,name)[0].tolist())
+        if (identity[:2]!=[sample['teacher_input_episode_id'],sample['teacher_input_frame']]
+                or identity[:2]!=[real['episode_id'],real['frame']]
+                or root!=real['root'] or state.com_pos_w[0].tolist()!=real['com']
+                or state.wheel_pos_w[0].tolist()!=real['wheels']
+                or state.wheel_force_w[0].tolist()!=real['forces']
+                or bool(state.measurement_valid[0])!=real['measurement_valid']
+                or state.leg_pos[0].tolist()!=sample['teacher_input_leg_pos']
+                or state.last_applied_leg_target[0].tolist()!=sample['last_applied_leg_target']
+                or state.default_joint_pos[0].tolist()!=sample['action_default_joint_pos']
+                or str(state.default_joint_pos.dtype).removeprefix('torch.')!=sample['action_target_dtype']
+                or not math.isclose(float(state.dt[0]),.02,abs_tol=1e-7)):
+            return ['dynamic context differs from actual input']
+        teacher=ReferenceTeacher(cfg)
+        teacher._rows=[_dynamic_unpack(context['pre'],replay_backend)]
+        observe_feedback_transactions(teacher)
+        out=teacher._step_row(state,0,None)
+        actual=dict(post=_dynamic_pack(teacher._rows[0]),action=out.action[0].tolist(),
+            diagnostic=diagnostic_json(out.diagnostic[0].tolist()),valid=bool(out.valid[0]))
+        errors=[f'dynamic {k} mismatch' for k,v in actual.items() if not _dynamic_equal(v,context[k])]
+        replay_attitude=(getattr(teacher,'_probe_feedback_context',{}).get(0,{})
+            .get('load_feedback',{}).get('attitude'))
+        recorded_attitude=(sample.get('feedback_context') or {}).get('load_feedback',{}).get('attitude')
+        if not _dynamic_equal(replay_attitude,recorded_attitude):
+            errors.append('dynamic attitude source mismatch')
+        if not _dynamic_equal(context['action'],sample['teacher_action']): errors.append('dynamic applied action mismatch')
+        if 'teacher_diagnostic' in sample and not _dynamic_equal(context['diagnostic'],sample['teacher_diagnostic']):
+            errors.append('dynamic published diagnostic mismatch')
+        errors.extend(verify_tripod_sample(sample,cfg))
+        errors.extend(verify_active_horizontal_anchor(sample,cfg))
+        errors.extend(verify_bounded_attitude(sample,cfg))
+        return errors
+    except (ValueError,TypeError,KeyError,RuntimeError,IndexError,AttributeError) as exc:
+        return [f'invalid dynamic context: {exc}']
 
 
 def selection_input_digest(context):
@@ -386,6 +782,8 @@ def observe_preparation_selection(teacher,state,contexts):
             q_seed=take(q[0]),branch_q=take(branch[0]),cfg=asdict(teacher.cfg),
             dtype=str(q.dtype).removeprefix('torch.'),producer_backend=capture_producer_backend(q.device))
         choice=original(s,i,work,accepted,q,branch)
+        if 'tripod_effective_load_n' in work:
+            context['tripod_total_load_n']=float(work['tripod_effective_load_n'][0])
         context['choice']={**selection_choice_json(choice),'identity':copy.deepcopy(context['identity']),
             'input_digest':selection_input_digest(context)}
         teacher._probe_selection_context[i]=context
@@ -415,9 +813,10 @@ def verify_preparation_selection(context: dict,choice: dict,*,replay_backend: st
         import torch
         from ame_baseline.m1_teacher_pose import BodyPose,PoseReference,choose_support_pose
         from ame_baseline.m1_reference_teacher import TeacherConfig,ReferenceTeacher
-        from ame_baseline.m1_teacher_feedback import FeedbackConfig
+        from ame_baseline.m1_teacher_feedback import BodyFeedbackConfig as FeedbackConfig
         required={'identity','measured','anchor','accepted','com_w','wheel_anchors_w','measured_wheels_w',
             'active_wheel','nominal_root_z_w','q_seed','branch_q','cfg','producer_backend','dtype','choice'}
+        if 'tripod_total_load_n' in context: required.add('tripod_total_load_n')
         if set(context)!=required: raise ValueError('incomplete selection snapshot')
         identity=context['identity']
         if (set(identity)!={'env_id','episode_id','input_frame'}
@@ -442,7 +841,8 @@ def verify_preparation_selection(context: dict,choice: dict,*,replay_backend: st
                 ref(context['accepted']).body,tensor(context['com_w']),tensor(context['wheel_anchors_w']),
                 torch.tensor([context['active_wheel']],device=backend['device']),
                 tensor(context['nominal_root_z_w']).reshape(1),tensor(context['q_seed']),tensor(context['branch_q']),
-                ReferenceTeacher(cfg).ik_cfg,measured_wheels_w=tensor(context['measured_wheels_w']))
+                ReferenceTeacher(cfg).ik_cfg,measured_wheels_w=tensor(context['measured_wheels_w']),
+                tripod_total_load_n=tensor(context['tripod_total_load_n']).reshape(1) if 'tripod_total_load_n' in context else None)
         expected=selection_choice_json(result)
         if set(choice)!=set(expected)|{'identity','input_digest'}: raise ValueError('incomplete choice')
         for name,value in expected.items():
@@ -560,18 +960,33 @@ def _cached_replay_feedback_transaction(context_json,config_json,dtype,phase,bac
     import torch
     from types import SimpleNamespace
     from ame_baseline.m1_reference_teacher import ReferenceTeacher,TeacherConfig,LEG_COLUMNS
-    from ame_baseline.m1_teacher_feedback import FeedbackState,FeedbackConfig
+    from ame_baseline.m1_teacher_feedback import FeedbackState,BodyFeedbackConfig as FeedbackConfig
     from ame_baseline.m1_teacher_pose import BodyPose,PoseReference
     context=json.loads(context_json); config=json.loads(config_json)
     config['feedback']=FeedbackConfig(**config['feedback']); cfg=TeacherConfig(**config)
     tensor=lambda value:torch.tensor([value],dtype=getattr(torch,dtype),device=backend)
     ref=lambda value:PoseReference(BodyPose(tensor(value['root'][:3]),tensor(value['root'][3:])),tensor(value['wheels']))
     old=FeedbackState(tensor(context['integral_before']),tensor(context['output_before']))
-    state=SimpleNamespace(root_pos_w=tensor(context['measured_root']),dt=tensor([context['dt']]).reshape(1),
+    state=SimpleNamespace(root_pos_w=tensor(context['measured_root']),
+        root_quat_w=tensor(context.get('measured_quat',[1.,0.,0.,0.])),dt=tensor([context['dt']]).reshape(1),
         default_joint_pos=tensor(context['default_joint_pos']),last_applied_leg_target=tensor(context['last_applied_q']),
         applied_target_valid=torch.tensor([True],device=backend))
-    work=dict(feedback=old,prepared=context['active'],phase=1,yaw=tensor([context['captured_yaw']]).reshape(1))
-    teacher=feedback_producer_class()(cfg); evidence={'requested':ref(context['requested'])}
+    work=dict(feedback=old,prepared=context['active'],phase=context.get('control_phase',1),
+        yaw=tensor([context['captured_yaw']]).reshape(1))
+    if context.get('wheel_anchor') is not None:
+        work.update(wheel_anchor=tensor(context['wheel_anchor']),wheel=context['active_wheel'])
+        state.wheel_pos_w=tensor(context['measured_wheels'])
+    teacher=feedback_producer_class()(cfg); evidence={'requested':ref(context['requested']),
+        'execution_enabled':context.get('execution_enabled',False)}
+    load=context.get('load_feedback')
+    if load is not None:
+        work.update(support_load_offset=tensor(load['previous']),support_load_proposal=tensor(load['proposed']))
+        evidence.update(load_enabled=1.,load_restore=float(load['restore']))
+        if context.get('support_height_previous') is not None:
+            work['support_execution_z']=tensor(context['support_height_previous'])
+        for key in ('support_heave','support_heave_error0','support_capture_root_z'):
+            if context.get(key+'_previous') is not None:
+                work[key]=tensor(context[key+'_previous']).reshape(1)
     solved,selected=teacher._feedback_transaction(state,0,work,ref(context['accepted_before']),
         ref(context['requested']),tensor(context['q_seed']),tensor(context['branch_q']),
         tensor(context['nominal_speed']),evidence)
@@ -583,21 +998,430 @@ def _cached_replay_feedback_transaction(context_json,config_json,dtype,phase,bac
     row=dict(feedback=committed,accepted=accepted,accepted_command=command,
         last_q=tensor(context['retained_q']) if context['retained_q'] else None,
         invalid_streak=0,age=0,body_age=0,lift_age=0)
+    if load is not None:
+        row['support_load_offset']=evidence['load_selected_offset'] if valid else tensor(load['previous'])
+        if valid and phase!=0 and 'height_selected' in evidence:
+            row['support_execution_z']=evidence['height_selected']
+            row['support_capture_root_z']=evidence['height_origin']
+        elif not valid and 'support_execution_z' in work:
+            row['support_execution_z']=work['support_execution_z']
+            row['support_capture_root_z']=work['support_capture_root_z']
+        if valid and phase!=0 and 'heave_selected' in evidence:
+            row['support_heave']=evidence['heave_selected']
+            row['support_heave_error0']=evidence['heave_error0']
+        elif not valid:
+            for key in ('support_heave','support_heave_error0'):
+                if key in work:row[key]=work[key]
     from ame_baseline.m1_reference_teacher import encode_targets
     from ame_baseline.m1_ame_contract import m1_action_targets
     if valid:
-        action,executable=encode_targets(solved.command_ik.q,tensor(context['nominal_speed'])+solved.output[:,0,None],state.default_joint_pos)
+        action,executable=encode_targets(solved.command_ik.q,tensor(context['nominal_speed']),state.default_joint_pos)
         row['last_q']=m1_action_targets(action,state.default_joint_pos)[:,LEG_COLUMNS]
     else:
         row['branch_q']=tensor(context['retained_branch_q']) if context['retained_branch_q'] else None
         action,executable=teacher._fallback(state,0,row)
-    state.root_quat_w=tensor([1.,0.,0.,0.]); state.com_pos_w=tensor([0.,0.,0.])
+    state.com_pos_w=tensor([0.,0.,0.])
     expected=diagnostic_json(teacher._diagnostics(state,0,row,evidence,valid,0,None)[0].tolist())
     return json.dumps(expected,sort_keys=True),tuple(action[0].tolist()),bool(executable)
 
 
 replay_feedback_transaction.cache_clear=_cached_replay_feedback_transaction.cache_clear
 replay_feedback_transaction.cache_info=_cached_replay_feedback_transaction.cache_info
+
+
+def verify_attitude_preference(sample):
+    """Independent scalar geometry plus pre-transaction capture binding."""
+    import struct
+    c=sample['feedback_context'];d=sample['teacher_diagnostic'];a=c['load_feedback']['attitude']
+    active=c['active_wheel'];support=[j for j in range(4) if j!=active]
+    cast=(lambda x:struct.unpack('f',struct.pack('f',x))[0]) if sample['action_target_dtype']=='float32' else float
+    def rotate(q,v,inverse=False):
+        norm=math.sqrt(sum(x*x for x in q))
+        if not math.isfinite(norm) or abs(norm-1)>1e-3:raise ValueError('attitude quaternion')
+        w,x,y,z=[x/norm for x in q]
+        if inverse:x,y,z=-x,-y,-z
+        p,r,s=v
+        return [(1-2*y*y-2*z*z)*p+2*(x*y-z*w)*r+2*(x*z+y*w)*s,
+                2*(x*y+z*w)*p+(1-2*x*x-2*z*z)*r+2*(y*z-x*w)*s,
+                2*(x*z-y*w)*p+2*(y*z+x*w)*r+(1-2*x*x-2*y*y)*s]
+    root=a['command']['root'];wheels=a['command']['wheels']
+    raw=[]
+    for j in support:
+        p=[x-y for x,y in zip(wheels[j],root[:3])]
+        raw.append(rotate(c['measured_quat'],rotate(root[3:],p,True))[2]-p[2])
+    mean=sum(raw)/3;center=[cast(x-mean) for x in raw]
+    center[2]=cast(-cast(center[0]+center[1]))
+    error=[0.]*4
+    for j,v in zip(support,center):error[j]=v
+    previous=a['previous'];error0=error if previous is None else previous
+    dynamic=sample.get('dynamic_support')
+    if dynamic is not None:
+        history=dynamic['pre'].get('support_attitude_error0')
+        if (history is None)!=(previous is None):raise ValueError('attitude history presence')
+        if history is not None and history['tensor'][0]!=previous:raise ValueError('attitude history mismatch')
+    if len(error0)!=4 or not all(math.isfinite(v) for v in error0) or error0[active]!=0 or abs(sum(error0))>1e-8:
+        raise ValueError('attitude capture structure')
+    delta=[cast(x-y) for x,y in zip(error,error0)]
+    delta[support[2]]=-cast(delta[support[0]]+delta[support[1]])
+    if d['attitude_enabled']!=1 or d['attitude_captured']!=int(previous is None):raise ValueError('attitude enabled/capture')
+    for name,values in (('error',error),('error0',error0),('delta',delta)):
+        for j,value in enumerate(values):
+            for actual in (a[name][j],d[f'attitude_{name}_{j}']):
+                if not math.isfinite(actual) or not math.isclose(actual,value,rel_tol=2e-5,abs_tol=2e-7):raise ValueError('attitude '+name)
+    return delta
+
+
+def verify_load_feedback(sample,cfg):
+    """Scalar audit of measured load allocation; no controller projector calls."""
+    d=sample['teacher_diagnostic']; c=sample['feedback_context']
+    load=c.get('load_feedback')
+    if cfg.coherent_support_pose and (d.get('attitude_enabled',0)!=0 or (load is not None and load.get('attitude') is not None)):
+        raise ValueError('coherent mode cannot add indirect attitude preference')
+    if load is None:
+        if d.get('load_enabled',0): raise ValueError('missing load inputs')
+        return
+    if not cfg.load_feedback or d['load_enabled']!=1: raise ValueError('load switch')
+    active=c['active_wheel']; support=[j for j in range(4) if j!=active]
+    old=load['previous']; raw=load['raw']; dt=c['dt']; fractions=load['fractions']
+    def close(a,b,label,tol=2e-7):
+        if not math.isfinite(a) or not math.isclose(a,b,rel_tol=2e-5,abs_tol=tol): raise ValueError(label)
+    if len(old)!=4 or len(raw)!=4 or len(fractions)!=3 or not math.isfinite(dt) or dt<=0:
+        raise ValueError('load dimensions/dt')
+    if not all(math.isfinite(x) for x in old) or abs(sum(old))>1e-8 or old[active]!=0 or max(map(abs,old))>.015000001:
+        raise ValueError('load previous state')
+    measured=[f[2] for f in sample['preparation_input']['forces']]
+    for a,b in zip(raw,measured):
+        if not (a==b or not math.isfinite(a) and not math.isfinite(b)): raise ValueError('raw load binding')
+    wheels=sample['preparation_input']['wheels']
+    recorded=c['measured_wheels']
+    if len(wheels)!=4 or len(recorded)!=4 or any(len(p)!=3 for p in wheels+recorded):
+        raise ValueError('load geometry dimensions')
+    for p,q in zip(wheels,recorded):
+        for a,b in zip(p,q):
+            if not (a==b or not math.isfinite(a) and not math.isfinite(b)):
+                raise ValueError('load geometry binding')
+    dynamic=sample.get('dynamic_support')
+    if dynamic is not None:
+        prior=dynamic['pre'].get('support_load_offset',{}).get('tensor',[[0.]*4])[0]
+        for a,b in zip(old,prior): close(a,b,'load prior binding')
+    def project(values,lower,upper,total):
+        lo=min(v-u for v,u in zip(values,upper)); hi=max(v-l for v,l in zip(values,lower))
+        for _ in range(100):
+            mid=(lo+hi)/2
+            if sum(max(l,min(u,v-mid)) for v,l,u in zip(values,lower,upper))>total: lo=mid
+            else: hi=mid
+        return [max(l,min(u,v-(lo+hi)/2)) for v,l,u in zip(values,lower,upper)]
+    target=[0.]*4; proposal=old.copy(); unprojected=[0.]*4
+    affine=[0.]*3; residual=[0.,0.]; active_fz=0.
+    restore=c['control_phase']==4
+    if bool(load['restore'])!=restore: raise ValueError('load restore phase')
+    valid=True
+    if restore:
+        peak=max(map(abs,old)); factor=max(0.,1-.01*dt/peak) if peak else 0.
+        proposal=[v*factor for v in old]
+    else:
+        total=sum(max(raw[j],0.) for j in support)
+        p0,p1,p2=[wheels[j] for j in support]
+        u=[p1[k]-p0[k] for k in range(2)];v=[p2[k]-p0[k] for k in range(2)]
+        t=[wheels[active][k]-p0[k] for k in range(2)]
+        det=u[0]*v[1]-u[1]*v[0]
+        geometry_ok=all(math.isfinite(x) for p in wheels for x in p) and math.isfinite(det) and abs(det)>1e-10
+        valid=bool(load['geometry_valid'] and all(math.isfinite(x) for x in raw+fractions)
+                   and min(fractions)>=0 and math.isfinite(sum(fractions)) and sum(fractions)>0
+                   and math.isfinite(total+max(raw[active],0.)) and total>=135. and geometry_ok)
+        if valid:
+            b1=(t[0]*v[1]-t[1]*v[0])/det;b2=(u[0]*t[1]-u[1]*t[0])/det
+            affine=[1-b1-b2,b1,b2];active_fz=max(raw[active],0.)
+            pre=[f*(total+active_fz)/sum(fractions)-active_fz*b for f,b in zip(fractions,affine)]
+            desired=project(pre,[45.]*3,[total]*3,total)
+            if sample['action_target_dtype']=='float32':
+                import struct
+                desired=[struct.unpack('f',struct.pack('f',value))[0] for value in desired]
+            for j,f in zip(support,pre):unprojected[j]=f
+            residual=[sum((d-f)*(wheels[j][k]-p0[k]) for j,d,f in zip(support,desired,pre)) for k in range(2)]
+            lower=[max(-.01,(-.015-old[j])/dt) for j in support]
+            upper=[min(.01,(.015-old[j])/dt) for j in support]
+            preference=[-.0002*(v-raw[j]) for j,v in zip(support,desired)]
+            attitude=load.get('attitude')
+            if attitude is not None:
+                delta=verify_attitude_preference(sample)
+                weak=[raw[j]<45. or t-raw[j]>15. for j,t in zip(support,desired)]
+                strong=[raw[j]-t>15. and not w for j,t,w in zip(support,desired,weak)]
+                lower=[max(l,0.) if s else l for l,s in zip(lower,strong)]
+                upper=[min(u,0.) if w else u for u,w in zip(upper,weak)]
+                baseline=project(preference,lower,upper,0.)
+                lower=[max(l,b) if s else l for l,b,s in zip(lower,baseline,strong)]
+                upper=[min(u,b) if w else u for u,b,w in zip(upper,baseline,weak)]
+                preference=[v+.5*delta[j] for v,j in zip(preference,support)]
+                for j,w,s in zip(support,weak,strong):
+                    close(d[f'attitude_weak_{j}'],float(w),'attitude weak')
+                    close(d[f'attitude_strong_{j}'],float(s),'attitude strong')
+            elif d.get('attitude_enabled',0):raise ValueError('missing attitude context')
+            velocity=project(preference,lower,upper,0.)
+            for j,f,v in zip(support,desired,velocity): target[j]=f; proposal[j]=old[j]+dt*v
+            pl=[max(-.015,old[j]-.01*dt) for j in support]
+            pu=[min(.015,old[j]+.01*dt) for j in support]
+            if attitude is not None:
+                pl=[max(v,old[j]+dt*l) for v,j,l in zip(pl,support,lower)]
+                pu=[min(v,old[j]+dt*u) for v,j,u in zip(pu,support,upper)]
+            corrected=project([proposal[j] for j in support],pl,pu,0.)
+            for j,v in zip(support,corrected): proposal[j]=v
+    close(d['load_proposal_valid'],float(valid),'load valid'); close(d['load_restore'],float(restore),'load restore')
+    close(d['load_active_fz'],active_fz,'load active force',3e-4)
+    for j in range(3):close(d[f'load_affine_{j}'],affine[j],'load affine',3e-5)
+    for k,axis in enumerate('xy'):close(d[f'load_moment_{axis}'],residual[k],'load moment',3e-4)
+    accepted=d['reference_valid']==1
+    beta=d['execution_fraction'] if accepted else 0.
+    for j in range(4):
+        close(load['proposed'][j],proposal[j],'load proposal binding')
+        selected=old[j]+beta*(proposal[j]-old[j])
+        for name,value in (('raw',raw[j]),('target',target[j]),('unprojected',unprojected[j]),('previous',old[j]),('proposed',proposal[j]),
+                           ('attempted',proposal[j]),('selected',selected),('committed',selected)):
+            if math.isfinite(value): close(d[f'load_{name}_{j}'],value,'load '+name,3e-4 if name in ('target','unprojected') else 2e-7)
+            elif d[f'load_{name}_{j}'] is not None: raise ValueError('nonfinite raw diagnostic')
+
+
+def verify_support_height(sample,cfg):
+    """Independent world-frame baseline, history and bounded restore audit."""
+    import torch
+    from ame_baseline.m1_teacher_ik import body_feet
+    from ame_baseline.m1_teacher_pose import _rotation
+    d=sample['teacher_diagnostic'];c=sample['feedback_context']
+    expected_enabled=bool(cfg.load_feedback and not cfg.coherent_support_pose and c.get('execution_enabled') and c.get('control_phase') in (2,3,4))
+    if d.get('height_enabled',0)!=int(expected_enabled):raise ValueError('height enable mismatch')
+    if not expected_enabled:return
+    t=lambda x:torch.tensor([x],dtype=getattr(torch,sample['action_target_dtype']))
+    measured=t(c['measured_root']); rotation=_rotation(t(c['measured_quat']))
+    captured=(measured[:,None]+torch.einsum('bij,bkj->bki',rotation,body_feet(t(c['last_applied_q']))))[:,:,2]
+    previous=c.get('support_height_previous')
+    old=captured if previous is None else t(previous)
+    if 'support_capture_root_z_previous' not in c:
+        raise ValueError('missing height origin history evidence')
+    origin_previous=c['support_capture_root_z_previous']
+    if (previous is None)!=(origin_previous is None):raise ValueError('height origin paired history')
+    if origin_previous is not None and (not isinstance(origin_previous,list) or len(origin_previous)!=1):
+        raise ValueError('height origin history shape')
+    origin=float(measured[0,2]) if origin_previous is None else origin_previous[0]
+    if not isinstance(origin,(float,int)) or not math.isfinite(origin):raise ValueError('height origin finite')
+    if d.get('height_origin') is None or not math.isclose(d['height_origin'],origin,rel_tol=0,abs_tol=2e-7):
+        raise ValueError('height origin mismatch')
+    if d['height_captured']!=int(previous is None):raise ValueError('height capture mismatch')
+    dynamic=sample.get('dynamic_support')
+    if dynamic is not None:
+        history=dynamic['pre'].get('support_execution_z')
+        if (history is None)!=(previous is None):raise ValueError('height history presence')
+        if history is not None and not torch.equal(t(history['tensor'][0]),old):raise ValueError('height history mismatch')
+        origin_history=dynamic['pre'].get('support_capture_root_z')
+        if (origin_history is None)!=(origin_previous is None):raise ValueError('height origin history presence')
+        if origin_history is not None and origin_history['tensor']!=origin_previous:
+            raise ValueError('height origin history mismatch')
+    root=t([d['command_requested_root_'+a] for a in ('x','y','z','qw','qx','qy','qz')])
+    wheels=t([[d[f'command_requested_world_wheel_{j}_{a}'] for a in 'xyz'] for j in range(4)])
+    body=torch.einsum('bij,bkj->bki',_rotation(root[:,3:]).transpose(-1,-2),wheels-root[:,:3,None].transpose(1,2))
+    active=c['active_wheel']
+    if type(active)!=int or not 0<=active<4:raise ValueError('height active wheel')
+    if c['control_phase']!=4:
+        body[:,active]=torch.einsum('bij,bj->bi',rotation.transpose(-1,-2),wheels[:,active]-measured)
+    geometry=(measured[:,None]+torch.einsum('bij,bkj->bki',rotation,body))[:,:,2]
+    geometry=geometry-(measured[:,2]-origin)[:,None]
+    proposed=old+(geometry-old).clamp(-.01*c['dt'],.01*c['dt']) if c['control_phase']==4 else old
+    beta=d['execution_fraction'] if d['reference_valid']==1 else 0.
+    selected=old+beta*(proposed-old)
+    for name,value in (('previous',old),('proposed',proposed),('selected',selected),('geometry',geometry)):
+        actual=t([d[f'height_{name}_{j}'] for j in range(4)])
+        if not torch.allclose(actual,value,atol=2e-6,rtol=0):raise ValueError('height '+name)
+    committed=[d[f'height_committed_{j}'] for j in range(4)]
+    absent=(d['reference_valid']!=1 and previous is None) or (d['reference_valid']==1 and sample['phase']==0)
+    origin_committed=d.get('height_origin_committed')
+    if absent:
+        if origin_committed is not None:raise ValueError('height origin unexpected commit')
+    elif origin_committed is None or not math.isclose(origin_committed,origin,rel_tol=0,abs_tol=2e-7):
+        raise ValueError('height origin commit')
+    if absent:
+        if any(x is not None for x in committed):raise ValueError('height unexpected commit')
+    elif not torch.allclose(t(committed),selected if d['reference_valid']==1 else old,atol=2e-6,rtol=0):
+        raise ValueError('height commit')
+
+
+def verify_support_heave(sample,cfg):
+    """Independent scalar height-error, rate, history and commit audit."""
+    d=sample['teacher_diagnostic'];c=sample['feedback_context']
+    enabled=bool(cfg.load_feedback and not cfg.coherent_support_pose and c.get('execution_enabled') and c.get('control_phase') in (2,3,4))
+    if d.get('heave_enabled',0)!=int(enabled):raise ValueError('heave enable mismatch')
+    if not enabled:return
+    previous=c.get('support_heave_previous')
+    error_history=c.get('support_heave_error0_previous')
+    if (previous is None)!=(error_history is None):raise ValueError('heave paired history')
+    old=0. if previous is None else previous[0]
+    error=d['command_requested_root_z']-c['measured_root'][2]
+    error0=error if error_history is None else error_history[0]
+    if d['heave_captured']!=int(previous is None):raise ValueError('heave capture')
+    dynamic=sample.get('dynamic_support')
+    if dynamic is not None:
+        for key,record in (('support_heave',previous),('support_heave_error0',error_history)):
+            history=dynamic['pre'].get(key)
+            if (history is None)!=(record is None):raise ValueError('heave history presence')
+            if history is not None:
+                # Scalar state is [B], unlike the four-wheel height state.
+                value=history['tensor'][0]
+                if value!=record[0]:raise ValueError('heave history mismatch')
+    dt=c['dt']
+    if not all(math.isfinite(x) for x in (old,error,error0,dt)) or dt<=0 or abs(old)>.020000001:
+        raise ValueError('heave nonfinite or bounds')
+    target=0. if c['control_phase']==4 else max(-.02,min(.02,-(error-error0)))
+    proposed=old+max(-.02*dt,min(.02*dt,target-old))
+    beta=d['execution_fraction'] if d['reference_valid']==1 else 0.
+    selected=old+beta*(proposed-old)
+    for name,value in (('error0',error0),('previous',old),('proposed',proposed),('selected',selected)):
+        actual=d['heave_'+name]
+        if actual is None or not math.isclose(actual,value,rel_tol=0,abs_tol=2e-7):raise ValueError('heave '+name)
+    absent=(d['reference_valid']!=1 and previous is None) or (d['reference_valid']==1 and sample['phase']==0)
+    committed=d['heave_committed']
+    if absent:
+        if committed is not None:raise ValueError('heave unexpected commit')
+    elif committed is None or not math.isclose(committed,selected if d['reference_valid']==1 else old,rel_tol=0,abs_tol=2e-7):
+        raise ValueError('heave commit')
+
+
+def verify_execution_geometry(sample,cfg,*,replay_backend='cpu'):
+    """Independent of target builder/transaction: frames, FK start and residual.
+
+    Evaluates recorded encoded targets as well as mathematical attempted q;
+    does not certify that the physical robot reached either one.
+    """
+    import torch
+    from ame_baseline.m1_teacher_ik import body_feet
+    from ame_baseline.m1_reference_teacher import LEG_COLUMNS
+    from ame_baseline.m1_teacher_pose import _rotation as producer_rotation
+    def _rotation(quats):
+        if not cfg.coherent_support_pose:
+            return producer_rotation(quats)
+        # Independent scalar reconstruction: a producer transform defect must
+        # not silently change both the recorded goal and this audit's answer.
+        matrices=[]
+        for values in quats.detach().cpu().tolist():
+            norm=math.sqrt(sum(v*v for v in values))
+            if not math.isfinite(norm) or norm<=0:
+                raise ValueError('invalid coherent quaternion')
+            w,x,y,z=(v/norm for v in values)
+            matrices.append([[1-2*(y*y+z*z),2*(x*y-w*z),2*(x*z+w*y)],
+                             [2*(x*y+w*z),1-2*(x*x+z*z),2*(y*z-w*x)],
+                             [2*(x*z-w*y),2*(y*z+w*x),1-2*(x*x+y*y)]])
+        return torch.tensor(matrices,dtype=quats.dtype,device=quats.device)
+    d=sample['teacher_diagnostic']; c=sample['feedback_context']
+    mode=d.get('execution_mode',0)
+    if mode==0: return
+    expected_mode=2 if c['control_phase']==4 else 1 if c['control_phase'] in (2,3) else 0
+    if mode!=expected_mode or not cfg.slow_rolling or not c.get('execution_enabled'):
+        raise ValueError('execution mode/phase mismatch')
+    device=torch.device(replay_backend)
+    dtype=getattr(torch,sample['action_target_dtype'])
+    t=lambda x:torch.tensor([x],dtype=dtype,device=device)
+    wheels=t([[d[f'command_attempted_world_wheel_{leg}_{axis}'] for axis in 'xyz'] for leg in range(4)])
+    command=t([d['command_attempted_root_'+axis] for axis in ('x','y','z','qw','qx','qy','qz')])
+    measured=t(c['measured_root']+c['measured_quat'])
+    for root in (command,measured):
+        if not bool(torch.isfinite(root).all()) or not bool((root[:,3:].norm(dim=-1)-1).abs().max()<=1e-3):
+            raise ValueError('invalid geometry pose')
+    transform=lambda root:torch.einsum('bij,bkj->bki',_rotation(root[:,3:]).transpose(-1,-2),wheels-root[:,:3,None].transpose(1,2))
+    goal=transform(command)
+    active=c['active_wheel']
+    if type(active)!=int or not 0<=active<4: raise ValueError('invalid active wheel')
+    if mode==1 and cfg.load_feedback and not cfg.coherent_support_pose:
+        goal=torch.einsum('bij,bkj->bki',_rotation(measured[:,3:]).transpose(-1,-2),
+            wheels-command[:,:3,None].transpose(1,2))
+    if mode==1: goal[:,active]=transform(measured)[:,active]
+    if cfg.load_feedback:
+        if d['load_enabled']!=1: raise ValueError('missing load correction')
+        if not cfg.coherent_support_pose:
+            if d.get('height_enabled')!=1:raise ValueError('missing support height source')
+            world_goal=measured[:,:3,None].transpose(1,2)+torch.einsum('bij,bkj->bki',_rotation(measured[:,3:]),goal)
+            adjustment=torch.zeros_like(goal)
+            origin=d.get('height_origin')
+            if origin is None or not math.isfinite(origin):raise ValueError('missing height origin')
+            adjustment[:,:,2]=(t([d[f'height_proposed_{j}'] for j in range(4)])
+                +(measured[:,2]-origin)[:,None]-world_goal[:,:,2])
+            adjustment[:,active]=0
+            goal+=torch.einsum('bij,bkj->bki',_rotation(measured[:,3:]).transpose(-1,-2),adjustment)
+            world=torch.zeros_like(goal)
+            world[:,:,2]=d['heave_proposed']
+            world[:,active]=0
+            goal+=torch.einsum('bij,bkj->bki',_rotation(measured[:,3:]).transpose(-1,-2),world)
+        world=torch.zeros_like(goal)
+        world[:,:,2]=t([d[f'load_attempted_{j}'] for j in range(4)])
+        goal+=torch.einsum('bij,bkj->bki',_rotation(measured[:,3:]).transpose(-1,-2),world)
+    heading=0.
+    if mode==1 and cfg.load_feedback and not cfg.coherent_support_pose:
+        # Independent yaw reconstruction: do not invoke the producer heading helper.
+        def raw_yaw(quat):
+            w,x,y,z=(float(v) for v in quat)
+            # Valid quaternions may differ slightly from unit norm. Dividing
+            # both atan2 arguments by norm squared gives the normalized yaw.
+            return math.atan2(2*(w*z+x*y),w*w+x*x-y*y-z*z)
+        error=raw_yaw(measured[0,3:])-raw_yaw(command[0,3:])
+        heading=max(-.05,min(.05,math.atan2(math.sin(error),math.cos(error))))
+        relative=torch.einsum('bij,bkj->bki',_rotation(measured[:,3:]),goal)
+        rotated=relative.clone()
+        rotated[:,:,0]=math.cos(heading)*relative[:,:,0]-math.sin(heading)*relative[:,:,1]
+        rotated[:,:,1]=math.sin(heading)*relative[:,:,0]+math.cos(heading)*relative[:,:,1]
+        corrected=torch.einsum('bij,bkj->bki',_rotation(measured[:,3:]).transpose(-1,-2),rotated)
+        for j in range(4):
+            if j!=active:goal[:,j]=corrected[:,j]
+    reported_heading=d.get('execution_heading_delta')
+    # Float32 computes two atan2 values near +/-pi before subtraction and
+    # wrapping; double reconstruction must allow their accumulated rounding.
+    # This is an audit-only angular allowance, not a control/safety threshold.
+    heading_roundoff=max(2e-7,16*torch.finfo(dtype).eps)
+    if (isinstance(reported_heading,bool) or not isinstance(reported_heading,(int,float))
+            or not math.isclose(reported_heading,heading,rel_tol=0,abs_tol=heading_roundoff)):
+        raise ValueError('independent support heading')
+    fraction=d['execution_fraction']
+    if not isinstance(fraction,(float,int)) or not 0<fraction<=1: raise ValueError('invalid execution fraction')
+    intent_fraction=d.get('execution_intent_fraction')
+    if (isinstance(intent_fraction,bool) or not isinstance(intent_fraction,(float,int))
+            or not fraction<=intent_fraction<=1 or mode!=1 and intent_fraction!=fraction):
+        raise ValueError('invalid active intent fraction')
+    old_wheels=t(c['accepted_before']['wheels'])
+    requested_wheels=t(c['requested']['wheels'])
+    if mode==1 and torch.equal(old_wheels[:,active],requested_wheels[:,active]) and intent_fraction!=fraction:
+        raise ValueError('intent fraction changed without active request')
+    expected_wheels=old_wheels+fraction*(requested_wheels-old_wheels)
+    if mode==1:
+        expected_wheels[:,active]=old_wheels[:,active]+intent_fraction*(requested_wheels[:,active]-old_wheels[:,active])
+    if not torch.allclose(wheels,expected_wheels,rtol=0,atol=2e-6):
+        raise ValueError('independent active intent commit')
+    for prefix in ('attempted', 'accepted'):
+        physical=t([[d[f'{prefix}_world_wheel_{leg}_{axis}'] for axis in 'xyz'] for leg in range(4)])
+        expected=expected_wheels if prefix=='attempted' or d['reference_valid']==1 else t(c['retained_physical']['wheels'])
+        if not torch.allclose(physical,expected,rtol=0,atol=2e-6):
+            raise ValueError('independent physical intent '+prefix)
+    active_fraction=d.get('execution_active_fraction')
+    if (isinstance(active_fraction,bool) or not isinstance(active_fraction,(float,int))
+            or not fraction<=active_fraction<=1
+            or mode!=1 and active_fraction!=fraction):
+        raise ValueError('invalid active execution fraction')
+    start=body_feet(t(c['last_applied_q']))
+    step=start+fraction*(goal-start)
+    if mode==1:step[:,active]=start[:,active]+active_fraction*(goal[:,active]-start[:,active])
+    for kind,expected in (('goal',goal),('step',step)):
+        recorded=t([[d[f'execution_body_{kind}_{leg}_{axis}'] for axis in 'xyz'] for leg in range(4)])
+        if not torch.allclose(recorded,expected,rtol=0,atol=2e-6): raise ValueError('independent execution '+kind)
+    q=t([d[f'attempted_q_{j}'] for j in range(12)])
+    residual=(body_feet(q)-step).norm(dim=-1)
+    tolerance=t([min(cfg.ik_tolerance_m,.0001) if (mode==1 and j==active) or (cfg.load_feedback and j!=active) else cfg.ik_tolerance_m for j in range(4)])
+    recorded_tolerance=t([d[f'execution_tolerance_m_{j}'] for j in range(4)])
+    if not torch.allclose(recorded_tolerance,tolerance,rtol=0,atol=1e-9): raise ValueError('execution tolerance mismatch')
+    for name,points in (('start',start),('goal',goal),('solved',body_feet(q))):
+        world=measured[:,:3]+torch.einsum('bij,bj->bi',_rotation(measured[:,3:]),points[:,active])
+        recorded=d[f'execution_active_world_{name}_z']
+        if recorded is None or not math.isclose(recorded,float(world[0,2]),rel_tol=0,abs_tol=2e-6): raise ValueError('execution world '+name)
+    reported=t([d[f'ik_residual_m_{j}'] for j in range(4)])
+    if not torch.allclose(residual,reported,rtol=2e-5,atol=2e-6): raise ValueError('independent IK residual')
+    if d['reference_valid']==1:
+        applied=t([sample['applied_targets'][j] for j in LEG_COLUMNS])
+        encoded_residual=(body_feet(applied)-step).norm(dim=-1)
+        if not bool((residual<=tolerance+2e-6).all()): raise ValueError('attempted IK residual')
+        if not bool((encoded_residual<=tolerance+2e-6).all()): raise ValueError('encoded IK residual')
 
 
 def verify_feedback_transaction(sample,cfg,*,replay_backend='cpu',require_backend_evidence=False):
@@ -616,17 +1440,32 @@ def verify_feedback_transaction(sample,cfg,*,replay_backend='cpu',require_backen
                 raise ValueError('missing transaction context')
             if any(d[f'nominal_ik_residual_m_{i}'] is not None for i in range(4)):
                 raise ValueError('unbound nominal IK')
-            for kind,limit in (('integral_committed',(.02,.01,.01)),('output_committed',(.04,.02,.02))):
+            feedback=cfg.feedback
+            for kind,limit in (
+                    ('integral_committed',(feedback.integral_limit_x,feedback.integral_limit_yz,feedback.integral_limit_yz)),
+                    ('output_committed',(feedback.output_limit_x,feedback.output_limit_yz,feedback.output_limit_yz))):
                 for axis,bound in zip('xyz',limit):
                     if not math.isfinite(d[f'feedback_{kind}_{axis}']) or abs(d[f'feedback_{kind}_{axis}'])>bound+1e-7:
                         raise ValueError('missing committed hold evidence')
             return []
         if sample['action_target_dtype'] not in ('float32','float64'): raise ValueError('invalid dtype')
+        if d.get('execution_mode',0)!=0:
+            if not context.get('execution_enabled') or 'measured_quat' not in context:
+                raise ValueError('missing measured execution input')
+            if context['active_wheel']!=d['execution_active_wheel']:
+                raise ValueError('execution active wheel mismatch')
+            if 'preparation_input' in sample:
+                if context['measured_root']+context['measured_quat']!=sample['preparation_input']['root'][:7]:
+                    raise ValueError('execution pose differs from actual decision input')
         expected_json,action,executable=replay_feedback_transaction(json.dumps(context,sort_keys=True),
             json.dumps(asdict(cfg),sort_keys=True),sample['action_target_dtype'],sample['phase'],replay_backend=replay_backend)
         expected=json.loads(expected_json)
-        checked=[name for name in expected if name.startswith(('feedback_','wheel_','command_requested_',
-            'command_attempted_','command_accepted_','nominal_ik_','ik_','attempted_','accepted_','requested_','last_applied_q_'))]
+        # This replay authenticates the bounded command transaction, not the
+        # outer phase controller. Do not capture wheel_progress_ready merely
+        # because it shares a prefix with the actual wheel-speed evidence.
+        checked=[name for name in expected if name.startswith(('feedback_',
+            'wheel_nominal_surface_speed_','wheel_final_surface_speed_','wheel_headroom_limited','command_requested_',
+            'command_attempted_','command_accepted_','nominal_ik_','ik_','attempted_','accepted_','requested_','last_applied_q_','execution_'))]
         checked+=['reference_valid','backtrack_index']
         # Accepted joint target is the final encoded target, not the mathematical predecoder q.
         integer=set(TEACHER_DIAGNOSTIC_INTEGER_FIELDS)
@@ -645,6 +1484,10 @@ def verify_feedback_transaction(sample,cfg,*,replay_backend='cpu',require_backen
         decoded=decoded_request_targets(tuple(sample['teacher_action']),tuple(context['default_joint_pos']),
             sample['action_target_dtype'],replay_backend=replay_backend)
         if list(decoded)!=sample['applied_targets']: raise ValueError('actual receipt')
+        verify_execution_geometry(sample,cfg,replay_backend=replay_backend)
+        verify_load_feedback(sample,cfg)
+        verify_support_height(sample,cfg)
+        verify_support_heave(sample,cfg)
         from ame_baseline.m1_reference_teacher import LEG_COLUMNS
         from ame_baseline.m1_ame_contract import M1_LEG_ACTION_SCALE_RAD,M1_WHEEL_ACTION_SCALE_RAD_S
         from extension.parallelism.m1_kinematics import M1_WHEEL_RADIUS_M
@@ -787,7 +1630,10 @@ def preparation_observed(sample,cfg):
                     or not all(bool(torch.isfinite(x).all()) for x in (root,com,wheels,forces,*refs))
                     or abs(float(root[3:7].norm())-1)>1e-3): return False
             rpy=quaternion_rpy(root[None,3:7])[0]
-            if (root[7:10].norm()>cfg.balance_speed_limit_m_s
+            velocity=root[7:10].clone()
+            if cfg.slow_rolling:
+                velocity[:2]-=cfg.rolling_speed_m_s*torch.stack((rpy[2].cos(),rpy[2].sin()))
+            if (velocity.norm()>cfg.balance_speed_limit_m_s
                     or rpy[:2].abs().max()>cfg.recovery_tilt_rad
                     or root[10:13].norm()>cfg.recovery_rate_rad_s): return False
             for ref in refs:
@@ -933,7 +1779,7 @@ def verify_episode(record,*,replay_backend='cpu',require_backend_evidence=False)
         try:
             if set(record['teacher_config'])!=set(asdict(TeacherConfig())):
                 raise ValueError('incomplete readiness config')
-            from ame_baseline.m1_teacher_feedback import FeedbackConfig
+            from ame_baseline.m1_teacher_feedback import BodyFeedbackConfig as FeedbackConfig
             config=copy.deepcopy(record['teacher_config'])
             config['feedback']=FeedbackConfig(**config['feedback'])
             readiness_cfg=TeacherConfig(**config)
@@ -989,10 +1835,19 @@ def verify_episode(record,*,replay_backend='cpu',require_backend_evidence=False)
                     replay_backend=replay_backend,require_backend_evidence=require_backend_evidence))
                 if readiness_cfg is not None: errors.extend(verify_selection_sample(sample,readiness_cfg,
                     replay_backend=replay_backend,require_backend_evidence=require_backend_evidence))
+                if readiness_cfg is not None and readiness_cfg.slow_rolling:
+                    errors.extend(verify_dynamic_support_sample(sample,readiness_cfg,replay_backend=replay_backend))
+                    current_dynamic=sample.get('dynamic_support')
+                    if index>1 and current_dynamic is not None:
+                        previous_dynamic=samples[index-2].get('dynamic_support')
+                        if previous_dynamic is not None and current_dynamic['identity'][0]==previous_dynamic['identity'][0]:
+                            if not _dynamic_equal(current_dynamic['pre'],previous_dynamic['post']):
+                                errors.append('dynamic history chain mismatch')
                 context=sample.get('feedback_context')
                 if context is not None:
                     try:
                         if (context['measured_root']!=sample['preparation_input']['root'][:3]
+                                or (context.get('execution_enabled',False) and context.get('measured_quat')!=sample['preparation_input']['root'][3:7])
                                 or context['q_seed']!=sample['teacher_input_leg_pos']
                                 or context['default_joint_pos']!=sample['action_default_joint_pos']
                                 or context['last_applied_q']!=sample['last_applied_leg_target']
@@ -1250,6 +2105,24 @@ def configure_probe_rendering(cfg):
         enable_dlssg=cfg.sim.render.enable_dlssg,settle_render_frames=3)
 
 
+def probe_teacher_config(*, slow_rolling=False, scope='course', load_feedback=False, bounded_crossing_attitude=False, coherent_support_pose=False):
+    from ame_baseline.m1_reference_teacher import TeacherConfig
+    if slow_rolling and scope not in ('course','first-obstacle'):
+        raise ValueError('slow rolling requires course or first-obstacle scope')
+    return TeacherConfig(slow_rolling=slow_rolling,load_feedback=load_feedback,
+                         bounded_crossing_attitude=bounded_crossing_attitude,coherent_support_pose=coherent_support_pose)
+
+
+def add_teacher_motion_options(parser):
+    parser.add_argument('--slow-rolling',action='store_true',
+                        help='0.05m/s continuous rolling teacher; no normal phase stop')
+    parser.add_argument('--load-feedback',action='store_true',help='bounded measured support-load feedback')
+    parser.add_argument('--bounded-crossing-attitude',action='store_true',
+                        help='bounded orientation search during dynamic LIFT/PASS only')
+    parser.add_argument('--coherent-support-pose',action='store_true',
+                        help='full support XYZ posture with load-only bounded correction')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--candidate', required=True)
@@ -1258,6 +2131,7 @@ def main():
     parser.add_argument('--mode', choices=('smoke','contract','teacher','acceptance'), default='smoke')
     parser.add_argument('--diagnostic-steps', type=int, default=200)
     parser.add_argument('--teacher-scope',choices=TEACHER_SCOPES,default='course')
+    add_teacher_motion_options(parser)
     parser.add_argument('--active-wheel',type=int,choices=range(4),default=None)
     preliminary,_=parser.parse_known_args()
     candidate,output=validate_paths(preliminary.candidate,preliminary.python,preliminary.output)
@@ -1268,6 +2142,8 @@ def main():
     candidate, output = validate_paths(args.candidate,args.python,args.output)
     if not 1 <= args.diagnostic_steps <= 1000: raise ValueError('diagnostic steps must be 1..1000')
     validate_scope(args.teacher_scope,acceptance=args.mode=='acceptance',active_wheel=args.active_wheel)
+    probe_teacher_config(slow_rolling=args.slow_rolling,scope=args.teacher_scope,load_feedback=args.load_feedback,
+                         bounded_crossing_attitude=args.bounded_crossing_attitude,coherent_support_pose=args.coherent_support_pose)
     output.mkdir(parents=True)
     launcher = AppLauncher(args)
     env = None
@@ -1286,7 +2162,8 @@ def main():
         wrapper = AmeRslRlEnvWrapper(env)
         loaded_candidate_modules(candidate)
         with torch.inference_mode():
-            run = NativeProbe(env,wrapper,output,candidate)
+            run = NativeProbe(env,wrapper,output,candidate,slow_rolling=args.slow_rolling,load_feedback=args.load_feedback,
+                              bounded_crossing_attitude=args.bounded_crossing_attitude,coherent_support_pose=args.coherent_support_pose)
             run.contract()
             run.warmup_video()
             run.flat_contract()
@@ -1446,6 +2323,7 @@ class ActionEvidence:
                     if hasattr(output,'diagnostic') else {},
                 feedback_context=feedback_context_for(teacher,state,row),
                 selection_context=selection_context_for(teacher,state,row),
+                dynamic_support=dynamic_context_for(teacher,state,row),
                 teacher_input_leg_pos=state.leg_pos[row].detach().clone().tolist() if hasattr(state,'leg_pos') else None,
                 active_target=int(output.active_target[row]),
                 preparation_input=readiness_measurement(state,row,sim_time),
@@ -1473,7 +2351,7 @@ class ActionEvidence:
 
 class NativeProbe:
     """Probe-only observers. Exactly one wrapper.step per 20ms sample."""
-    def __init__(self, env, wrapper, output, candidate):
+    def __init__(self, env, wrapper, output, candidate, *, slow_rolling=False,load_feedback=False,bounded_crossing_attitude=False,coherent_support_pose=False):
         import torch
         from ame_baseline.m1_teacher_adapter import ReferenceTeacherAdapter, WHEEL_BODY_NAMES
         from ame_baseline.m1_reference_teacher import TeacherConfig
@@ -1483,7 +2361,8 @@ class NativeProbe:
         self.replay_backend=self.producer_backend['device']
         self.robot=env.scene['robot']; self.sensor=env.scene['contact_forces']
         self.raw_joint_names=tuple(self.robot.joint_names)
-        self.adapter=ReferenceTeacherAdapter(wrapper); self.teacher_cfg=TeacherConfig()
+        self.adapter=ReferenceTeacherAdapter(wrapper); self.teacher_cfg=probe_teacher_config(slow_rolling=slow_rolling,load_feedback=load_feedback,
+            bounded_crossing_attitude=bounded_crossing_attitude,coherent_support_pose=coherent_support_pose)
         self.wheels=list(resolve_named_indices(tuple(self.robot.body_names),WHEEL_BODY_NAMES))
         self.contacts=list(resolve_named_indices(tuple(self.sensor.body_names),WHEEL_BODY_NAMES))
         self.episode=torch.zeros(4,dtype=torch.long,device=env.device)
@@ -2044,6 +2923,8 @@ class NativeProbe:
     def teacher(self,*,acceptance,diagnostic_steps,scope='course',active_wheel=None):
         from ame_baseline.m1_reference_teacher import ReferenceTeacher,Phase
         validate_scope(scope,acceptance=acceptance,active_wheel=active_wheel)
+        probe_teacher_config(slow_rolling=self.teacher_cfg.slow_rolling,scope=scope,load_feedback=self.teacher_cfg.load_feedback,
+                             bounded_crossing_attitude=self.teacher_cfg.bounded_crossing_attitude,coherent_support_pose=self.teacher_cfg.coherent_support_pose)
         self.scope=scope
         records=[]; t=self.torch
         schedule=teacher_schedule(scope,active_wheel)
@@ -2055,6 +2936,7 @@ class NativeProbe:
                     self.env.seed(seed); self.set_stage(stage)
                     teacher=ReferenceTeacher(self.teacher_cfg)
                     observe_feedback_transactions(teacher)
+                    observe_dynamic_support(teacher)
                     preparation_hold=PreparationHoldCounter()
                     self.episode.fill_(wheel or 0); self.frames.zero_(); self.attempt.zero_()
                     self.bind_reset_identity(range(4))

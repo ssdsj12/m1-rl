@@ -170,13 +170,15 @@ def test_accepted_steps_move_and_strictly_reduce_error(monkeypatch):
 
 
 @pytest.mark.parametrize('bad', ['limit', 'branch', 'straight', 'nonfinite', 'no_improvement'])
-def test_rejected_proposals_hold_pre_iteration_joints(monkeypatch, bad):
+def test_candidate_guards_reject_or_constrain_without_false_success(monkeypatch, bad):
     q = nominal()
     q[:, 2] = -.12
     target = ik.body_feet(q)
     target[:, 0, 2] += .02
 
     def proposal(jacobian, error, damping, component_limit):
+        if jacobian.shape[-1] == 2:
+            return torch.zeros_like(error[..., :2])
         step = torch.zeros_like(error)
         if bad == 'limit':
             # Seed already at limit: any positive step must be refused.
@@ -195,7 +197,14 @@ def test_rejected_proposals_hold_pre_iteration_joints(monkeypatch, bad):
         target[:, 0, 2] += .02
     monkeypatch.setattr(ik, 'dls_step', proposal)
     result = solve(q, target)
-    assert torch.equal(result.q, q)
+    if bad in ('branch', 'straight'):
+        expected = q.clone()
+        expected[:, 2] = -.10
+        assert torch.equal(result.q, expected)
+        assert ((target-ik.body_feet(result.q)).norm(dim=-1)
+                <= (target-ik.body_feet(q)).norm(dim=-1)).all()
+    else:
+        assert torch.equal(result.q, q)
     assert result.iterations[0, 0] == 32
     assert not result.valid[0]
     assert result.reason[0, 0] == ik.IKReason.RESIDUAL

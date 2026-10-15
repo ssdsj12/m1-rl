@@ -1,5 +1,9 @@
 # 双几何与跨后恢复最终冻结验证
 
+## 2026-10-14T06:24:16Z 用户改为实际跨越优先
+
+用户要求在实际跨越中发现问题再修正，不再让前置验证占据主要时间。已确认服务器无训练/回放任务、GPU0仅1MiB，probe SHA仍为冻结02a70cf；直接启动 `first-obstacle`、4环境、1000步上限的10cm诊断，runner PID222721，输出 `evidence-first-obstacle-direct-02a70cf`。不另跑准备关或全套CPU回归。已知callback时钟量化只影响结果证据验收，不修改动作控制；本次可观察实际抬落与接触，但不据此宣称正式A通过或启动BC/PPO。生产、物理参数、奖励与控制源码均未变。下文NOT_RUN/停止状态是本次启动前的历史快照。
+
 - Stage/Todo：T306/teacher-feasibility/dual-support-selection + crossing-recovery-outcome。
 - Baseline Ref：abfdf0e52618b0e8aac8e55823374a82de05a03d。
 - Candidate Ref：02a70cfcf0a9c16101f581c60f5193b1a17728a8。
@@ -8,6 +12,20 @@
 - 实施/审查：[实施记录](2026-10-14-m1-dual-support-crossing-recovery-implementation.md)。
 
 ## CPU条件与命令
+
+### 第二轮实际结果：原切换卡点解除，支撑轮位移仍阻挡抬腿
+
+`evidence-first-obstacle-capture-bridge-v1` 正常退出0/GPU0回到1MiB。4行均记录106帧，3行锁定失败、env0因同批失败被诊断中断（不能把env0计成功或失败锁定）。均未进入LIFT，没有记录到碰撞/物理失败；A仍FAILED_DIAGNOSTIC。此前frame41的capture事务这次通过，env1在frame97首次由支撑候选筛选拒绝，而非旧执行连续性拒绝；frame101达5次锁定。env0仍reference_valid、body_age24，未ready。
+
+env1输入frame95→96的同快照CPU几何复算（非完整回放/非成功验收）：全部125格点中对实测三角形的最大裕量从.0108301844降到.0086895609m，均在x=-.04/y=-.06边界；此时两后轮相对固定锚点X分别-.0478058/-.0355492m。原生选择从candidate0有效变成-1无解，与此几何复算一致。已定位当前下一卡点为支撑调整期间实测轮位移导致批准包络内无可行三轮重心目标；没有将其误说成抬腿后摔倒。未扩大包络或降低支撑门槛，未动PD/奖励/物理/生产，未开BC/PPO。候选衔接改动及反例本地保留未提交；仅68针对性测试，不冒称新全套通过。后续应针对实际支撑位移查因并修正，不重回大批前置验收循环。
+
+两次探针原始trace/video/result/source/log/exit已归档到本地 `.superpowers/sdd/2026-10-14-m1-dual-support-crossing-recovery/direct-crossing/`。第一轮归档SHA256 `97632d61838e2be4199a83584792f17db28bd684dadc622a7c4093f6880c341d`。
+
+### 实际10cm诊断首轮与最小切换修正（2026-10-14T06:30Z）
+
+`evidence-first-obstacle-direct-02a70cf` 已完整退出0，4条完整诊断各79帧，均在APPROACH→BALANCE后IK_INVALID锁定，未进入LIFT，无碰撞/物理失败；不是成功样本。首次无效为输出frame41（输入40）：已选出candidate50/101，env0双几何margin=.023281m，env1=.019114m；但回退8次均不能满足执行连续性。根因定位在制动capture把accepted替换为measured：实际HIP约.423rad而上一目标约.309rad，差.114rad超过每步.05rad，beta趋0仍从实测姿态出发，不能消除此差。四轮仍承重，此处不是摔倒。
+
+最小候选修正只保留原accepted作为插值起点，实测世界支撑锚点仍一次捕获且固定；branch用实测q，tracking重新实测，不放宽限速/IK/支撑/碰撞规则。新增 `test_braking_capture_bridges_loaded_pose_without_target_jump` 在旧代码断言reference_valid失败，修后reference_commit+feedback_transaction共68通过（15.79s）。未跑全套/未宣称完成；已立即串行复跑同一10cm第一障碍，输出 `evidence-first-obstacle-capture-bridge-v1`，runner223920，启动06:30:13Z。Teacher源SHA `dfc9358dacb2384ba62bd6002038f7dc88a1afe84ad49a428383ce5928f745ec`。生产/训练未改，时钟验收问题仍OPEN。
 
 工作目录为上述候选，Python /opt/conda/envs/env_issacsim/bin/python；torch2.7.0+cu128/pytest9.0.3。CUDA_VISIBLE_DEVICES为空，OMP_NUM_THREADS=1、MKL_NUM_THREADS=1均仅进程级。
 

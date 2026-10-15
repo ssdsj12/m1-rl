@@ -1,8 +1,8 @@
 """Pure bounded teacher position feedback, with no IK or state commits.
 
-All [B,3] columns are heading X/Y/Z: X outputs/integrals are m/s;
-Y/Z outputs/integrals are m. Wheel ordering and total motor-speed limits
-belong to the caller's transaction, not this proposal module.
+All [B,3] columns are heading X/Y/Z. Legacy FeedbackConfig has X in m/s
+and Y/Z in m; BodyFeedbackConfig uses meters on all three axes. Wheel
+ordering and total motor-speed limits belong to the caller's transaction.
 """
 from dataclasses import dataclass, fields
 import math
@@ -47,6 +47,16 @@ class FeedbackConfig:
             if (isinstance(value, bool) or not isinstance(value, (int, float))
                     or not math.isfinite(value) or value != field.default):
                 raise ValueError(f'{field.name} must equal fixed finite value {field.default}')
+
+
+@dataclass(frozen=True)
+class BodyFeedbackConfig(FeedbackConfig):
+    """XYZ are body displacements in meters; wheel speeds are a separate command."""
+    kp_x: float = .5
+    ki_x: float = .5
+    integral_limit_x: float = .01
+    output_limit_x: float = .02
+    slew_rate_x: float = .02
 
 
 @dataclass(frozen=True)
@@ -154,7 +164,7 @@ def recompute_feedback(error_h, previous: FeedbackState, dt, cfg: FeedbackConfig
 
 
 def select_integral(previous: FeedbackState, proposal: FeedbackProposal, *, safe,
-                    transaction_valid, backtracked) -> torch.Tensor:
+                    transaction_valid, backtracked, cfg=None) -> torch.Tensor:
     """Choose integral only; normal updates require an entirely unlimited row.
 
     Any axis limitation or transaction backtrack freezes normal integration
@@ -167,7 +177,10 @@ def select_integral(previous: FeedbackState, proposal: FeedbackProposal, *, safe
     previous.__post_init__()
     proposal.__post_init__()
     _tensor(proposal.error_h, previous.integral.shape, previous.integral, 'proposal.error_h')
-    cfg=FeedbackConfig()
+    cfg=FeedbackConfig() if cfg is None else cfg
+    if not isinstance(cfg,FeedbackConfig):
+        raise TypeError('cfg must be FeedbackConfig')
+    cfg.__post_init__()
     integral_limit=_axis_values(previous.integral,cfg.integral_limit_x,cfg.integral_limit_yz)
     output_limit=_axis_values(previous.integral,cfg.output_limit_x,cfg.output_limit_yz)
     for value,limit in ((previous.integral,integral_limit),(proposal.integral_candidate,integral_limit),

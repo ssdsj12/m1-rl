@@ -1,5 +1,65 @@
 ## 2026-10-11 active: T306/pure-ppo-learning
 
+T306/teacher/active-horizontal-anchor OPEN：[冻结诊断](log/2026-10-15-m1-active-horizontal-anchor-diagnosis.md)五帧复现原解，半幅修正活动轮水平误差可保持原IK/关节限速，完整瞬时对齐超速禁止。下一首次LIFT实测XY起点＋有界事务衔接设计；当前runtime未改、无新原生/生产训练，不把静态可解当跨越。
+
+v33实测终态：exit0但FAILED_DIAGNOSTIC，4记录/3完整失败/3锁定/0成功，未完成全分母。原始视频/trace/log已归档，双方SHA f811ccf989893b8c3a9b610f0a12bf932c814cd8ead59bc3f2b528f842b7960c。当前无原生运行、不生产训练。新冻结线索：进入LIFT119活动轮完整目标X比实测后退39.22mm、Z低1.02mm；129仍后退33.21mm、Z仅高1.21mm。完整目标不等于限速后实际动作；尚未证明因果。下一核对阶段切换锚点/接触中水平追踪与倾斜载荷的耦合，不盲改PD或放宽安全。 见[当前证据](log/2026-10-15-m1-support-height-origin.md)。
+
+T306/teacher/active-execution-floor/v28 OPEN：三真实帧3RED，下一活动轮独立步长实现与全腿校验，支撑三腿保持联动；v27最终audit仍live，不生产训练。见[当前日志](log/2026-10-15-m1-active-execution-progress.md)。
+
+T306/teacher/ik-boundary-step：冻结v25证明123/126存在原边界内IK解，旧整腿拒绝造成数值停滞；下一合法约束候选步修正，非放宽安全或抬支撑脚目标。仅CPU诊断，runtime未改/GPU1MiB/无生产训练。见log/2026-10-15-m1-ik-boundary-step-diagnosis.md。
+
+T306/teacher/support-translation-decoupling v25最终：729CPU、原生4×132帧0成功/3锁停，首次失败链转为左后IK可达余量耗尽（123–127残差超.1mm）；保留安全，下一同帧支撑目标/伸直余量诊断。四路审核errors=[]/exit0，不生产训练。见log/2026-10-15-m1-support-translation-decoupling.md。
+
+T306/teacher/support-translation-decoupling v25：支撑XY姿态项与移重心方向冲突已实测冻结定位，窄修正729CPU通过，独立最终审查进行中；下一唯一隔离10cm原生验证，不启动生产训练。跨越OPEN。见log/2026-10-15-m1-support-translation-decoupling.md。
+
+最新v24最终：712CPU/审查修复后唯一10cm实测4×136帧，0跨越/3锁停，input130右后29.53047N触发frame131保护；四路审核errors=[]，exit0/GPU1MiB。完整归档双方SHA17e7f69f2431ca65e1d220345d077613c3bc27d2cd23ce9501418ed19c72c8dd。冻结分配对照发现未触发缺载前姿态偏好收缩RR，补载开始仍有历史正偏移；非唯一物理因果证明。下一检查执行与承载时滞，不放宽安全/不生产训练，目标OPEN。见log/2026-10-15-m1-load-priority-attitude.md。
+
+最新冻结诊断：直接补回独立姿态Z回路会与承载反馈争用。v23输入131右后34.86N/目标93.85N要求向下补载，候选姿态offset却向上、与load合成+2.813mm（非最终世界Z）。草案未部署；下一统一承载约束分配，不盲叠加增益。无runtime/native/训练变化，GPU1MiB，目标OPEN。见2026-10-15-m1-attitude-load-conflict日志。
+
+v23最终：唯一10cm实测4×137帧、0成功/3锁停，input131右后16.3886N导致frame132保护，活动轮底最高约0.0501mm未有效抬起。四路审核errors=[]，exit0/GPU1MiB；完整归档双方SHA6d81735b1ee70cf56adfd44593f41870352abb6c2882c2b6dd63ecaa2fe9188b。固定支撑Z对0.001rad roll/pitch指令的竖直响应被冻结CPU复算证实近0，水平响应保留；下一支撑姿态通道结构诊断，不盲增步长/放宽安全。无生产训练，跨越OPEN。
+
+T306/teacher/active-execution-floor v23：有界步长细化与fraction提交已实现，669CPU通过，独立审查进行中；下一唯一隔离10cm实测，未生产训练，目标OPEN。[实施](log/2026-10-15-m1-backtrack-refinement.md)。
+
+T306/teacher/active-execution-floor 最新：冻结v22定位粗二分步长浪费，4帧IK有效；百分比网格保持0.05rad限制可改善3帧执行高度，但114仍预载差12.8mm。下一有界可行步长细化规格/反例测试；未改runtime/未新native/训练。[诊断](log/2026-10-15-m1-execution-backtrack-diagnosis.md)。
+
+当前T306/teacher/active-execution-floor：v22载荷纠正660CPU通过，但真实10cm4×144帧0成功，RR27.8249N触发frame139保护；exit0/GPU1MiB/完整归档双方SHA53e62bac。发现活动腿最终插值目标低于实测轮心，下一查连续性/回溯执行链。未生产训练，跨越目标OPEN。[证据](log/2026-10-15-m1-active-contact-load-diagnosis.md)。
+
+当前T306/teacher/support-heave：v21实测4×143帧0成功/3锁停，右后27.683N触发保护，活动轮未有效离地。635CPU/独立审查补测、exit0/GPU1MiB、完整归档SHAd908da07；下一查姿态/差分支撑失衡，无生产训练。[进度](log/2026-10-15-m1-support-heave.md)。
+
+最新T306/teacher：v19载荷反馈已完成10cm实测，4路0跨越，右后29.464N失载；新增geometry-compensation-conflict子节点，弱轮执行目标仍高于实测。538CPU通过/原生退出0/GPU1MiB，生产未动。[最终证据](log/2026-10-14-m1-support-load-feedback.md)。
+
+当前T306/teacher/support-load-feedback：已授权连续实施，v19载荷反馈及独立审核完成代码接入，最终复验后直接隔离10cm实测，不启动生产训练。见[当前日志](log/2026-10-14-m1-support-load-feedback.md)。
+
+最新：用户确认后[三轮储备已进入实施](log/2026-10-14-m1-tripod-load-reserve-implementation.md)，控制相关412CPU/独立证据20通过，最终回归与独立review进行中，尚未新native/生产/训练。下方待计划审批为历史，不重复审批。
+
+最新：三轮储备具体规格已确认；[四任务计划](../docs/superpowers/plans/2026-10-14-m1-tripod-load-reserve.md)已写并自审，沿用主代理inline＋最终独立review，待计划审阅。仅文档，未runtime/新native/训练；不重复规格审批。
+
+最新2026-10-14：[三轮承载储备只读诊断](log/2026-10-14-m1-tripod-load-reserve-diagnosis.md)：首次LIFT四轮实测右后96N，但排除左前后准静态估算仅18.85N<30N；几何10mm/四轮有力不等于可安全抬去一轮。新子节点tripod-load-reserve OPEN，拟统一滚动支撑选择和抬轮储备，架构讨论待确认；未runtime/native/训练变更，不把静力估算当真实载荷或成功。
+
+最新2026-10-14：[活动腿实测IK已实施并实际10cm验证](log/2026-10-14-m1-active-leg-measured-ik-implementation.md)。374CPU通过/独立审查重要项RED→GREEN；4×123帧，活动腿目标方向已纠正但仍贴地，右后26.98N<30N导致1路锁停/3路中断，零碰撞/跨越。新节点diagonal-support-loss-after-measured-ik OPEN；exit0/GPU1MiB，未生产/训练，旧审批/运行中状态为历史。
+
+最新2026-10-14 active-leg-command-frame PLAN REVIEW：规格已确认；[四任务实施计划](../docs/superpowers/plans/2026-10-14-m1-active-leg-measured-ik.md)已写并自审，主代理inline＋最终独立审查。计划待审阅，未runtime/新测试/原生/训练；不重复规格审批。
+
+最新2026-10-14 active-leg-command-frame SPEC REVIEW：[分腿IK规格及参数核查](log/2026-10-14-m1-active-leg-measured-ik-design.md)。用户批准修正/实测方向，744帧动作/步长/限速及原生PD未发现误配；分腿实测IK＋有界衔接书面细化待审阅，未runtime/新原生/训练。不再新增卸载前置。
+
+最新2026-10-14 actual-crossing/lift-load-redistribution/active-leg-command-frame OPEN：[同帧FK诊断](log/2026-10-14-m1-active-leg-command-frame.md)确认活动腿也使用未达到的command机身位姿，实际指向低于轮心。Next是有界活动腿/支撑腿目标分配设计；不单独追求卸载，不盲改力矩，未runtime/训练。
+
+最新2026-10-14 lift-load-redistribution OPEN：[动态支撑实测](log/2026-10-14-m1-dynamic-support-implementation.md)319CPU通过；实际10cm四路各186帧，支撑改善但目标未离地，env0接近保护锁停/其余中断，零跨越。源码视频已归档，exit0/GPU1MiB；下一步障碍内真实卸载/执行与接近余量定位，非单独支撑或盲加训。
+
+最新2026-10-14 T306/lift-load-redistribution：[规格已确认、实施计划已写](../docs/superpowers/plans/2026-10-14-m1-dynamic-support-measured-lift.md)，待计划审阅；直接真实10cm，未runtime/原生/训练变化。原始保护和事务边界不放宽。
+
+最新2026-10-14 T306/actual-crossing/lift-load-redistribution：[动态支撑与实测抬轮方案已选择](log/2026-10-14-m1-dynamic-support-design.md)，书面规格待审阅后计划/实施。本轮仅设计，不把旧失败结果或新控制参数当成功。
+
+最新2026-10-14 T306/actual-crossing/lift-load-redistribution OPEN：[解耦实测](log/2026-10-14-m1-rolling-lift-decoupling.md)确认轮参考可在body纠偏时推进，但目标轮未离地、右后支撑减载；4×125帧/1保护锁停3中断/零跨越。243CPU/独立审查、4记录重审errors空；原生结束/证据保留，无生产训练。冻结耦合已修，实际载荷问题未解。
+
+最新2026-10-14 T306/actual-crossing/rolling-lift-tracking-freeze：[同帧机制已定位](log/2026-10-14-m1-rolling-lift-gate-diagnosis.md)，拟机身纠偏/抬轮进度解耦，不整体放大1cm或改PD；需确认原门控合同修订，未实现/新原生/训练。
+
+最新2026-10-14 T306/teacher-feasibility/actual-crossing/rolling-lift-tracking-freeze OPEN：[低速滚动](log/2026-10-14-m1-slow-rolling-crossing.md)229CPU通过，4×178帧进入LIFT但实际未离地；机身位置误差超1cm冻结抬升，一个环境接近保护锁停，三行随批结束，无碰撞/无成功。证据归档/进程退出；保留真实三轮支撑与恢复检查，下一步在障碍过程中定位，不做独立支撑、不自动训练。
+
+最新2026-10-14 UTC：[控制分离实际10cm结果](log/2026-10-14-m1-body-wheel-allocation.md)4×107帧无碰撞但无LIFT，实际支撑漂移后无可行目标；3锁定/1同批中断。213相关CPU通过，证据归档/GPU释放，跨越目标仍OPEN，不重做独立抬腿支撑，不自动生产/训练。
+
+最新2026-10-14 UTC T306/teacher-feasibility/actual-crossing/control-allocation OPEN：[直接10cm障碍三轮诊断](log/2026-10-14-m1-obstacle-anchor-feedback.md)。用户已覆盖旧前置准备顺序；只做完整接近→抬腿经过→落腿恢复。第三轮共同轮速锚点反馈仍无LIFT、3行前轮碰障，不是抬腿后摔倒。未生产/训练变更，正式成功须完整事件，时钟问题仍限制恢复认证而非阻止物理诊断。
+
 最新2026-10-14 UTC T306/teacher-feasibility/crossing-recovery-outcome/physics-callback-clock-quantization OPEN：[最终验证](log/2026-10-14-m1-dual-support-final-validation.md)；02a70cf相关532CPU及原生控制合同通过，准备关发现实际回调时钟与配置dt精度不一致，阻塞恢复验收。已停探针、释放GPU；后续抬落/跨越/A/BC/PPO不运行，先解决时间证据来源，不改控制/物理门槛。
 
 最新2026-10-14 UTC T306/teacher-feasibility PLAN REVIEW：[双几何与跨后恢复计划](log/2026-10-14-m1-dual-support-crossing-recovery-plan.md)完成自审，规格确认已收；待计划审阅后子代理执行。新主机未核实，无runtime/原生/训练变更。

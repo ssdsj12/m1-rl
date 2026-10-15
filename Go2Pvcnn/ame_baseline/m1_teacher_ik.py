@@ -111,7 +111,7 @@ def _workspace_mask(target_b):
             & (reach_sq <= (thigh_length + calf_length).square() + roundoff))
 
 
-def solve_constrained_ik(q_seed, target_b, branch_q, cfg=None):
+def solve_constrained_ik(q_seed, target_b, branch_q, cfg=None, *, tolerance_m=None):
     """At most 32 DLS attempts per leg, accepting only legal improving steps.
 
     Invalid inputs freeze that leg. A failed solve returns its last accepted
@@ -130,6 +130,14 @@ def solve_constrained_ik(q_seed, target_b, branch_q, cfg=None):
     if any(t.device != q_seed.device or t.dtype != q_seed.dtype for t in (target_b, branch_q)):
         raise ValueError('IK tensors must have the same device and dtype')
     batch = q_seed.shape[0]
+    if tolerance_m is None:
+        tolerance_m = q_seed.new_full((batch, 4), cfg.ik_tolerance_m)
+    elif (not isinstance(tolerance_m, torch.Tensor)
+          or tolerance_m.shape != (batch, 4)
+          or tolerance_m.dtype != q_seed.dtype or tolerance_m.device != q_seed.device
+          or not bool(torch.isfinite(tolerance_m).all())
+          or bool(((tolerance_m <= 0) | (tolerance_m > cfg.ik_tolerance_m)).any())):
+        raise ValueError('tolerance_m must be matching finite positive [B,4], no looser than config')
     leg_ids = torch.arange(4, device=q_seed.device)
 
     def limits(value):
@@ -153,15 +161,25 @@ def solve_constrained_ik(q_seed, target_b, branch_q, cfg=None):
     error = target - body_feet(q)
     residual = error.norm(dim=-1)
     for _ in range(cfg.ik_iterations):
-        active = eligible & (residual > cfg.ik_tolerance_m)
+        active = eligible & (residual > tolerance_m)
         if not bool(active.any()):
             break
         iterations += active.long()
-        dq = dls_step(body_jacobian(q, cfg.fd_epsilon),
+        jacobian = body_jacobian(q, cfg.fd_epsilon)
+        dq = dls_step(jacobian,
                       torch.where(active[..., None], error, torch.zeros_like(error)),
                       cfg.damping, cfg.dq_component_limit_rad)
         proposal = q + dq.flatten(1)
-        legal = (torch.isfinite(proposal.reshape(batch, 4, 3)).all(-1)
+        proposal_finite = torch.isfinite(proposal.reshape(batch, 4, 3)).all(-1)
+        # Constrain the optimization candidate, not the returned solution.
+        # Rejecting the entire leg at this boundary also discards legal
+        # ABAD/HIP tangent progress. Full legality and improvement still gate it.
+        knee_sign = branch_q[:, 2::3].sign()
+        knee_crossed = knee_sign * proposal[:, 2::3] < cfg.min_knee_abs_rad
+        proposal[:, 2::3] = knee_sign * torch.maximum(
+            knee_sign * proposal[:, 2::3],
+            torch.full_like(proposal[:, 2::3], cfg.min_knee_abs_rad))
+        legal = (proposal_finite & torch.isfinite(proposal.reshape(batch, 4, 3)).all(-1)
                  & limits(proposal) & branch(proposal)
                  & (proposal[:, 2::3].abs() >= cfg.min_knee_abs_rad))
         # Evaluate only admissible proposed joints: invalid proposals hold.
@@ -169,6 +187,32 @@ def solve_constrained_ik(q_seed, target_b, branch_q, cfg=None):
                                   proposal.reshape(batch, 4, 3), q.reshape(batch, 4, 3)).flatten(1)
         proposed_error = target - body_feet(admissible)
         proposed_residual = proposed_error.norm(dim=-1)
+        tangent_eligible = active & proposal_finite & knee_crossed
+        if bool(tangent_eligible.any()):
+            # A clipped full DLS direction is not the constrained optimum.
+            # Account for the legal knee step, then solve its remaining error
+            # using only the free ABAD/HIP directions in this same iteration.
+            knee_step = proposal[:, 2::3] - q[:, 2::3]
+            remaining_error = error - jacobian[..., 2] * knee_step[..., None]
+            tangent = q.reshape(batch, 4, 3).clone()
+            tangent[..., :2] += dls_step(jacobian[..., :2], remaining_error,
+                                        cfg.damping, cfg.dq_component_limit_rad)
+            tangent[..., 2] = proposal[:, 2::3]
+            tangent = tangent.flatten(1)
+            tangent_legal = (tangent_eligible
+                             & torch.isfinite(tangent.reshape(batch, 4, 3)).all(-1)
+                             & limits(tangent) & branch(tangent)
+                             & (tangent[:, 2::3].abs() >= cfg.min_knee_abs_rad))
+            tangent = torch.where(tangent_legal[..., None],
+                                  tangent.reshape(batch, 4, 3), q.reshape(batch, 4, 3)).flatten(1)
+            tangent_error = target - body_feet(tangent)
+            tangent_residual = tangent_error.norm(dim=-1)
+            take_tangent = tangent_legal & (tangent_residual < proposed_residual)
+            admissible = torch.where(take_tangent[..., None], tangent.reshape(batch, 4, 3),
+                                     admissible.reshape(batch, 4, 3)).flatten(1)
+            proposed_error = torch.where(take_tangent[..., None], tangent_error, proposed_error)
+            proposed_residual = torch.where(take_tangent, tangent_residual, proposed_residual)
+            legal = legal | take_tangent
         accept = active & legal & (proposed_residual < residual)
         q = torch.where(accept[..., None], admissible.reshape(batch, 4, 3), q.reshape(batch, 4, 3)).flatten(1)
         error = torch.where(accept[..., None], proposed_error, error)
@@ -182,7 +226,7 @@ def solve_constrained_ik(q_seed, target_b, branch_q, cfg=None):
     residual = torch.where(finite, residual, torch.full_like(residual, float('inf')))
     # Stable precedence. Every per-leg flag still records its own check.
     reason = torch.full((batch, 4), int(IKReason.OK), device=q.device, dtype=torch.long)
-    for check, code in ((residual <= cfg.ik_tolerance_m, IKReason.RESIDUAL),
+    for check, code in ((residual <= tolerance_m, IKReason.RESIDUAL),
                         (workspace_ok, IKReason.WORKSPACE),
                         (q[:, 2::3].abs() >= cfg.min_knee_abs_rad, IKReason.NEAR_STRAIGHT),
                         (branch_ok, IKReason.BRANCH),

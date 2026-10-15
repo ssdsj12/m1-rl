@@ -36,6 +36,33 @@ def test_same_decision_readiness_is_not_capture_or_predicted_margin():
     assert out.diagnostic[0,names.index('preparation_ready')]==0
 
 
+def test_braking_capture_bridges_loaded_pose_without_target_jump():
+    """Loaded HIP deflection must not replace the last executable reference.
+
+    Native first-obstacle frame41 has ~0.11rad HIP tracking error while
+    stopping. Capturing measured support anchors is correct; starting the
+    command interpolation at measured q makes every backtrack exceed 0.05rad.
+    """
+    from extension.parallelism.m1_kinematics import m1_fk
+    from ame_baseline.m1_ame_contract import m1_action_targets
+    t=api(); teacher=t.ReferenceTeacher(); s=near_state()
+    first=teacher.step(s)
+    assert first.valid.item() and first.phase.item()==t.Phase.BALANCE
+    applied=m1_action_targets(first.action,s.default_joint_pos)[:,t.LEG_COLUMNS]
+    loaded=applied.clone()
+    loaded[:,[1,4,7,10]] += .11
+    loaded[:,[8,11]] += .10
+    wheels=m1_fk(s.root_pos_w,torch.zeros_like(s.root_pos_w),loaded).foot_pos_w
+    s=advance(s,leg_pos=loaded,last_applied_leg_target=applied,wheel_pos_w=wheels)
+    out=teacher.step(s)
+    assert out.diagnostic[0,t.TEACHER_DIAGNOSTIC_FIELDS.index('reference_valid')]==1
+    assert not out.failure_locked.item() and out.phase.item()==t.Phase.BALANCE
+    decoded=m1_action_targets(out.action,s.default_joint_pos)[:,t.LEG_COLUMNS]
+    assert ((decoded-applied).abs() <= .05).all()
+    assert torch.equal(teacher._rows[0]['wheel_anchor'],wheels)
+    assert out.diagnostic[0,t.TEACHER_DIAGNOSTIC_FIELDS.index('preparation_ready')]==0
+
+
 def test_measured_ready_is_same_decision_and_cleared_after_refusal_or_reset():
     t=api(); s=near_state(); teacher=t.ReferenceTeacher()
     for _ in range(16):
@@ -69,9 +96,9 @@ def feedback(s, teacher, out):
                    com_pos_w=com, leg_pos=q.clone(), last_applied_leg_target=q.clone())
 
 
-def prepared_teacher(wheel=0, diagnostic=False):
+def prepared_teacher(wheel=0, diagnostic=False, rolling=False):
     t = api()
-    teacher, s = t.ReferenceTeacher(), near_state(wheel=wheel)
+    teacher, s = t.ReferenceTeacher(t.TeacherConfig(slow_rolling=rolling)), near_state(wheel=wheel)
     for _ in range(4):
         out = (teacher.diagnostic_step(s, active_wheel=wheel, lift=False)
                if diagnostic else teacher.step(s))

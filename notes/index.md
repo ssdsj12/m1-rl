@@ -1,5 +1,115 @@
 # TestPvcnnWithIsaacsim Notes Index
 
+v35设计前证据：候选姿态与请求存在两处level保留；冻结130固定±.1rad并贯通请求后原约束内事务通过(maxdq.03166rad)，非物理成功。设计为固定有界姿态候选＋同一预测/执行姿态＋原跨后恢复，详见docs/superpowers/specs/2026-10-15-m1-bounded-crossing-attitude-design.md。未实现/未部署，candidateSHA保持v34，无native/生产，下一具体计划和TDD。
+
+v34已结束且0跨越：4记录/3完整失败/3锁定，原始归档双方SHAba2001283bbc209910d865bdeef8280685ecef290179ffceb2f6d377ce3168db。活动XY对齐成功但未离地；冻结130全部IK可解却支撑载荷候选全淘汰，适度倾斜静态候选有解但执行链尚未一致。下一核对支撑姿态/COM/执行结构，不降低安全门槛。见最新log/2026-10-15-m1-active-xy-native-diagnosis.md；当前无native/生产训练，旧运行中段落已过时。
+
+v34最新已启动隔离实测：985CPU通过312.94s，唯一review阻断修复，runtime/archive SHA验证；runner428984/native428986于2026-10-15T00:40:59Z运行，evidence-first-obstacle-active-xy-v1。禁止重复启动或覆写candidate，生产未动；真实10cm跨越/恢复尚未确认，继续读同PID终态与完整证据。
+
+v34最新：独立anchor及requestedXY证据链接入，最终review Important经反例RED/GREEN修复；26相关＋2补充分支通过，完整985测试runner426312进行中。candidate仍v33，尚未新native/生产；完成回归后直接隔离实际10cm验证。旧段落为历史，真实跨越仍OPEN。
+
+v34首次LIFT实测XY起点：5有效RED→7GREEN；只local/CPUoverlay最小实现，相关回归进行中。独立锚点审计未接入，未部署原生，candidate仍v33。保留原限速/安全，无生产训练，真实跨越OPEN。见[实施](log/2026-10-15-m1-active-horizontal-anchor-implementation.md)。
+
+T306/teacher/active-horizontal-anchor OPEN：[冻结诊断](log/2026-10-15-m1-active-horizontal-anchor-diagnosis.md)五帧复现原解，半幅修正活动轮水平误差可保持原IK/关节限速，完整瞬时对齐超速禁止。下一首次LIFT实测XY起点＋有界事务衔接设计；当前runtime未改、无新原生/生产训练，不把静态可解当跨越。
+
+v33实测终态：exit0但FAILED_DIAGNOSTIC，4记录/3完整失败/3锁定/0成功，未完成全分母。原始视频/trace/log已归档，双方SHA f811ccf989893b8c3a9b610f0a12bf932c814cd8ead59bc3f2b528f842b7960c。当前无原生运行、不生产训练。新冻结线索：进入LIFT119活动轮完整目标X比实测后退39.22mm、Z低1.02mm；129仍后退33.21mm、Z仅高1.21mm。完整目标不等于限速后实际动作；尚未证明因果。下一核对阶段切换锚点/接触中水平追踪与倾斜载荷的耦合，不盲改PD或放宽安全。 见[当前证据](log/2026-10-15-m1-support-height-origin.md)。
+
+最新v33支撑高度捕获原点：23RED→182相关通过，可选几何路径已实现，950回归进行中；教师生命周期及独立审计尚未接入，禁止部署/新native。candidate仍v32，无生产训练，跨越OPEN。见[当前](log/2026-10-15-m1-support-height-origin.md)。
+
+v32最终已退出exit0：0成功、3锁定，frame130预测目标承载不足但实际三支撑仍>30N；134锁定，physical_failure=false，四审计errors=[]。原始归档双方SHA2e094f42f358d4a2caa118215f573709924b256fd429026427558408c57aa3cb。膝边界执行问题缓解但机身下沉、活动轮未离地，继续定位目标/实际执行耦合；不生产训练/不重启。见[当前日志](log/2026-10-15-m1-support-knee-reserve.md)。以下运行中状态为历史。
+
+v32最新：927相关CPU通过192.07s、审查无阻断，两个runtime SHA与归档核验后唯一runner411683/python411685正在隔离10cm原生验证，prefix evidence-first-obstacle-knee-reserve-v1。未生产训练/未宣称成功，禁止重复启动。见[当前日志](log/2026-10-15-m1-support-knee-reserve.md)。以下未部署叙述为历史。
+
+最新v32仅候选排序改进：同等预测承载下优先三支撑腿膝余量，原控制/安全门槛不变。独立审查无阻断，77定向通过；最终927回归进行中，尚未部署原生。v31原始归档保留，真实跨越仍OPEN，不启动生产训练。见[当前日志](log/2026-10-15-m1-support-knee-reserve.md)。以下为历史。
+
+最新 v31 实测已退出exit0：FAILED_DIAGNOSTIC，4记录/0完整/3锁定/0成功，env1第139帧失支撑；四份审计errors=[]。原始源码/视频/证据归档双方SHA3e77947bd4954314777a1af35e685c1e641a56658875e5c986df55fe66c5efb0。只读定位左后膝目标贴.1rad、支撑fraction约1%；冻结几何与限速heave对比已保存，非物理成功。下一步核查名义姿态到执行几何的可达性与支撑余量，不自动重启或生产训练。913相关CPU通过不等于实际跨越；裸pytest依赖限制保留。见[当前日志](log/2026-10-15-m1-bounded-support-heading.md)。以下运行状态为历史。
+
+最新v30已部署：827完整CPU及34扩展测试通过，审查I1反例修复；5runtimeSHA一致，GPU1MiB/无并发后唯一runner388660启动evidence-first-obstacle-active-intent-v1实际10cm。初始化已现场核实，未跨越成功，勿重复启动；无生产训练。以下未部署状态为历史。
+
+最新v30活动抬腿意图原子提交：v29已终态归档，0成功、env1 frame138锁停；不重启旧进程。v30保留支撑步长/全部安全阈值，将可行活动轮目标独立提交；34针对性CPU通过，独立审查I1物理参考审计缺口已2RED→GREEN修复，完整回归进行中，尚未部署/启动原生。无生产训练，真实跨越仍OPEN。见[当前日志]( log/2026-10-15-m1-active-intent-commit.md)。以下运行状态均为历史。
+
+最新v29有界姿态IK初值恢复：18相关/806完整CPU通过，review C0/I0/M2保留；三runtimeSHA一致，v28终态归档0success后GPU1MiB，唯一runner381178已启动evidence-first-obstacle-seed-recovery-v1隔离10cm实测。未生产训练，不能据CPU通过称跨越。见[当前](log/2026-10-15-m1-bounded-seed-recovery.md)。以下v28运行状态为历史。
+
+当前v28活动轮独立执行步长：完整788CPU通过133.91s，独立审查C0/I0；支撑历史/解码保持16通过。5文件本地远端SHA匹配，GPU1MiB后唯一runner376678已启动evidence-first-obstacle-active-progress-v1隔离10cm实测，勿重复启动。v27完整归档0成功，v28尚无成功证据；无生产训练。见[当前](log/2026-10-15-m1-active-execution-progress.md)。以下旧运行状态为历史。
+
+v27最新已启动：772CPU通过143.49s，review C0/I0/M1，样本与原始traceSHA匹配；唯一runner368879/evidence-first-obstacle-ik-tangent-v1正在隔离10cm实测。未生产训练/未实际成功，勿重复启动。见[实施](log/2026-10-15-m1-ik-active-tangent-implementation.md)。
+
+最新v27：v26完整4×142帧/0成功，137帧左后边界求解停滞；归档双方SHA2b458d11。保持原目标/边界/32预算的约化髋关节候选使真实失败帧可解，6RED→75GREEN，完整772进行中；独立review C0/I0/M1，未v27原生/无生产训练。见[实施](log/2026-10-15-m1-ik-active-tangent-implementation.md)。以下为历史证据。
+
+最新冻结证据修正v25归因：左后不是已证实不可达，当前IK因knee候选越.10rad就整腿拒绝。保持原目标/限速/.1mm残差，合法边界候选步使123/126残差.158/.281降至.047/.067mm；正常118/120/122不变。仅CPU诊断，未runtime/native变化，下一受限IK步进反例与修正。见[诊断](log/2026-10-15-m1-ik-boundary-step-diagnosis.md)。
+
+v25最终：729CPU/审查C0I0后唯一10cm实测4×132帧，0成功/3锁停，env1 frame123开始左后IK残差超.1mm，伸直保护余量近0，127五次失败锁停；该帧三支撑承载均足，无碰撞穿透，活动轮仍未有效抬起。四路审核errors=[]、exit0/进程已退出。下一冻结支撑目标与可达余量诊断，不放宽门槛/不生产训练，跨越OPEN。见[证据](log/2026-10-15-m1-support-translation-decoupling.md)。
+
+最新v25：冻结v24同帧数据定位支撑XY中的姿态项反转移重心方向；仅LIFT/PASS支撑平移使用实测姿态，保留独立Z/载荷和RESTORE旧行为。729CPU通过，三runtime本地candidateSHA一致；独立最终审查中，未v25原生/生产训练，跨越OPEN。见[实施证据](log/2026-10-15-m1-support-translation-decoupling.md)。
+
+最新v24最终：712CPU/审查修复后唯一10cm实测4×136帧，0跨越/3锁停，input130右后29.53047N触发frame131保护；四路审核errors=[]，exit0/GPU1MiB。完整归档双方SHA17e7f69f2431ca65e1d220345d077613c3bc27d2cd23ce9501418ed19c72c8dd。冻结分配对照发现未触发缺载前姿态偏好收缩RR，补载开始仍有历史正偏移；非唯一物理因果证明。下一检查执行与承载时滞，不放宽安全/不生产训练，目标OPEN。见log/2026-10-15-m1-load-priority-attitude.md。
+
+最新冻结诊断：直接补回独立姿态Z回路会与承载反馈争用。v23输入131右后34.86N/目标93.85N要求向下补载，候选姿态offset却向上、与load合成+2.813mm（非最终世界Z）。草案未部署；下一统一承载约束分配，不盲叠加增益。无runtime/native/训练变化，GPU1MiB，目标OPEN。见2026-10-15-m1-attitude-load-conflict日志。
+
+v23最终：唯一10cm实测4×137帧、0成功/3锁停，input131右后16.3886N导致frame132保护，活动轮底最高约0.0501mm未有效抬起。四路审核errors=[]，exit0/GPU1MiB；完整归档双方SHA6d81735b1ee70cf56adfd44593f41870352abb6c2882c2b6dd63ecaa2fe9188b。固定支撑Z对0.001rad roll/pitch指令的竖直响应被冻结CPU复算证实近0，水平响应保留；下一支撑姿态通道结构诊断，不盲增步长/放宽安全。无生产训练，跨越OPEN。
+
+v23最新已实际启动：独立review C0/I0/M1，669CPU通过，runner343169/python343171于19:13:03Z运行唯一evidence-first-obstacle-backtrack-refined-v1；场景初始化中，尚无跨越结果。额外200合成回合probe全suite主动取消且不算通过，核心回归/审查已完成。无生产训练，勿重复启动。[日志](log/2026-10-15-m1-backtrack-refinement.md)。
+
+最新v23回溯细化已实现：669CPU通过/本地candidate3runtimeSHA一致；独立最终审查进行中，尚未原生v23/生产训练。实际fraction统一提交load/height/heave，粗8级后至多4次安全细化，限速不变。跨越OPEN。[实施](log/2026-10-15-m1-backtrack-refinement.md)。
+
+最新冻结执行链诊断：四帧CPU重放beta与原生一致，IK均可解，粗二分因膝关节略超0.05rad而丢掉近半合法步长；不改限速的网格反事实使125/130/138执行Z由低于轮心转为高于轮心，114仍有12.8mm历史目标差。仅CPU诊断，无runtime/native/训练变化，跨越OPEN。见[回溯诊断](log/2026-10-15-m1-execution-backtrack-diagnosis.md)。
+
+v22最终：660CPU/独立审查修复，唯一10cm4×144帧0跨越/3锁停；输入138RR27.8249N导致frame139保护，活动轮未有效离地。四路审核errors=[]、exit0/GPU1MiB；完整归档双方SHA53e62bac。新线索为最终活动腿执行插值仍低于实测轮心，下一冻结复算joint连续性与回溯，不笼统归因IK。无生产训练，目标OPEN。详见[最终证据](log/2026-10-15-m1-active-contact-load-diagnosis.md)。
+
+当前v22 active-contact-load实施：冻结v21发现待抬轮仍承重69N时旧分配遗漏其力矩，目标COP偏离6.27/3.34cm；现修正为总力乘COM比例减活动接触力矩，保留45N投影/速率/安全。35单元+29事务审核通过，完整回归/独立review进行中，未新native或生产训练。[诊断](log/2026-10-15-m1-active-contact-load-diagnosis.md)。
+
+当前v21：[公共支撑升降](log/2026-10-15-m1-support-heave.md)。635CPU与独立审查补测完成，真实4×143帧0成功/3锁停，RR27.683N触发frame138保护、活动轮未有效离地；四路errors=[]，exit0/GPU1MiB。完整归档SHAd908da07。高度较旧同帧改善但支撑更早失败，下一查差分姿态与载荷分配；无生产训练，目标OPEN。
+
+最新结构诊断：v20固定世界Z使1mm机身抬高指令对支撑Z的响应归零，取消竖直纠偏；env1 rootZ .599→.401m，frame140因实际COM余量不足冻结。下一分离机身公共支撑与载荷差分，非简单放宽门槛或加增益；还未实施新方案。
+
+v19最终：538相关CPU通过，隔离4×135帧0跨越/3锁停，首次frame130右后29.464N失载，无碰撞，活动轮仍贴地；四路审核errors=[]，exit0/GPU1MiB。弱RR最终执行目标仍高于实测1.691mm，反馈未抵消几何冲突。完整归档SHA5505ae0f1bdf4296c862d6115460442fc54bcd04089b95e6e1b861416900c784。见[最终日志](log/2026-10-14-m1-support-load-feedback.md)，总目标OPEN；下方运行中为历史。
+
+最新：用户授权直接执行v19实测载荷闭环，实施与独立审核见[日志](log/2026-10-14-m1-support-load-feedback.md)。回溯重复缩放Important已RED/GREEN修复，最终回归待结束；未新native/生产训练。下方待架构审批为历史，不重复询问。
+
+最新只读诊断：v18同帧执行目标对FR/RL压低20.2/14.6mm、对弱载RR抬高0.54mm；下一步RR29.75N失载，无碰撞。所记录最后子步未扭矩限幅。详见log/2026-10-14-m1-v18-support-execution-diagnosis.md；下一架构讨论为实际载荷闭环，未改runtime/未新native/训练。
+
+2026-10-14 v18已完成隔离10cm实测：4路计入、0完整跨越、3路锁定失败；首次env1/frame129 support_lost，右后29.7507N、无碰撞，活动轮仍贴地。IK末有效帧执行目标与解差0.028mm不等于物理抬升。495相关CPU通过/独立审查无阻断；原生exit0/GPU1MiB，四路审核errors=[]。完整归档SHA1fa550c74b73462a73dbd7db0200dd44f03666a8814edaecee7e8d9c9edce601。本目标OPEN，无生产训练。详见log/2026-10-14-m1-measured-execution-reconciliation.md；旧运行状态仅历史。
+
+最新v17实测结束：4路0跨越，3路进入LIFT但未真正离地，env1/input132右后26.15N触发support_lost；全部记录审核errors=[]但物理失败。runner298788已退出0/GPU1MiB，无训练。当前预测47.43N、选中目标36.75N却按满储备推进是下一诊断线索，未据此直接改控制。视频/JSONL已完整归档并SHA核验，详见soft-target实施日志。
+
+最新2026-10-14：用户已确认45N软目标，v17已实现；424相关CPU通过/独立审查无CriticalImportant，保持30N保护。12:27:26Z隔离原生runner298788在evidence-first-obstacle-tripod-soft-target-v1直接4路10cm测试，尚未成功。见m1-tripod-soft-target-implementation日志。下方“待确认”已过时，不重复审批，不启生产训练。
+
+最新2026-10-14实测：三轮储备v16已实施，421相关CPU通过；直接10cm四路均在BALANCE失败、未进入LIFT，最优候选44.58/44.98N被45N硬筛选排除，IK可解。原始证据保留，同后端全记录复核errors=[]但全部success=false。详见tripod-load-reserve-implementation日志；无生产/训练，目标OPEN，45N改优化目标的下一设计尚未实施。
+
+最新：用户确认后[三轮储备已进入实施](log/2026-10-14-m1-tripod-load-reserve-implementation.md)，控制相关412CPU/独立证据20通过，最终回归与独立review进行中，尚未新native/生产/训练。下方待计划审批为历史，不重复审批。
+
+最新：三轮储备具体规格已确认；[四任务计划](../docs/superpowers/plans/2026-10-14-m1-tripod-load-reserve.md)已写并自审，沿用主代理inline＋最终独立review，待计划审阅。仅文档，未runtime/新native/训练；不重复规格审批。
+
+最新2026-10-14：[三轮承载储备只读诊断](log/2026-10-14-m1-tripod-load-reserve-diagnosis.md)：首次LIFT四轮实测右后96N，但排除左前后准静态估算仅18.85N<30N；几何10mm/四轮有力不等于可安全抬去一轮。新子节点tripod-load-reserve OPEN，拟统一滚动支撑选择和抬轮储备，架构讨论待确认；未runtime/native/训练变更，不把静力估算当真实载荷或成功。
+
+最新2026-10-14：[活动腿实测IK已实施并实际10cm验证](log/2026-10-14-m1-active-leg-measured-ik-implementation.md)。374CPU通过/独立审查重要项RED→GREEN；4×123帧，活动腿目标方向已纠正但仍贴地，右后26.98N<30N导致1路锁停/3路中断，零碰撞/跨越。新节点diagonal-support-loss-after-measured-ik OPEN；exit0/GPU1MiB，未生产/训练，旧审批/运行中状态为历史。
+
+最新2026-10-14 active-leg-command-frame PLAN REVIEW：规格已确认；[四任务实施计划](../docs/superpowers/plans/2026-10-14-m1-active-leg-measured-ik.md)已写并自审，主代理inline＋最终独立审查。计划待审阅，未runtime/新测试/原生/训练；不重复规格审批。
+
+最新2026-10-14 active-leg-command-frame SPEC REVIEW：[分腿IK规格及参数核查](log/2026-10-14-m1-active-leg-measured-ik-design.md)。用户批准修正/实测方向，744帧动作/步长/限速及原生PD未发现误配；分腿实测IK＋有界衔接书面细化待审阅，未runtime/新原生/训练。不再新增卸载前置。
+
+最新2026-10-14：[活动腿执行坐标诊断](log/2026-10-14-m1-active-leg-command-frame.md)259/259未锁停LIFT采样接受角在实测机身下指向更低轮心；动作下发一致，IK满足的是虚拟机身目标。活动腿/支撑腿统一坐标分配为新定位点，非独立卸载目标。只读CPU反事实支持分离方向但有超步长跳变，不可直接执行；未runtime/原生/训练。
+
+最新2026-10-14：[动态支撑/实测抬轮已实施并实际10cm验证](log/2026-10-14-m1-dynamic-support-implementation.md)：319相关CPU通过；4×186帧，支撑保持改善但目标轮仍贴地，1接近保护锁停/3同批中断，零碰撞/跨越。原生exit0/GPU1MiB，源码视频归档已核SHA。生产/训练未改，实际卸载/经过仍OPEN。
+
+最新2026-10-14：[动态支撑实施计划](../docs/superpowers/plans/2026-10-14-m1-dynamic-support-measured-lift.md)已按确认规格写成并自审，待计划审阅；主代理实施＋独立审查，随后直接10cm实际过障。当前仅文档，未改runtime/服务器/训练。
+
+最新2026-10-14：[动态支撑＋实测抬轮规格](log/2026-10-14-m1-dynamic-support-design.md)已按用户选择写明并自审，待书面审阅。仅设计，未改runtime/服务器/训练；保留原保护和直接10cm验证路线。
+
+最新2026-10-14：[滚动抬轮解耦已实施并实测](log/2026-10-14-m1-rolling-lift-decoupling.md)，243相关CPU/独立审查通过。4×125帧，env0跨过旧冻结点、额外6帧推进轮参考，但目标轮未离地，COM余量后降至8.9mm、右后轮25.8N触发保护；1失败/3同批中断，零碰撞/跨越。原始视频源码归档，修正诊断前缀误报后4记录errors空；未生产/训练。下一步实际过障载荷再分配，不重做单独支撑。
+
+最新2026-10-14：[滚动抬轮门控定位](log/2026-10-14-m1-rolling-lift-gate-diagnosis.md)确认1cm机身位置跟踪同时冻结抬轮参考；同帧姿态仍在原限内、所录最后子步无力矩裁剪。推荐分离机身纠偏与抬轮进度，属此前明确保留门槛的控制修订，待确认；本轮只读，无新runtime/native/训练。
+
+最新2026-10-14 UTC：[低速滚动实测](log/2026-10-14-m1-slow-rolling-crossing.md)按用户确认改为0.05m/s平滑接近/滚动移重心抬腿/跨后恢复，229相关CPU通过。4×178帧均进入LIFT但轮仍贴地承重；root误差越1cm后冻结抬升，env0未清障接近保护锁停，其他三行同批中断，零碰撞/零成功。视频源码归档核SHA、原生退出/GPU1MiB；生产/训练未改。下一步实际跨越内修rolling-lift-tracking-freeze，不重做独立支撑。
+
+最新2026-10-14 UTC：[机身/轮速分离实际过障](log/2026-10-14-m1-body-wheel-allocation.md)213相关CPU通过，4×107帧无碰撞但仍无LIFT/跨越；支撑轮实动后所有候选margin不足10mm，3锁定+1同批中断。视频/原始记录已归档核SHA，原生退出/GPU1MiB。未放宽门槛，生产/训练未改，下一步仍直接障碍内修控制。
+
+最新2026-10-14 UTC：[第一处10cm障碍反馈对照](log/2026-10-14-m1-obstacle-anchor-feedback.md)按用户要求直接跑完整障碍流程，不再单独反复支撑/抬腿试验。第三轮4×182帧尚无LIFT，机身跟踪冻结后env1–3前轮碰障，env0同批中断；共同轮速改锚点误差未解决跨越，不能发布为修复。证据收尾状态见该日志，生产/BC/PPO未改。
+
+最新2026-10-14 UTC：[两轮10cm实际诊断](log/2026-10-14-m1-dual-support-final-validation.md)均已结束/GPU释放。最小参考衔接修正消除frame41切换拒绝，68针对性测试通过；第二轮在frame97暴露实测支撑轮位移后无可行三轮目标，尚未LIFT/未跨越。候选改动未提交、生产/训练未改；下一步针对实际支撑位移，不重复前置全套。
+
+最新2026-10-14T06:24:16Z：用户改为实际跨越优先，已直接启动第一处10cm障碍的4环境限时诊断，未启动训练。已知恢复时钟证据问题不再阻挡物理观察，但正式A/BC仍不放行；见[实际跨越诊断](log/2026-10-14-m1-dual-support-final-validation.md)。下方停止/NOT_RUN为启动前历史。
+
 最新2026-10-14 UTC：[最终验证/原生阻塞](log/2026-10-14-m1-dual-support-final-validation.md)。候选02a70cf相关532CPU通过，原生控制合同通过；准备关暴露physics-callback-clock-quantization，四行各91帧部分记录后主动停止，后续抬落/跨越/A均NOT_RUN。GPU已释放，生产/训练未改。下方设计/审批状态为历史。
 
 最新2026-10-14 UTC：[共同实施计划](log/2026-10-14-m1-dual-support-crossing-recovery-plan.md)已写并自审待计划审阅；两份规格已确认，沿用子代理。0.3秒/1cm是跨后整机验收，不逐腿加等待；未runtime/服务器/原生/训练变更。

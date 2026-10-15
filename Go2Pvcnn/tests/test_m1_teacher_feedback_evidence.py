@@ -155,7 +155,20 @@ def test_rejected_attempt_is_not_actual_hold(monkeypatch):
         teacher_action=out.action[0].tolist(),applied_targets=targets,phase=int(out.phase[0]))
     assert out.executable.item() and sample['teacher_diagnostic']['reference_valid']==0
     assert probe().verify_feedback_transaction(sample,teacher.cfg)==[]
-    assert any(sample['teacher_diagnostic'][f'wheel_final_surface_speed_{i}']!=0 for i in range(4))
+    assert (sample['teacher_diagnostic']['command_attempted_root_x']
+            < sample['teacher_diagnostic']['attempted_root_x'])
+
+
+@pytest.mark.parametrize('kind,value',[('integral_committed',.015),('output_committed',.03)])
+def test_context_free_frame_rejects_old_wheel_feedback_bounds(kind,value):
+    from ame_baseline.m1_reference_teacher import TeacherConfig
+    d=dict(feedback_passes=0,feedback_first_transaction_valid=0,reference_valid=0)
+    d.update({f'nominal_ik_residual_m_{j}':None for j in range(4)})
+    d.update({f'feedback_{k}_{axis}':0. for k in ('integral_committed','output_committed') for axis in 'xyz'})
+    sample=dict(teacher_diagnostic=d,feedback_context=None,teacher_valid=False)
+    assert probe().verify_feedback_transaction(sample,TeacherConfig())==[]
+    d[f'feedback_{kind}_x']=value
+    assert probe().verify_feedback_transaction(sample,TeacherConfig())
 
 
 def test_second_pass_refusal_never_applies_first_pass(monkeypatch):

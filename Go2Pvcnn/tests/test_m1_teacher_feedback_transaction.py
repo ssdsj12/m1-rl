@@ -30,11 +30,13 @@ def test_tracking_freezes_physical_but_corrects_command():
         row = teacher._rows[0]; ref = row['accepted']; ages = tuple(row[k] for k in ('age','body_age','lift_age'))
         out = run(teacher, shifted(s, [distance, 0., -.015]))
         decoded = m1_action_targets(out.action, s.default_joint_pos)
-        assert (decoded[:, api().WHEEL_COLUMNS] < 0).all(), 'tracking must correct longitudinal drift'
+        assert not decoded[:, api().WHEEL_COLUMNS].any(), 'body tracking must not roll waiting wheels'
         assert torch.equal(row['accepted'].body.pos_w, ref.body.pos_w)
         assert torch.equal(row['accepted'].wheels_w, ref.wheels_w)
         assert tuple(row[k] for k in ('age','body_age','lift_age')) == ages
+        assert field(out,'reference_valid') == 1
         assert row['accepted_command'].body.pos_w[0,2] > ref.body.pos_w[0,2]
+        assert row['accepted_command'].body.pos_w[0,0] < ref.body.pos_w[0,0]
         assert out.executable.item() and field(out, 'preparation_ready') == 0
         assert ((decoded[:,api().LEG_COLUMNS]-s.last_applied_leg_target).abs() <= 2.5*s.dt[:,None]).all()
         raws.append(field(out, 'feedback_raw_output_x'))
@@ -48,6 +50,36 @@ def test_virtual_ik_never_certifies_readiness():
     assert out.phase.item() == api().Phase.BALANCE
     assert field(out, 'ik_residual_m_0') <= .002
     assert field(out, 'nominal_ik_residual_m_0') <= .002
+
+
+def test_body_x_drift_is_corrected_by_legs_without_rolling_waiting_wheels():
+    teacher,s,_=prepared_teacher(diagnostic=True)
+    before=teacher._rows[0]['accepted']
+    root=s.root_pos_w.clone(); root[:,0] += .03
+    com=s.com_pos_w.clone(); com[:,0] += .03
+    out=run(teacher,replace(s,root_pos_w=root,com_pos_w=com))
+    row=teacher._rows[0]
+    decoded=m1_action_targets(out.action,s.default_joint_pos)
+    assert out.executable.item()
+    assert row['accepted_command'].body.pos_w[0,0] < before.body.pos_w[0,0]
+    assert torch.equal(decoded[:,api().WHEEL_COLUMNS],torch.zeros(1,4))
+    assert torch.equal(row['accepted'].wheels_w,before.wheels_w)
+    assert ((decoded[:,api().LEG_COLUMNS]-s.last_applied_leg_target).abs() <= .05).all()
+    assert out.phase.item()==api().Phase.BALANCE and field(out,'preparation_ready')==0
+
+
+@pytest.mark.parametrize('wheel_shift', [0.,-.02,.02])
+def test_balance_body_feedback_does_not_roll_shifted_support_wheels(wheel_shift):
+    """Wheel position error must not re-route body feedback to wheel motors."""
+    teacher,s,_=prepared_teacher(diagnostic=True)
+    root=s.root_pos_w.clone(); root[:,0] += .03
+    com=s.com_pos_w.clone(); com[:,0] += .03
+    wheels=s.wheel_pos_w.clone(); wheels[:,:,0] += wheel_shift
+    out=run(teacher,replace(s,root_pos_w=root,com_pos_w=com,wheel_pos_w=wheels))
+    correction=field(out,'feedback_output_committed_x')
+    assert correction < 0
+    assert not m1_action_targets(out.action,s.default_joint_pos)[:,api().WHEEL_COLUMNS].any()
+    assert out.executable.item() and field(out,'preparation_ready') == 0
 
 
 @pytest.mark.parametrize('failure', ['ik','decoder','continuity','wheel'])
@@ -115,14 +147,14 @@ def test_approach_decay_retains_reference_and_blocks_capture():
     row['feedback']=FeedbackState(s.root_pos_w.new_tensor([[.01,.005,.005]]),s.root_pos_w.new_tensor([[.02,.005,.005]]))
     from ame_baseline.m1_teacher_pose import feedback_command,world_to_goal_body
     from ame_baseline.m1_teacher_ik import solve_constrained_ik
-    row['accepted_command']=feedback_command(old,row['feedback'].output,row['yaw'])
+    row['accepted_command']=feedback_command(old,row['feedback'].output,row['yaw'],body_x=True)
     row['last_q']=solve_constrained_ik(s.leg_pos,world_to_goal_body(row['accepted_command']),row['branch_q'],teacher.ik_cfg).q
     s=replace(s,last_applied_leg_target=row['last_q'].clone(),leg_pos=row['last_q'].clone())
     out=teacher.step(s)
     assert not row['prepared'] and row['phase'] == api().Phase.APPROACH
     assert row['accepted_command'] is not None and row['accepted'] is not None
     assert not row['feedback'].integral.any()
-    assert torch.allclose(row['feedback'].output,s.root_pos_w.new_tensor([[.018,.0046,.0046]]),atol=1e-7)
+    assert torch.allclose(row['feedback'].output,s.root_pos_w.new_tensor([[.0196,.0046,.0046]]),atol=1e-7)
     assert field(out,'feedback_active') == 0 and out.executable.item()
 
 
@@ -140,7 +172,7 @@ def test_feedback_survives_phase_and_single_row_reset():
     assert out.valid[1] and out.executable[1]
 
 
-def test_wheel_correction_respects_decoder_headroom():
+def test_body_correction_preserves_nominal_wheel_speed_and_rejects_overlimit():
     from ame_baseline.m1_teacher_feedback import FeedbackState
     from ame_baseline.m1_ame_contract import M1_WHEEL_RADIUS_M, M1_WHEEL_SPEED_LIMIT_RAD_S
     teacher,s,_=prepared_teacher(); row=teacher._rows[0]; row.update(phase=api().Phase.PASS,age=20)
@@ -151,9 +183,9 @@ def test_wheel_correction_respects_decoder_headroom():
     out=teacher.step(drift)
     speed=m1_action_targets(out.action,s.default_joint_pos)[:,api().WHEEL_COLUMNS]*M1_WHEEL_RADIUS_M
     assert out.valid.item() and (speed <= limit+1e-7).all()
-    assert field(out,'wheel_headroom_limited') == 1
-    assert torch.allclose(speed, speed.new_full((1,4),limit),atol=1e-6)
-    row['feedback']=FeedbackState(row['feedback'].integral,speed.new_tensor([[.02,0.,0.]]))
+    assert field(out,'wheel_headroom_limited') == 0
+    assert torch.allclose(speed, speed.new_full((1,4),limit-.001),atol=1e-6)
+    teacher.cfg=replace(teacher.cfg,pass_speed_m_s=limit+.001)
     prior=row['accepted']; s=advance(s,last_applied_leg_target=row['last_q'].clone())
     refused=teacher.step(replace(s,root_pos_w=s.root_pos_w+delta,com_pos_w=s.com_pos_w+delta))
     assert not refused.valid.item() and row['accepted'] is prior
@@ -216,14 +248,16 @@ def test_restore_finish_clears_integral_and_preserves_exit_output():
 
 def test_unlimited_integral_updates_once_with_one_control_dt():
     teacher,s,_=prepared_teacher(diagnostic=True)
-    out=run(teacher,shifted(s,[.001,0.,0.]))
+    teacher._rows[0]['phase']=api().Phase.RESTORE
+    out=run(teacher,shifted(s,[.0005,0.,0.]))
     assert field(out,'feedback_passes') == 1
-    assert field(out,'feedback_integral_candidate_x') == pytest.approx(-.001*.2*.02,abs=1e-8)
+    assert field(out,'feedback_integral_candidate_x') == pytest.approx(-.0005*.5*.02,abs=1e-8)
     assert field(out,'feedback_integral_committed_x') == field(out,'feedback_integral_candidate_x')
     assert field(out,'feedback_slew_limited_x') == 0
 
 
-def test_heading_channels_preserve_full_quaternion_and_world_wheels():
+@pytest.mark.parametrize('body_x',[False,True])
+def test_heading_channels_preserve_full_quaternion_and_world_wheels(body_x):
     import ame_baseline.m1_teacher_pose as p
     from ame_baseline.m1_teacher_ik import IKConfig,body_feet
     from extension.parallelism.kinematics import rpy_to_rotation_matrix
@@ -236,9 +270,11 @@ def test_heading_channels_preserve_full_quaternion_and_world_wheels():
     ref=p.PoseReference(body,body.pos_w[:,None]+torch.einsum('bij,bkj->bki',rotation,body_feet(s.leg_pos)))
     yaw=s.dt.new_tensor([.7]); u=s.root_pos_w.new_tensor([[.002,.0004,-.0004]])
     solved=p.backtrack_feedback_reference(ref,ref,torch.zeros_like(u),u,yaw,s.leg_pos,s.leg_pos,
-        s.last_applied_leg_target,.02,IKConfig(),execution_valid=lambda ik,o:ik.valid)
+        s.last_applied_leg_target,.02,IKConfig(),execution_valid=lambda ik,o:ik.valid,body_x=body_x)
     assert solved.valid.item()
     delta=torch.stack((-yaw.sin()*u[:,1],yaw.cos()*u[:,1],u[:,2]),-1)
+    if body_x:
+        delta[:,:2] += torch.stack((yaw.cos()*.002,yaw.sin()*.002),-1)
     assert torch.allclose(solved.command.body.pos_w-ref.body.pos_w,delta,atol=1e-7)
     assert torch.allclose(solved.command.body.quat_w,quat,atol=1e-7)
     assert torch.equal(solved.command.wheels_w,ref.wheels_w)
@@ -251,8 +287,9 @@ def test_first_proposal_limit_evidence_is_not_second_pass_evidence():
     assert field(out,'feedback_integral_candidate_x') < 0
     assert field(out,'feedback_integral_selected_x') == 0
     assert field(out,'feedback_integral_committed_x') == 0
-    assert field(out,'feedback_raw_output_x') < -.09
+    assert field(out,'feedback_raw_output_x') == pytest.approx(-.0459)
     assert field(out,'feedback_amplitude_limited_x') == 1
     assert field(out,'feedback_slew_limited_x') == 1
     assert field(out,'feedback_limited_x') == 1
-    assert field(out,'feedback_output_committed_x') == pytest.approx(-.002)
+    assert field(out,'reference_valid') == 1
+    assert field(out,'feedback_output_committed_x') == pytest.approx(-.0004)
